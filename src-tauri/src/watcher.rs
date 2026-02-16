@@ -29,7 +29,12 @@ pub fn start_watching(
     app: AppHandle,
     state: State<'_, WatcherState>,
 ) -> Result<(), String> {
-    let mut guard = state.debouncer.lock().map_err(|e| e.to_string())?;
+    // Recover from mutex poisoning rather than permanently breaking the watcher.
+    // The inner Option<Debouncer> is always in a valid state regardless of panics.
+    let mut guard = state
+        .debouncer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     // If already watching, drop the old watcher first
     if guard.is_some() {
@@ -84,18 +89,28 @@ pub fn start_watching(
     // Watch both Notes/ and Calendar/ subdirectories
     let notes_dir = Path::new(&path).join("Notes");
     let calendar_dir = Path::new(&path).join("Calendar");
+    let mut watching_any = false;
 
     if notes_dir.exists() {
         debouncer
             .watcher()
             .watch(&notes_dir, RecursiveMode::Recursive)
             .map_err(|e| format!("Failed to watch Notes/: {}", e))?;
+        watching_any = true;
     }
     if calendar_dir.exists() {
         debouncer
             .watcher()
             .watch(&calendar_dir, RecursiveMode::Recursive)
             .map_err(|e| format!("Failed to watch Calendar/: {}", e))?;
+        watching_any = true;
+    }
+
+    if !watching_any {
+        return Err(format!(
+            "Neither Notes/ nor Calendar/ subdirectories exist in {}",
+            path
+        ));
     }
 
     *guard = Some(debouncer);
@@ -105,7 +120,10 @@ pub fn start_watching(
 
 #[tauri::command]
 pub fn stop_watching(state: State<'_, WatcherState>) -> Result<(), String> {
-    let mut guard = state.debouncer.lock().map_err(|e| e.to_string())?;
+    let mut guard = state
+        .debouncer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     *guard = None; // Drop the debouncer, which stops the watcher
     log::info!("File watcher stopped");
     Ok(())
@@ -113,6 +131,9 @@ pub fn stop_watching(state: State<'_, WatcherState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn is_watching(state: State<'_, WatcherState>) -> Result<bool, String> {
-    let guard = state.debouncer.lock().map_err(|e| e.to_string())?;
+    let guard = state
+        .debouncer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     Ok(guard.is_some())
 }

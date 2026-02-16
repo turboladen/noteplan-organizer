@@ -50,18 +50,52 @@ pub fn scan(path: String) -> Result<Report, String> {
     perform_scan(&path)
 }
 
+/// Read a note's content for the preview panel.
+/// Validates that the requested path is within the NotePlan data directory
+/// to prevent path-traversal reads of arbitrary files.
 #[tauri::command]
 pub fn get_note_content(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read note: {}", e))
+    let requested = std::path::Path::new(&path);
+
+    // Canonicalize to resolve symlinks and ".." components
+    let canonical = requested
+        .canonicalize()
+        .map_err(|e| format!("Invalid path: {}", e))?;
+
+    // Ensure the resolved path is inside a known NotePlan location
+    let allowed = config::detect_noteplan_path()
+        .and_then(|base| std::path::Path::new(&base).canonicalize().ok());
+
+    if let Some(ref base) = allowed {
+        if !canonical.starts_with(base) {
+            return Err("Access denied: path is outside the NotePlan data directory".to_string());
+        }
+    } else {
+        // If we can't detect the NotePlan path, only allow paths that look like
+        // they're inside a NotePlan container directory.
+        let path_str = canonical.to_string_lossy();
+        if !path_str.contains("co.noteplan.NotePlan") && !path_str.contains("iCloud~co~noteplan") {
+            return Err("Access denied: path is outside the NotePlan data directory".to_string());
+        }
+    }
+
+    std::fs::read_to_string(&canonical).map_err(|e| format!("Failed to read note: {}", e))
 }
 
 /// Opens a noteplan:// URL using macOS `open` command, which launches NotePlan
 /// and navigates to the specified note.
+/// Only allows noteplan:// URLs to prevent opening arbitrary schemes.
 #[tauri::command]
 pub fn open_noteplan_url(url: String) -> Result<(), String> {
+    if !url.starts_with("noteplan://") {
+        return Err("Invalid URL: only noteplan:// URLs are allowed".to_string());
+    }
+
+    // Use .status() instead of .spawn() to wait for the child process,
+    // avoiding zombie process accumulation. The `open` command returns instantly.
     std::process::Command::new("open")
         .arg(&url)
-        .spawn()
+        .status()
         .map_err(|e| format!("Failed to open NotePlan: {}", e))?;
     Ok(())
 }

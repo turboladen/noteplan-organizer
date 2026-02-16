@@ -41,8 +41,14 @@ impl Analyzer for IdConsistencyAnalyzer {
             // NotePlan doesn't rename files when you change a note's title, so the
             // filename ID can be stale. The content title is the source of truth for
             // what ID the user intends.
-            let title_matches = title_id.map_or(false, |id| id.starts_with(parent_id));
-            let filename_matches = filename_id.map_or(false, |id| id.starts_with(parent_id));
+            // Check that the ID is either identical to the parent (a note named after
+            // its folder) or starts with "parent." — enforcing the dot boundary prevents
+            // false matches like "30.100" appearing to match parent "30.10".
+            let parent_prefix = format!("{}.", parent_id);
+            let title_matches =
+                title_id.map_or(false, |id| id == parent_id || id.starts_with(&parent_prefix));
+            let filename_matches =
+                filename_id.map_or(false, |id| id == parent_id || id.starts_with(&parent_prefix));
 
             if title_matches {
                 // The content title ID matches the parent folder — note is correctly

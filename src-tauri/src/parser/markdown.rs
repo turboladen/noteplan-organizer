@@ -138,9 +138,14 @@ fn parse_sections(content: &str) -> Vec<Section> {
                 j += 1;
             }
 
-            // Determine if section is "empty" (only whitespace, dashes, or empty lines)
+            // Determine if section is "empty" — only whitespace, dashes, or empty lines.
+            // Exclude nested sub-headings from the check: a section that contains only
+            // nested headings (but no direct content) is still considered empty.
+            // Use the heading regex (not starts_with '#') to avoid filtering out
+            // hashtags like "#tag1" which are content, not headings.
             let is_empty = content_lines
                 .iter()
+                .filter(|l| !HEADING_RE.is_match(l.trim()))
                 .all(|l| {
                     let t = l.trim();
                     t.is_empty() || t == "-" || t == "*" || t == "---"
@@ -179,10 +184,49 @@ mod tests {
 
     #[test]
     fn test_parse_sections() {
+        // Sections at the same heading level are parsed as siblings.
+        // An h1 heading collects all deeper content (h2+) as its content lines.
         let content = "# Title\n## Related\n- item\n## Empty Section\n- \n## Tags\n";
         let sections = parse_sections(content);
-        assert_eq!(sections.len(), 3); // Title not counted as it's h1, but the fn counts all headings
-        // Actually all 3 headings are captured: "Title", "Related", "Empty Section", "Tags"
+        // Only one top-level section: "# Title" collects everything below it
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].heading, "Title");
+        // It's not considered empty because it has non-heading content lines
+        assert!(!sections[0].is_empty);
+    }
+
+    #[test]
+    fn test_parse_sibling_sections() {
+        // When sections are at the same level, they're parsed as separate sections
+        let content = "## Related\n- item\n## Empty Section\n\n## Tags\n#tag1\n";
+        let sections = parse_sections(content);
+        assert_eq!(sections.len(), 3);
+        assert_eq!(sections[0].heading, "Related");
+        assert!(!sections[0].is_empty); // has "- item"
+        assert_eq!(sections[1].heading, "Empty Section");
+        assert!(sections[1].is_empty); // only blank line
+        assert_eq!(sections[2].heading, "Tags");
+        assert!(!sections[2].is_empty); // has "#tag1"
+    }
+
+    #[test]
+    fn test_section_empty_with_nested_headings() {
+        // A section that only contains nested sub-headings (no direct content)
+        // should be considered empty
+        let content = "## Parent\n### Child\nSome content\n## Sibling\n";
+        let sections = parse_sections(content);
+        assert_eq!(sections.len(), 2);
+        // Parent has a nested heading and content under it, but no direct content
+        // of its own. The nested heading lines are excluded from the empty check.
+        // However, "Some content" is a non-heading line, so it makes Parent non-empty.
+        assert!(!sections[0].is_empty);
+
+        // Test truly empty parent with only a sub-heading
+        let content2 = "## Parent\n### Child\n## Sibling\n";
+        let sections2 = parse_sections(content2);
+        assert_eq!(sections2.len(), 2);
+        // Parent has only a nested heading — no direct content → empty
+        assert!(sections2[0].is_empty);
     }
 
     #[test]

@@ -49,10 +49,10 @@ export function FindingsList({
   const [showDismissed, setShowDismissed] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
-  // Reset pagination when filters change or findings update
+  // Reset pagination when filters change, dismissed toggle changes, or findings update
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [selectedCategory, selectedSeverity, findings]);
+  }, [selectedCategory, selectedSeverity, showDismissed, findings]);
 
   const filtered = findings.filter((f) => {
     if (selectedCategory !== "all" && f.category !== selectedCategory)

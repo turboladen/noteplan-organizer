@@ -24,6 +24,11 @@ impl Analyzer for StaleTaskAnalyzer {
                     continue;
                 }
 
+                // A task can have both rescheduled_from (<date) and scheduled_to (>date).
+                // Only report one finding per task to avoid duplicates. Prefer the
+                // rescheduled_from check since it's the more actionable signal.
+                let mut reported = false;
+
                 // Check if task has a rescheduled-from date that's old
                 if let Some(ref from_date) = task.rescheduled_from {
                     if let Ok(date) = NaiveDate::parse_from_str(from_date, "%Y-%m-%d") {
@@ -50,35 +55,40 @@ impl Analyzer for StaleTaskAnalyzer {
                                 line_number: Some(task.line_number),
                                 context: Some(task.text.clone()),
                             });
+                            reported = true;
                         }
                     }
                 }
 
-                // Also check tasks with a scheduled-to date that's in the past
-                if let Some(ref to_date) = task.scheduled_to {
-                    if let Ok(date) = NaiveDate::parse_from_str(to_date, "%Y-%m-%d") {
-                        let overdue = (today - date).num_days();
-                        if overdue > STALE_DAYS {
-                            findings.push(Finding {
-                                severity: if overdue > 30 {
-                                    Severity::Warning
-                                } else {
-                                    Severity::Info
-                                },
-                                category: FindingCategory::StaleTask,
-                                file_path: note.relative_path.clone(),
-                                description: format!(
-                                    "Task scheduled for {} is {} days overdue: {}",
-                                    to_date,
-                                    overdue,
-                                    truncate_text(&task.text, 80)
-                                ),
-                                suggestion: Some(
-                                    "Reschedule, complete, or cancel this overdue task".to_string(),
-                                ),
-                                line_number: Some(task.line_number),
-                                context: Some(task.text.clone()),
-                            });
+                // Also check tasks with a scheduled-to date that's in the past,
+                // but skip if we already reported this task above.
+                if !reported {
+                    if let Some(ref to_date) = task.scheduled_to {
+                        if let Ok(date) = NaiveDate::parse_from_str(to_date, "%Y-%m-%d") {
+                            let overdue = (today - date).num_days();
+                            if overdue > STALE_DAYS {
+                                findings.push(Finding {
+                                    severity: if overdue > 30 {
+                                        Severity::Warning
+                                    } else {
+                                        Severity::Info
+                                    },
+                                    category: FindingCategory::StaleTask,
+                                    file_path: note.relative_path.clone(),
+                                    description: format!(
+                                        "Task scheduled for {} is {} days overdue: {}",
+                                        to_date,
+                                        overdue,
+                                        truncate_text(&task.text, 80)
+                                    ),
+                                    suggestion: Some(
+                                        "Reschedule, complete, or cancel this overdue task"
+                                            .to_string(),
+                                    ),
+                                    line_number: Some(task.line_number),
+                                    context: Some(task.text.clone()),
+                                });
+                            }
                         }
                     }
                 }

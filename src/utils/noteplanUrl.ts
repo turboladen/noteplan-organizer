@@ -52,7 +52,7 @@ function buildCalendarUrl(filePath: string): string {
 
   const dailyMatch = filename.match(DAILY_RE);
   if (dailyMatch) {
-    return `${BASE_URL}?noteDate=${dailyMatch[1]}`;
+    return `${BASE_URL}?noteDate=${encodeURIComponent(dailyMatch[1])}`;
   }
 
   // Fallback: try using the filename without extension as noteDate

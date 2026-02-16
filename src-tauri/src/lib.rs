@@ -12,13 +12,19 @@ pub fn run() {
     tauri::Builder::default()
         .manage(WatcherState::new())
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // Enable logging in both debug and release builds.
+            // Debug: Info level (verbose, for development).
+            // Release: Warn level (captures errors and warnings from the file watcher).
+            let level = if cfg!(debug_assertions) {
+                log::LevelFilter::Info
+            } else {
+                log::LevelFilter::Warn
+            };
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(level)
+                    .build(),
+            )?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
