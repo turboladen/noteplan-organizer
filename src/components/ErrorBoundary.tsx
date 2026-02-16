@@ -32,20 +32,22 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="min-h-screen bg-surface flex items-center justify-center">
           <div className="text-center max-w-md px-6">
-            <div className="text-4xl mb-4">Something went wrong</div>
-            <p className="text-gray-600 mb-2">
+            <h1 className="text-xl font-semibold text-text-primary mb-2">
+              Something went wrong
+            </h1>
+            <p className="text-text-tertiary mb-4">
               The app encountered an unexpected error.
             </p>
             {this.state.error && (
-              <pre className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mb-4 whitespace-pre-wrap text-left">
+              <pre className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-[var(--radius-card)] px-3 py-2 mb-4 whitespace-pre-wrap text-left">
                 {this.state.error.message}
               </pre>
             )}
             <button
               onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800 transition-colors"
+              className="px-4 py-2 bg-accent text-white text-sm font-medium rounded-[var(--radius-button)] hover:bg-accent-hover transition-colors shadow-sm"
             >
               Reload App
             </button>

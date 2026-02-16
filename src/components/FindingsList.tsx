@@ -1,57 +1,55 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback, forwardRef } from "react";
 import type { Finding, FindingCategory, Severity } from "../types/api";
-import { CATEGORY_LABELS } from "../types/api";
+import {
+  CATEGORY_LABELS,
+  CATEGORY_BADGE_STYLES,
+  SEVERITY_BADGE_STYLES,
+} from "../types/api";
 import { NotePreview } from "./NotePreview";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 import { openNotePlanUrl } from "../api/commands";
 import { getFindingId } from "../utils/findingId";
+
+/** Defensive fallbacks for unknown keys (prevents crash if Rust adds new variants) */
+const FALLBACK_SEV_STYLE = { bg: "bg-stone-100", text: "text-stone-600", border: "border-stone-200", dot: "bg-stone-400" };
+const FALLBACK_CAT_STYLE = { bg: "bg-stone-100", text: "text-stone-600", dot: "bg-stone-400" };
 
 interface FindingsListProps {
   findings: Finding[];
   basePath: string;
   dismissedIds: Set<string>;
   onToggleDismissed: (findingId: string) => void;
+  selectedCategory: FindingCategory | "all";
+  selectedSeverity: Severity | "all";
+  onSelectCategory: (cat: FindingCategory | "all") => void;
+  onSelectSeverity: (sev: Severity | "all") => void;
 }
 
 const PAGE_SIZE = 50;
-
-const SEVERITY_BADGE: Record<Severity, string> = {
-  Info: "bg-blue-100 text-blue-700",
-  Warning: "bg-amber-100 text-amber-700",
-  Error: "bg-red-100 text-red-700",
-};
-
-const CATEGORY_COLORS: Record<FindingCategory, string> = {
-  IdConsistency: "bg-purple-100 text-purple-700",
-  UnfiledSlip: "bg-orange-100 text-orange-700",
-  HubCompleteness: "bg-teal-100 text-teal-700",
-  BrokenLink: "bg-red-100 text-red-700",
-  OrphanedNote: "bg-gray-100 text-gray-700",
-  Duplicate: "bg-yellow-100 text-yellow-700",
-  StaleTask: "bg-pink-100 text-pink-700",
-  TemplatePlaceholder: "bg-indigo-100 text-indigo-700",
-};
 
 export function FindingsList({
   findings,
   basePath,
   dismissedIds,
   onToggleDismissed,
+  selectedCategory,
+  selectedSeverity,
+  onSelectCategory,
+  onSelectSeverity,
 }: FindingsListProps) {
-  const [selectedCategory, setSelectedCategory] = useState<
-    FindingCategory | "all"
-  >("all");
-  const [selectedSeverity, setSelectedSeverity] = useState<Severity | "all">(
-    "all"
-  );
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [showDismissed, setShowDismissed] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
 
-  // Reset pagination when filters change, dismissed toggle changes, or findings update
+  const listRef = useRef<HTMLDivElement>(null);
+  const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  // Reset pagination when filters change
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
+    setFocusedIndex(-1);
   }, [selectedCategory, selectedSeverity, showDismissed, findings]);
 
   const filtered = findings.filter((f) => {
@@ -62,128 +60,211 @@ export function FindingsList({
     return true;
   });
 
-  // Separate active vs dismissed within filtered results
   const active = filtered.filter((f) => !dismissedIds.has(getFindingId(f)));
   const dismissed = filtered.filter((f) => dismissedIds.has(getFindingId(f)));
-
-  // Paginate: only render the first `visibleCount` active items
   const visibleActive = active.slice(0, visibleCount);
   const hasMore = active.length > visibleCount;
 
   const categories = [
     ...new Set(findings.map((f) => f.category)),
   ] as FindingCategory[];
-  const severities = [...new Set(findings.map((f) => f.severity))] as Severity[];
+  const severities = [
+    ...new Set(findings.map((f) => f.severity)),
+  ] as Severity[];
 
-  // Counts exclude dismissed items
   const activeFindings = findings.filter(
     (f) => !dismissedIds.has(getFindingId(f))
   );
 
+  // Keyboard navigation
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const maxIndex = visibleActive.length - 1;
+      if (maxIndex < 0) return;
+
+      switch (e.key) {
+        case "ArrowDown":
+        case "j": {
+          e.preventDefault();
+          const next = Math.min(focusedIndex + 1, maxIndex);
+          setFocusedIndex(next);
+          cardRefs.current.get(next)?.scrollIntoView({ block: "nearest" });
+          break;
+        }
+        case "ArrowUp":
+        case "k": {
+          e.preventDefault();
+          const prev = Math.max(focusedIndex - 1, 0);
+          setFocusedIndex(prev);
+          cardRefs.current.get(prev)?.scrollIntoView({ block: "nearest" });
+          break;
+        }
+        case "Enter": {
+          if (focusedIndex >= 0 && focusedIndex <= maxIndex) {
+            e.preventDefault();
+            const fid = getFindingId(visibleActive[focusedIndex]);
+            setExpandedId(expandedId === fid ? null : fid);
+          }
+          break;
+        }
+        case "o": {
+          if (focusedIndex >= 0 && focusedIndex <= maxIndex) {
+            e.preventDefault();
+            const f = visibleActive[focusedIndex];
+            openNotePlanUrl(buildNotePlanUrl(f.file_path));
+          }
+          break;
+        }
+        case " ": {
+          if (focusedIndex >= 0 && focusedIndex <= maxIndex) {
+            e.preventDefault();
+            const fid = getFindingId(visibleActive[focusedIndex]);
+            onToggleDismissed(fid);
+          }
+          break;
+        }
+      }
+    },
+    [focusedIndex, visibleActive, expandedId, onToggleDismissed]
+  );
+
+  // Auto-collapse sidebar when preview is open
+  const sidebarHidden = previewPath !== null;
+
   return (
     <div className="flex gap-6">
-      {/* Filters sidebar */}
-      <div className="w-56 flex-shrink-0 space-y-4">
-        <div>
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            Category
-          </h4>
-          <div className="space-y-1">
-            <FilterButton
-              label="All"
-              count={activeFindings.length}
-              active={selectedCategory === "all"}
-              onClick={() => {
-                setSelectedCategory("all");
-                setSelectedSeverity("all");
-              }}
-            />
-            {categories.map((cat) => (
-              <FilterButton
-                key={cat}
-                label={CATEGORY_LABELS[cat]}
-                count={
-                  activeFindings.filter((f) => f.category === cat).length
-                }
-                active={selectedCategory === cat}
-                onClick={() => {
-                  setSelectedCategory(cat);
-                  setSelectedSeverity("all");
-                }}
-                colorClass={CATEGORY_COLORS[cat]}
-              />
-            ))}
-          </div>
-        </div>
-        <div>
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            Severity
-          </h4>
-          <div className="space-y-1">
-            <FilterButton
-              label="All"
-              count={activeFindings.length}
-              active={selectedSeverity === "all"}
-              onClick={() => {
-                setSelectedSeverity("all");
-                setSelectedCategory("all");
-              }}
-            />
-            {severities.map((sev) => (
-              <FilterButton
-                key={sev}
-                label={sev}
-                count={
-                  activeFindings.filter((f) => f.severity === sev).length
-                }
-                active={selectedSeverity === sev}
-                onClick={() => {
-                  setSelectedSeverity(sev);
-                  setSelectedCategory("all");
-                }}
-                colorClass={SEVERITY_BADGE[sev]}
-              />
-            ))}
-          </div>
-        </div>
+      {/* Filters sidebar — glass panel, collapses when preview open */}
+      {!sidebarHidden && (
+        <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in">
+          <div className="glass-sidebar rounded-[var(--radius-panel)] shadow-card p-4 space-y-4">
+            <div>
+              <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+                Category
+              </h4>
+              <div className="space-y-1">
+                <FilterButton
+                  label="All"
+                  count={activeFindings.length}
+                  active={selectedCategory === "all"}
+                  onClick={() => {
+                    onSelectCategory("all");
+                    onSelectSeverity("all");
+                  }}
+                />
+                {categories.map((cat) => {
+                  const style = CATEGORY_BADGE_STYLES[cat];
+                  return (
+                    <FilterButton
+                      key={cat}
+                      label={CATEGORY_LABELS[cat]}
+                      count={
+                        activeFindings.filter((f) => f.category === cat).length
+                      }
+                      active={selectedCategory === cat}
+                      onClick={() => {
+                        onSelectCategory(cat);
+                        onSelectSeverity("all");
+                      }}
+                      dotColor={style.dot}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+                Severity
+              </h4>
+              <div className="space-y-1">
+                <FilterButton
+                  label="All"
+                  count={activeFindings.length}
+                  active={selectedSeverity === "all"}
+                  onClick={() => {
+                    onSelectSeverity("all");
+                    onSelectCategory("all");
+                  }}
+                />
+                {severities.map((sev) => {
+                  const style = SEVERITY_BADGE_STYLES[sev];
+                  return (
+                    <FilterButton
+                      key={sev}
+                      label={sev}
+                      count={
+                        activeFindings.filter((f) => f.severity === sev).length
+                      }
+                      active={selectedSeverity === sev}
+                      onClick={() => {
+                        onSelectSeverity(sev);
+                        onSelectCategory("all");
+                      }}
+                      dotColor={style.dot}
+                    />
+                  );
+                })}
+              </div>
+            </div>
 
-        {/* Show/hide dismissed toggle */}
-        {dismissed.length > 0 && (
-          <div className="pt-2 border-t border-gray-200">
-            <button
-              onClick={() => setShowDismissed(!showDismissed)}
-              className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
-            >
-              {showDismissed ? "Hide" : "Show"} resolved ({dismissedIds.size})
-            </button>
+            {/* Show/hide dismissed toggle */}
+            {dismissed.length > 0 && (
+              <div className="pt-2 border-t border-border-light">
+                <button
+                  onClick={() => setShowDismissed(!showDismissed)}
+                  className="text-xs text-text-tertiary hover:text-text-secondary transition-colors"
+                >
+                  {showDismissed ? "Hide" : "Show"} resolved ({dismissedIds.size}
+                  )
+                </button>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Findings */}
-      <div className="flex-1 min-w-0">
-        <div className="text-sm text-gray-500 mb-3">
-          Showing {Math.min(visibleCount, active.length)} of {active.length} findings
+      <div
+        ref={listRef}
+        className="flex-1 min-w-0 outline-none"
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+      >
+        <div className="text-sm text-text-tertiary mb-3">
+          Showing {Math.min(visibleCount, active.length)} of {active.length}{" "}
+          findings
           {active.length !== activeFindings.length && (
-            <span className="text-gray-400">
-              {" "}({activeFindings.length} total)
+            <span className="text-text-muted">
+              {" "}
+              ({activeFindings.length} total)
             </span>
           )}
           {dismissedIds.size > 0 && (
-            <span className="text-gray-400">
+            <span className="text-text-muted">
               {" "}· {dismissedIds.size} resolved
             </span>
           )}
+          {/* Keyboard hints */}
+          <span className="text-text-muted ml-3 hidden sm:inline">
+            ↑↓ navigate · Enter expand · o open · Space resolve
+          </span>
         </div>
-        <div key={`${selectedCategory}::${selectedSeverity}`} className="space-y-2">
+        <div
+          key={`${selectedCategory}::${selectedSeverity}`}
+          className="space-y-2 animate-fade-in"
+        >
           {visibleActive.map((finding, i) => {
             const fid = getFindingId(finding);
             return (
               <FindingCard
                 key={`${i}-${fid}`}
+                ref={(el) => {
+                  if (el) cardRefs.current.set(i, el);
+                  else cardRefs.current.delete(i);
+                }}
                 finding={finding}
                 isDismissed={false}
                 expanded={expandedId === fid}
+                focused={focusedIndex === i}
                 onToggle={() =>
                   setExpandedId(expandedId === fid ? null : fid)
                 }
@@ -200,7 +281,7 @@ export function FindingsList({
             <button
               type="button"
               onClick={() => setVisibleCount((prev) => prev + PAGE_SIZE)}
-              className="px-4 py-2 text-sm text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              className="px-4 py-2 text-sm text-text-secondary bg-surface-raised border border-border rounded-[var(--radius-button)] hover:bg-surface-hover transition-colors"
             >
               Show more ({active.length - visibleCount} remaining)
             </button>
@@ -210,7 +291,7 @@ export function FindingsList({
         {/* Dismissed findings */}
         {showDismissed && dismissed.length > 0 && (
           <>
-            <div className="text-xs text-gray-400 mt-6 mb-2 uppercase tracking-wide font-semibold">
+            <div className="text-xs text-text-muted mt-6 mb-2 uppercase tracking-wide font-semibold">
               Resolved ({dismissed.length})
             </div>
             <div className="space-y-2">
@@ -222,6 +303,7 @@ export function FindingsList({
                     finding={finding}
                     isDismissed={true}
                     expanded={expandedId === fid}
+                    focused={false}
                     onToggle={() =>
                       setExpandedId(expandedId === fid ? null : fid)
                     }
@@ -235,16 +317,16 @@ export function FindingsList({
         )}
 
         {active.length === 0 && dismissed.length === 0 && (
-          <div className="text-center py-12 text-gray-400">
+          <div className="text-center py-12 text-text-muted">
             No findings match the current filters.
           </div>
         )}
         {active.length === 0 && dismissed.length > 0 && !showDismissed && (
-          <div className="text-center py-12 text-gray-400">
+          <div className="text-center py-12 text-text-muted">
             All findings in this view have been resolved.{" "}
             <button
               onClick={() => setShowDismissed(true)}
-              className="text-blue-500 hover:underline"
+              className="text-accent hover:underline"
             >
               Show resolved
             </button>
@@ -264,33 +346,44 @@ export function FindingsList({
   );
 }
 
+/* ── Filter sidebar button ── */
+
 function FilterButton({
   label,
   count,
   active,
   onClick,
-  colorClass,
+  dotColor,
 }: {
   label: string;
   count: number;
   active: boolean;
   onClick: () => void;
-  colorClass?: string;
+  dotColor?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       data-active={active}
-      className={
+      className={`w-full flex items-center justify-between px-3 py-1.5 rounded-[var(--radius-badge)] text-sm cursor-pointer transition-colors ${
         active
-          ? "w-full flex items-center justify-between px-3 py-1.5 rounded text-sm cursor-pointer bg-gray-900 text-white font-medium"
-          : `w-full flex items-center justify-between px-3 py-1.5 rounded text-sm cursor-pointer hover:bg-gray-100 text-gray-700 ${colorClass ?? ""}`
-      }
+          ? "bg-accent text-white font-medium"
+          : "hover:bg-surface-hover text-text-secondary"
+      }`}
     >
-      <span className="truncate">{label}</span>
+      <span className="flex items-center gap-2 truncate">
+        {dotColor && (
+          <span
+            className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dotColor}`}
+          />
+        )}
+        {label}
+      </span>
       <span
-        className={active ? "text-xs font-mono text-gray-300" : "text-xs font-mono text-gray-400"}
+        className={`text-xs font-mono ${
+          active ? "text-white/70" : "text-text-muted"
+        }`}
       >
         {count}
       </span>
@@ -298,34 +391,51 @@ function FilterButton({
   );
 }
 
-function FindingCard({
-  finding,
-  isDismissed,
-  expanded,
-  onToggle,
-  onPreview,
-  onToggleDismissed,
-}: {
-  finding: Finding;
-  isDismissed: boolean;
-  expanded: boolean;
-  onToggle: () => void;
-  onPreview: () => void;
-  onToggleDismissed: () => void;
-}) {
-  // Shorten file_path for display: strip the "Notes/" prefix
+/* ── Finding card ── */
+
+const FindingCard = forwardRef<
+  HTMLDivElement,
+  {
+    finding: Finding;
+    isDismissed: boolean;
+    expanded: boolean;
+    focused: boolean;
+    onToggle: () => void;
+    onPreview: () => void;
+    onToggleDismissed: () => void;
+  }
+>(function FindingCard(
+  {
+    finding,
+    isDismissed,
+    expanded,
+    focused,
+    onToggle,
+    onPreview,
+    onToggleDismissed,
+  },
+  ref
+) {
   const shortPath = finding.file_path
     .replace(/^Notes\//, "")
     .replace(/^Calendar\//, "cal/");
 
+  const sevStyle = SEVERITY_BADGE_STYLES[finding.severity] ?? FALLBACK_SEV_STYLE;
+  const catStyle = CATEGORY_BADGE_STYLES[finding.category] ?? FALLBACK_CAT_STYLE;
+
   return (
     <div
-      className={`bg-white border border-gray-200 rounded-lg overflow-hidden transition-opacity ${
-        isDismissed ? "opacity-50" : ""
+      ref={ref}
+      className={`bg-surface-raised border rounded-[var(--radius-card)] overflow-hidden transition-all ${
+        isDismissed ? "opacity-50 border-border-light" : "border-border-light"
+      } ${
+        focused
+          ? "ring-2 ring-accent/50 shadow-card-hover"
+          : "shadow-card hover:shadow-card-hover"
       }`}
     >
       <div className="flex items-start min-w-0">
-        {/* Checkbox */}
+        {/* Styled checkbox */}
         <label
           className="flex items-center justify-center w-10 flex-shrink-0 pt-3.5 cursor-pointer"
           title={isDismissed ? "Mark as unresolved" : "Mark as resolved"}
@@ -337,45 +447,46 @@ function FindingCard({
               e.stopPropagation();
               onToggleDismissed();
             }}
-            className="w-4 h-4 rounded border-gray-300 text-gray-600 focus:ring-gray-500 cursor-pointer"
+            className="accent-check"
           />
         </label>
 
-        {/* Card content — always shows suggestion inline */}
+        {/* Card content */}
         <div
           className={`min-w-0 flex-1 px-2 py-3 ${
-            isDismissed ? "line-through decoration-gray-300" : ""
+            isDismissed ? "line-through decoration-text-muted" : ""
           }`}
         >
           {/* Top row: severity + description + category */}
           <div className="flex items-start gap-3">
             <span
-              className={`inline-block px-2 py-0.5 rounded text-xs font-medium flex-shrink-0 mt-0.5 ${
-                SEVERITY_BADGE[finding.severity]
-              }`}
+              className={`inline-block px-2 py-0.5 rounded-[var(--radius-badge)] text-xs font-medium flex-shrink-0 mt-0.5 ${sevStyle.bg} ${sevStyle.text}`}
             >
               {finding.severity}
             </span>
             <div className="min-w-0 flex-1">
-              <div className="text-sm text-gray-900">{finding.description}</div>
+              <div className="text-sm font-medium text-text-primary">
+                {finding.description}
+              </div>
             </div>
             <span
-              className={`inline-block px-2 py-0.5 rounded text-xs flex-shrink-0 mt-0.5 ${
-                CATEGORY_COLORS[finding.category]
-              }`}
+              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[var(--radius-badge)] text-xs flex-shrink-0 mt-0.5 ${catStyle.bg} ${catStyle.text}`}
             >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${catStyle.dot}`}
+              />
               {CATEGORY_LABELS[finding.category]}
             </span>
           </div>
 
           {/* Suggestion — always visible */}
           {finding.suggestion && (
-            <div className="mt-1.5 ml-[calc(2ch+1.25rem)] text-xs text-gray-500">
+            <div className="mt-1.5 ml-[calc(2ch+1.25rem)] text-xs text-text-tertiary border-l-2 border-accent-light pl-2">
               {finding.suggestion}
             </div>
           )}
 
-          {/* File path + actions row — always visible */}
+          {/* File path + actions row */}
           <div className="mt-1.5 ml-[calc(2ch+1.25rem)] flex items-center gap-3 text-xs">
             <span
               role="button"
@@ -391,7 +502,7 @@ function FindingCard({
                   openNotePlanUrl(buildNotePlanUrl(finding.file_path));
                 }
               }}
-              className="text-gray-400 hover:text-indigo-600 hover:underline cursor-pointer transition-colors truncate"
+              className="text-text-muted hover:text-accent hover:underline cursor-pointer transition-colors truncate"
             >
               {shortPath} &#x2197;
             </span>
@@ -399,7 +510,7 @@ function FindingCard({
               <button
                 type="button"
                 onClick={onToggle}
-                className="text-gray-400 hover:text-gray-600 flex-shrink-0 transition-colors"
+                className="text-text-muted hover:text-text-secondary flex-shrink-0 transition-colors"
               >
                 {expanded ? "Less" : "More"}
               </button>
@@ -410,7 +521,7 @@ function FindingCard({
                 e.stopPropagation();
                 onPreview();
               }}
-              className="text-gray-400 hover:text-blue-600 flex-shrink-0 transition-colors"
+              className="text-text-muted hover:text-accent flex-shrink-0 transition-colors"
             >
               Preview
             </button>
@@ -418,16 +529,16 @@ function FindingCard({
         </div>
       </div>
 
-      {/* Expanded details — only for context/line number */}
+      {/* Expanded details */}
       {expanded && (
-        <div className="border-t border-gray-100 px-4 py-3 bg-gray-50 space-y-2 ml-10">
+        <div className="border-t border-border-light px-4 py-3 bg-surface space-y-2 ml-10">
           {finding.context && (
-            <div className="text-xs bg-gray-100 rounded px-3 py-2 font-mono text-gray-600 whitespace-pre-wrap">
+            <div className="text-xs bg-surface-hover rounded-[var(--radius-badge)] px-3 py-2 font-mono text-text-secondary whitespace-pre-wrap">
               {finding.context}
             </div>
           )}
           {finding.line_number && (
-            <div className="text-xs text-gray-400">
+            <div className="text-xs text-text-muted">
               Line {finding.line_number}
             </div>
           )}
@@ -435,4 +546,4 @@ function FindingCard({
       )}
     </div>
   );
-}
+});

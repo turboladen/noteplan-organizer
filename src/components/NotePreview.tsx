@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { getNoteContent } from "../api/commands";
+import { openNotePlanUrl } from "../api/commands";
+import { buildNotePlanUrl } from "../utils/noteplanUrl";
 
 interface NotePreviewProps {
   path: string;
@@ -21,35 +23,65 @@ export function NotePreview({ path, basePath, onClose }: NotePreviewProps) {
       .catch((e) => setError(String(e)));
   }, [path, basePath]);
 
+  // Close on Escape key
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
   // Short display path
   const shortPath = path.split("/").slice(-2).join("/");
 
   return (
-    <div className="w-96 flex-shrink-0 border-l border-gray-200 bg-white">
-      <div className="sticky top-0 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-gray-700 truncate">
-          {shortPath}
-        </h3>
-        <button
-          onClick={onClose}
-          className="text-gray-400 hover:text-gray-600 text-lg leading-none"
-        >
-          &times;
-        </button>
+    <>
+      {/* Backdrop — click to close */}
+      <div
+        className="fixed inset-0 z-20 bg-black/5"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+
+      {/* Panel */}
+      <div className="fixed top-0 right-0 h-screen w-96 z-30 bg-surface-raised shadow-panel animate-slide-in-right flex flex-col">
+        <div className="border-b border-border-light px-4 py-3 flex items-center justify-between flex-shrink-0">
+          <h3 className="text-sm font-medium text-text-secondary truncate">
+            {shortPath}
+          </h3>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => openNotePlanUrl(buildNotePlanUrl(path))}
+              className="text-xs text-text-muted hover:text-accent transition-colors"
+              title="Open in NotePlan"
+            >
+              Open ↗
+            </button>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors text-lg leading-none"
+              title="Close (Esc)"
+            >
+              &times;
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 px-4 py-3 overflow-auto">
+          {error && (
+            <div className="text-sm text-red-600">Failed to load: {error}</div>
+          )}
+          {content === null && !error && (
+            <div className="text-sm text-text-muted">Loading...</div>
+          )}
+          {content !== null && (
+            <pre className="text-xs text-text-secondary whitespace-pre-wrap font-mono leading-relaxed">
+              {content}
+            </pre>
+          )}
+        </div>
       </div>
-      <div className="px-4 py-3 overflow-auto max-h-[calc(100vh-12rem)]">
-        {error && (
-          <div className="text-sm text-red-600">Failed to load: {error}</div>
-        )}
-        {content === null && !error && (
-          <div className="text-sm text-gray-400">Loading...</div>
-        )}
-        {content !== null && (
-          <pre className="text-xs text-gray-700 whitespace-pre-wrap font-mono leading-relaxed">
-            {content}
-          </pre>
-        )}
-      </div>
-    </div>
+    </>
   );
 }

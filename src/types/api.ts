@@ -63,3 +63,75 @@ export const SEVERITY_COLORS: Record<Severity, string> = {
   Warning: "amber",
   Error: "red",
 };
+
+/** Badge styles for severity labels — bg + text + border + dot */
+export const SEVERITY_BADGE_STYLES: Record<
+  Severity,
+  { bg: string; text: string; border: string; dot: string }
+> = {
+  Info: {
+    bg: "bg-blue-50",
+    text: "text-blue-700",
+    border: "border-blue-200",
+    dot: "bg-blue-400",
+  },
+  Warning: {
+    bg: "bg-amber-50",
+    text: "text-amber-700",
+    border: "border-amber-200",
+    dot: "bg-amber-400",
+  },
+  Error: {
+    bg: "bg-red-50",
+    text: "text-red-700",
+    border: "border-red-200",
+    dot: "bg-red-400",
+  },
+};
+
+/** Badge styles for finding categories — bg, text, and colored dot */
+export const CATEGORY_BADGE_STYLES: Record<
+  FindingCategory,
+  { bg: string; text: string; dot: string }
+> = {
+  IdConsistency: {
+    bg: "bg-purple-50",
+    text: "text-purple-700",
+    dot: "bg-purple-400",
+  },
+  UnfiledSlip: {
+    bg: "bg-orange-50",
+    text: "text-orange-700",
+    dot: "bg-orange-400",
+  },
+  HubCompleteness: {
+    bg: "bg-teal-50",
+    text: "text-teal-700",
+    dot: "bg-teal-400",
+  },
+  BrokenLink: {
+    bg: "bg-rose-50",
+    text: "text-rose-700",
+    dot: "bg-rose-400",
+  },
+  OrphanedNote: {
+    bg: "bg-stone-100",
+    text: "text-stone-600",
+    dot: "bg-stone-400",
+  },
+  Duplicate: {
+    bg: "bg-yellow-50",
+    text: "text-yellow-700",
+    dot: "bg-yellow-400",
+  },
+  StaleTask: {
+    bg: "bg-pink-50",
+    text: "text-pink-700",
+    dot: "bg-pink-400",
+  },
+  TemplatePlaceholder: {
+    bg: "bg-indigo-50",
+    text: "text-indigo-700",
+    dot: "bg-indigo-400",
+  },
+};

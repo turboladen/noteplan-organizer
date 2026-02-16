@@ -33,9 +33,13 @@ impl Report {
         let mut by_severity: HashMap<String, usize> = HashMap::new();
 
         for f in &findings {
-            *by_category
-                .entry(f.category.label().to_string())
-                .or_insert(0) += 1;
+            // Use serde variant name (e.g. "IdConsistency") as key — NOT .label()
+            // ("ID Consistency") — so frontend lookup maps match.
+            let cat_key = serde_json::to_value(&f.category)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_else(|| f.category.label().to_string());
+            *by_category.entry(cat_key).or_insert(0) += 1;
             let sev = match f.severity {
                 Severity::Info => "Info",
                 Severity::Warning => "Warning",

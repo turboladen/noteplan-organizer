@@ -7,9 +7,9 @@ import {
   stopWatching,
   isWatching as checkIsWatching,
 } from "./api/commands";
-import { Dashboard } from "./components/Dashboard";
+import { SummaryBar } from "./components/SummaryBar";
 import { FindingsList } from "./components/FindingsList";
-import type { Report } from "./types/api";
+import type { FindingCategory, Report, Severity } from "./types/api";
 import { getFindingId } from "./utils/findingId";
 
 const DISMISSED_KEY = "noteplan-organizer:dismissed";
@@ -28,17 +28,35 @@ function saveDismissed(dismissed: Set<string>) {
   localStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissed]));
 }
 
-type View = "dashboard" | "findings";
-
 function App() {
   const [notePlanPath, setNotePlanPath] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<View>("dashboard");
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(loadDismissed);
   const [watching, setWatching] = useState(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  const hasScannedRef = useRef(false);
+
+  // Lifted filter state — shared between SummaryBar and FindingsList
+  const [selectedCategory, setSelectedCategory] = useState<
+    FindingCategory | "all"
+  >("all");
+  const [selectedSeverity, setSelectedSeverity] = useState<Severity | "all">(
+    "all"
+  );
+
+  // Toast state for watcher updates
+  const [toast, setToast] = useState<{ message: string; key: number } | null>(
+    null
+  );
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((message: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ message, key: Date.now() });
+    toastTimerRef.current = setTimeout(() => setToast(null), 3000);
+  }, []);
 
   const toggleDismissed = useCallback((findingId: string) => {
     setDismissedIds((prev) => {
@@ -53,8 +71,7 @@ function App() {
     });
   }, []);
 
-  // Prune dismissed IDs that no longer match any finding after a rescan.
-  // This prevents the localStorage set from growing forever.
+  // Prune dismissed IDs that no longer match any finding after a rescan
   useEffect(() => {
     if (!report) return;
     const currentIds = new Set(report.findings.map(getFindingId));
@@ -76,8 +93,7 @@ function App() {
       });
   }, []);
 
-  // Subscribe to scan-update events from the file watcher.
-  // The Rust watcher emits these when it detects file changes and completes a rescan.
+  // Subscribe to scan-update events from the file watcher
   useEffect(() => {
     let cancelled = false;
 
@@ -85,6 +101,7 @@ function App() {
       const unlisten = await listen<Report>("scan-update", (event) => {
         if (!cancelled) {
           setReport(event.payload);
+          showToast("Notes updated from file changes");
         }
       });
       if (!cancelled) {
@@ -103,9 +120,9 @@ function App() {
         unlistenRef.current = null;
       }
     };
-  }, []);
+  }, [showToast]);
 
-  // Sync watching state on mount (Rust process persists across webview reloads)
+  // Sync watching state on mount
   useEffect(() => {
     checkIsWatching().then(setWatching).catch(() => {});
   }, []);
@@ -117,7 +134,7 @@ function App() {
     try {
       const result = await scanNotes(notePlanPath);
       setReport(result);
-      setView("dashboard");
+      hasScannedRef.current = true;
 
       // Auto-start watching after first successful scan
       if (!watching) {
@@ -125,7 +142,6 @@ function App() {
           await startWatching(notePlanPath);
           setWatching(true);
         } catch (e) {
-          // Non-fatal: watching is optional
           console.warn("Failed to start file watcher:", e);
         }
       }
@@ -152,40 +168,39 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen bg-surface flex flex-col">
+      {/* Toast notification */}
+      {toast && (
+        <div
+          key={toast.key}
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-50 animate-toast-in"
+        >
+          <div className="bg-text-primary text-surface-raised text-sm px-4 py-2 rounded-[var(--radius-button)] shadow-panel flex items-center gap-2">
+            <span className="w-2 h-2 bg-accent rounded-full flex-shrink-0" />
+            {toast.message}
+          </div>
+        </div>
+      )}
+
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
+      <header className="sticky top-0 z-40 bg-surface-raised/80 backdrop-blur-sm border-b border-border-light px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-lg font-semibold text-gray-900">
+            <h1 className="text-lg font-semibold text-text-primary">
               NotePlan Organizer
             </h1>
-            {report && (
-              <nav className="flex gap-1 ml-6">
-                <TabButton
-                  label="Dashboard"
-                  active={view === "dashboard"}
-                  onClick={() => setView("dashboard")}
-                />
-                <TabButton
-                  label={`Findings (${report.stats.total_findings - dismissedIds.size})`}
-                  active={view === "findings"}
-                  onClick={() => setView("findings")}
-                />
-              </nav>
-            )}
           </div>
           <div className="flex items-center gap-3">
             {notePlanPath && (
-              <span className="text-xs text-gray-400 max-w-xs truncate">
+              <span className="text-xs text-text-muted max-w-xs truncate">
                 {notePlanPath.split("/").slice(-2).join("/")}
               </span>
             )}
 
             {/* Watch status indicator */}
             {watching && (
-              <span className="flex items-center gap-1.5 text-xs text-green-600">
-                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              <span className="flex items-center gap-1.5 text-xs text-accent-700">
+                <span className="w-2 h-2 bg-accent rounded-full animate-pulse" />
                 Watching
               </span>
             )}
@@ -195,10 +210,10 @@ function App() {
               <button
                 type="button"
                 onClick={handleToggleWatch}
-                className={`px-3 py-2 text-sm rounded-lg border transition-colors ${
+                className={`px-3 py-2 text-sm rounded-[var(--radius-button)] border transition-colors ${
                   watching
-                    ? "border-green-300 text-green-700 bg-green-50 hover:bg-green-100"
-                    : "border-gray-300 text-gray-600 bg-white hover:bg-gray-50"
+                    ? "border-accent-light text-accent-700 bg-accent-50 hover:bg-accent-100"
+                    : "border-border text-text-secondary bg-surface-raised hover:bg-surface-hover"
                 }`}
               >
                 {watching ? "Stop Watch" : "Watch"}
@@ -208,9 +223,13 @@ function App() {
             <button
               onClick={handleScan}
               disabled={scanning || !notePlanPath}
-              className="px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-4 py-2 bg-accent text-white text-sm font-medium rounded-[var(--radius-button)] hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
             >
-              {scanning ? "Scanning..." : "Scan Notes"}
+              {scanning
+                ? "Scanning..."
+                : hasScannedRef.current
+                  ? "Rescan"
+                  : "Scan Notes"}
             </button>
           </div>
         </div>
@@ -219,23 +238,22 @@ function App() {
       {/* Main content */}
       <main className="flex-1 px-6 py-6">
         {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-[var(--radius-card)] px-4 py-3 text-sm">
             {error}
           </div>
         )}
 
         {!report && !scanning && (
-          <div className="text-center py-24">
-            <div className="text-4xl mb-4">📋</div>
-            <h2 className="text-xl font-medium text-gray-700 mb-2">
+          <div className="text-center py-24 animate-fade-in">
+            <h2 className="text-xl font-medium text-text-secondary mb-2">
               Ready to analyze your notes
             </h2>
-            <p className="text-gray-500 mb-6 max-w-md mx-auto">
+            <p className="text-text-tertiary mb-6 max-w-md mx-auto">
               Click "Scan Notes" to parse your NotePlan files and check for
               structural issues, broken links, stale tasks, and more.
             </p>
             {notePlanPath ? (
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-text-muted">
                 Found NotePlan at: {notePlanPath}
               </p>
             ) : (
@@ -249,45 +267,42 @@ function App() {
 
         {scanning && (
           <div className="text-center py-24">
-            <div className="text-4xl mb-4 animate-pulse">🔍</div>
-            <h2 className="text-lg text-gray-600">Scanning your notes...</h2>
+            <div className="flex items-center justify-center gap-1 mb-4">
+              <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:0ms]" />
+              <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:150ms]" />
+              <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:300ms]" />
+            </div>
+            <h2 className="text-lg text-text-tertiary">
+              Scanning your notes...
+            </h2>
           </div>
         )}
 
-        {report && view === "dashboard" && <Dashboard report={report} />}
-        {report && view === "findings" && (
-          <FindingsList
-            findings={report.findings}
-            basePath={report.noteplan_path}
-            dismissedIds={dismissedIds}
-            onToggleDismissed={toggleDismissed}
-          />
+        {report && (
+          <>
+            <SummaryBar
+              stats={report.stats}
+              scannedAt={report.scanned_at}
+              dismissedCount={dismissedIds.size}
+              selectedCategory={selectedCategory}
+              selectedSeverity={selectedSeverity}
+              onSelectCategory={setSelectedCategory}
+              onSelectSeverity={setSelectedSeverity}
+            />
+            <FindingsList
+              findings={report.findings}
+              basePath={report.noteplan_path}
+              dismissedIds={dismissedIds}
+              onToggleDismissed={toggleDismissed}
+              selectedCategory={selectedCategory}
+              selectedSeverity={selectedSeverity}
+              onSelectCategory={setSelectedCategory}
+              onSelectSeverity={setSelectedSeverity}
+            />
+          </>
         )}
       </main>
     </div>
-  );
-}
-
-function TabButton({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-        active
-          ? "bg-gray-100 text-gray-900 font-medium"
-          : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
-      }`}
-    >
-      {label}
-    </button>
   );
 }
 
