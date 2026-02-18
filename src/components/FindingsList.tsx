@@ -101,9 +101,12 @@ export function FindingsList({
         }
         case "Enter": {
           if (focusedIndex >= 0 && focusedIndex <= maxIndex) {
-            e.preventDefault();
-            const fid = getFindingId(visibleActive[focusedIndex]);
-            setExpandedId(expandedId === fid ? null : fid);
+            const f = visibleActive[focusedIndex];
+            if (f.context || f.line_number) {
+              e.preventDefault();
+              const fid = getFindingId(f);
+              setExpandedId(expandedId === fid ? null : fid);
+            }
           }
           break;
         }
@@ -128,14 +131,10 @@ export function FindingsList({
     [focusedIndex, visibleActive, expandedId, onToggleDismissed]
   );
 
-  // Auto-collapse sidebar when preview is open
-  const sidebarHidden = previewPath !== null;
-
   return (
     <div className="flex gap-6">
-      {/* Filters sidebar — glass panel, collapses when preview open */}
-      {!sidebarHidden && (
-        <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in">
+      {/* Filters sidebar — glass panel */}
+      <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in">
           <div className="glass-sidebar rounded-[var(--radius-panel)] shadow-card p-4 space-y-4">
             <div>
               <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
@@ -220,7 +219,6 @@ export function FindingsList({
             )}
           </div>
         </div>
-      )}
 
       {/* Findings */}
       <div
@@ -245,7 +243,7 @@ export function FindingsList({
           )}
           {/* Keyboard hints */}
           <span className="text-text-muted ml-3 hidden sm:inline">
-            ↑↓ navigate · Enter expand · o open · Space resolve
+            ↑↓ navigate · o open · Space resolve
           </span>
         </div>
         <div
@@ -265,10 +263,15 @@ export function FindingsList({
                 isDismissed={false}
                 expanded={expandedId === fid}
                 focused={focusedIndex === i}
+                isPreviewActive={previewPath === finding.file_path}
                 onToggle={() =>
                   setExpandedId(expandedId === fid ? null : fid)
                 }
-                onPreview={() => setPreviewPath(finding.file_path)}
+                onPreview={() =>
+                  setPreviewPath((prev) =>
+                    prev === finding.file_path ? null : finding.file_path
+                  )
+                }
                 onToggleDismissed={() => onToggleDismissed(fid)}
               />
             );
@@ -304,10 +307,15 @@ export function FindingsList({
                     isDismissed={true}
                     expanded={expandedId === fid}
                     focused={false}
+                    isPreviewActive={previewPath === finding.file_path}
                     onToggle={() =>
                       setExpandedId(expandedId === fid ? null : fid)
                     }
-                    onPreview={() => setPreviewPath(finding.file_path)}
+                    onPreview={() =>
+                      setPreviewPath((prev) =>
+                        prev === finding.file_path ? null : finding.file_path
+                      )
+                    }
                     onToggleDismissed={() => onToggleDismissed(fid)}
                   />
                 );
@@ -400,6 +408,7 @@ const FindingCard = forwardRef<
     isDismissed: boolean;
     expanded: boolean;
     focused: boolean;
+    isPreviewActive: boolean;
     onToggle: () => void;
     onPreview: () => void;
     onToggleDismissed: () => void;
@@ -410,6 +419,7 @@ const FindingCard = forwardRef<
     isDismissed,
     expanded,
     focused,
+    isPreviewActive,
     onToggle,
     onPreview,
     onToggleDismissed,
@@ -510,7 +520,7 @@ const FindingCard = forwardRef<
               <button
                 type="button"
                 onClick={onToggle}
-                className="text-text-muted hover:text-text-secondary flex-shrink-0 transition-colors"
+                className="px-2 py-0.5 rounded-[var(--radius-badge)] border border-border-light text-text-tertiary bg-surface hover:bg-surface-hover hover:text-text-secondary flex-shrink-0 transition-colors"
               >
                 {expanded ? "Less" : "More"}
               </button>
@@ -521,16 +531,20 @@ const FindingCard = forwardRef<
                 e.stopPropagation();
                 onPreview();
               }}
-              className="text-text-muted hover:text-accent flex-shrink-0 transition-colors"
+              className={
+                isPreviewActive
+                  ? "px-2 py-0.5 rounded-[var(--radius-badge)] border border-accent bg-accent-50 text-accent-700 hover:bg-accent-100 flex-shrink-0 transition-colors"
+                  : "px-2 py-0.5 rounded-[var(--radius-badge)] border border-border-light text-text-tertiary bg-surface hover:bg-surface-hover hover:text-accent flex-shrink-0 transition-colors"
+              }
             >
-              Preview
+              {isPreviewActive ? "Close Preview" : "Preview"}
             </button>
           </div>
         </div>
       </div>
 
       {/* Expanded details */}
-      {expanded && (
+      {expanded && (finding.context || finding.line_number) && (
         <div className="border-t border-border-light px-4 py-3 bg-surface space-y-2 ml-10">
           {finding.context && (
             <div className="text-xs bg-surface-hover rounded-[var(--radius-badge)] px-3 py-2 font-mono text-text-secondary whitespace-pre-wrap">

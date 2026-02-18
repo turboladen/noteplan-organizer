@@ -6,10 +6,29 @@
 bun install          # Install frontend dependencies (do NOT use npm/npx)
 cargo tauri dev      # Launch app in dev mode with hot-reload
 cargo tauri build    # Build production .app bundle
+# Build output: src-tauri/target/release/bundle/dmg/
+# Bundle targets set to ["dmg"] (macOS only) in tauri.conf.json
 cargo test --manifest-path src-tauri/Cargo.toml  # Run Rust unit tests
 cargo check --manifest-path src-tauri/Cargo.toml # Type-check Rust without building
 bunx tsc --noEmit    # Type-check TypeScript
 ```
+
+## Icons
+
+Source: `src-tauri/icons/source.svg`. To regenerate icons from the SVG:
+```bash
+rsvg-convert -w 1024 -h 1024 src-tauri/icons/source.svg -o src-tauri/icons/tmp.png
+# Then use sips + iconutil (see below) — `bunx tauri icon` fails (sharp/libvips build issue)
+sips -z 32 32 tmp.png --out src-tauri/icons/32x32.png
+sips -z 128 128 tmp.png --out src-tauri/icons/128x128.png
+sips -z 256 256 tmp.png --out 'src-tauri/icons/128x128@2x.png'
+cp tmp.png src-tauri/icons/icon.png
+# For .icns: create icon.iconset/ with all sizes, then `iconutil -c icns icon.iconset -o icon.icns`
+```
+
+## Distribution
+
+App is unsigned/unnotarized. Recipients must right-click → Open on first launch to bypass Gatekeeper.
 
 ## Architecture
 

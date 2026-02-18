@@ -77,15 +77,7 @@ impl Analyzer for IdConsistencyAnalyzer {
                             parent_id
                         )),
                         line_number: None,
-                        context: if title_id != filename_id {
-                            Some(format!(
-                                "Filename ID: {}, Title ID: {}",
-                                filename_id.unwrap_or("none"),
-                                title_id.unwrap_or("none")
-                            ))
-                        } else {
-                            None
-                        },
+                        context: None,
                     });
                 }
             }
