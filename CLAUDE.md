@@ -45,7 +45,9 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
 **Frontend (React + TypeScript)**:
 - `api/commands.ts` — Typed wrappers around `invoke()` calls
 - `types/api.ts` — TypeScript types matching Rust models (manually kept in sync, no codegen)
-- `components/FindingsList.tsx` — Main findings UI with filtering, pagination, dismiss/resolve
+- `components/FindingsList.tsx` — Main findings UI with filtering, pagination, dismiss/resolve.
+  Three-column flex layout: filter sidebar (w-56), card list (flex-1), inline sticky preview (w-96, conditional).
+- `components/NotePreview.tsx` — Inline sticky preview panel (not a fixed overlay); participates in FindingsList flex layout
 - `utils/noteplanUrl.ts` — Builds `noteplan://` x-callback-url links
 
 ## Critical Gotchas
@@ -70,12 +72,20 @@ TypeScript types in `types/api.ts` must be kept in sync manually — there's no 
 **React filter keying**: The findings list uses `key={selectedCategory::selectedSeverity}` on
 the parent div to force React to re-mount when filters change. Removing this causes stale list rendering.
 
+**App header layout**: The `<header>` in App.tsx is `sticky top-0 z-40` (~57px tall).
+Any positioned elements (sticky, fixed) must account for this z-index and height offset.
+
+**Finding expansion**: `context` and `line_number` on `Finding` are optional. The More/Less button,
+Enter key handler, and expanded section all guard on these fields — set both to `None` in analyzers
+that don't need expandable detail.
+
 ## Code Style
 
 - Rust: standard formatting (`cargo fmt`), no `clippy` config yet
 - TypeScript: ESLint with React hooks plugin, no Prettier
 - Use `bun` for all frontend tooling, never `npm` or `npx`
 - Tailwind CSS v4 (plugin-based via `@tailwindcss/vite`, no `tailwind.config.js`)
+- Pill button pattern: `px-2 py-0.5 rounded-[var(--radius-badge)] border border-border-light text-text-tertiary bg-surface hover:bg-surface-hover`
 
 ## Excluded from Analysis
 
