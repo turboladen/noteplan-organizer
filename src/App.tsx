@@ -9,6 +9,7 @@ import {
 } from "./api/commands";
 import { SummaryBar } from "./components/SummaryBar";
 import { FindingsList } from "./components/FindingsList";
+import { SCAN_UPDATE_EVENT } from "./types/api";
 import type { FindingCategory, Report, Severity } from "./types/api";
 import { getFindingId } from "./utils/findingId";
 
@@ -98,7 +99,7 @@ function App() {
     let cancelled = false;
 
     const setup = async () => {
-      const unlisten = await listen<Report>("scan-update", (event) => {
+      const unlisten = await listen<Report>(SCAN_UPDATE_EVENT, (event) => {
         if (!cancelled) {
           setReport(event.payload);
           showToast("Notes updated from file changes");

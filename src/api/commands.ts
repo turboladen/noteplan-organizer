@@ -14,15 +14,15 @@ export async function getNoteContent(path: string): Promise<string> {
 }
 
 export async function openNotePlanUrl(url: string): Promise<void> {
-  return invoke("open_noteplan_url", { url });
+  return invoke<void>("open_noteplan_url", { url });
 }
 
 export async function startWatching(path: string): Promise<void> {
-  return invoke("start_watching", { path });
+  return invoke<void>("start_watching", { path });
 }
 
 export async function stopWatching(): Promise<void> {
-  return invoke("stop_watching");
+  return invoke<void>("stop_watching");
 }
 
 export async function isWatching(): Promise<boolean> {

@@ -1,3 +1,6 @@
+/** Event name constants — must match the Rust side (watcher.rs SCAN_UPDATE_EVENT) */
+export const SCAN_UPDATE_EVENT = "scan-update" as const;
+
 export type Severity = "Info" | "Warning" | "Error";
 
 export type FindingCategory =
@@ -16,8 +19,54 @@ export interface Finding {
   file_path: string;
   description: string;
   suggestion: string | null;
+  /** Integer line number (from Rust usize) */
   line_number: number | null;
   context: string | null;
+}
+
+export type NoteKind = "Regular" | "Daily" | "Weekly" | "Monthly" | "Template";
+
+export type TaskState = "Open" | "Done" | "Cancelled" | "Scheduled";
+
+export interface Task {
+  text: string;
+  state: TaskState;
+  line_number: number;
+  rescheduled_from: string | null;
+  scheduled_to: string | null;
+  tags: string[];
+  mentions: string[];
+}
+
+export interface WikiLink {
+  target: string;
+  line_number: number;
+}
+
+export interface Section {
+  heading: string;
+  level: number;
+  line_number: number;
+  content_lines: string[];
+  is_empty: boolean;
+}
+
+export interface Note {
+  file_path: string;
+  relative_path: string;
+  title: string;
+  jd_id: string | null;
+  title_jd_id: string | null;
+  parent_jd_id: string | null;
+  kind: NoteKind;
+  content: string;
+  tasks: Task[];
+  wiki_links: WikiLink[];
+  sections: Section[];
+  tags: string[];
+  mentions: string[];
+  has_frontmatter: boolean;
+  placeholders: string[];
 }
 
 export interface ReportStats {

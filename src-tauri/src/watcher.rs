@@ -8,6 +8,10 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::perform_scan;
 
+/// Event name emitted to the frontend on file-change rescans.
+/// Must match `SCAN_UPDATE_EVENT` in `src/types/api.ts`.
+pub const SCAN_UPDATE_EVENT: &str = "scan-update";
+
 /// Managed state holding the active file watcher.
 /// `None` = not watching, `Some` = actively watching.
 /// Dropping the Debouncer stops the watcher and releases FSEvents handles.
@@ -69,8 +73,8 @@ pub fn start_watching(
 
                     match perform_scan(&scan_path) {
                         Ok(report) => {
-                            if let Err(e) = app.emit("scan-update", &report) {
-                                log::error!("Failed to emit scan-update: {}", e);
+                            if let Err(e) = app.emit(SCAN_UPDATE_EVENT, &report) {
+                                log::error!("Failed to emit {}: {}", SCAN_UPDATE_EVENT, e);
                             }
                         }
                         Err(e) => {
