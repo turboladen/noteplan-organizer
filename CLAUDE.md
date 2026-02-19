@@ -77,6 +77,14 @@ the parent div to force React to re-mount when filters change. Removing this cau
 Sticky elements in the main content area use `top-[89px]` and `max-h-[calc(100vh-89px)]`.
 If header/tray height changes, update these offsets in FindingsList.tsx and NotePreview.tsx.
 
+**`is_folder` on Finding**: Every `Finding` struct literal must set `is_folder`. Use `true` for
+system-assessment analyzers (folder-level findings), `false` for per-note analyzers. The frontend
+suppresses "Open in NotePlan" and "Preview" for folder findings.
+
+**Path depth guard**: When extracting area/category from `note.relative_path.split('/')`,
+use `parts.len() < 3` to skip root-level notes (`Notes/file.md` = 2 parts). `< 2` lets
+filenames leak in as area names.
+
 **Finding expansion**: `context` and `line_number` on `Finding` are optional. The disclosure chevron,
 Enter key handler, and expanded section all guard on these fields — set both to `None` in analyzers
 that don't need expandable detail.
@@ -92,6 +100,9 @@ direct access to fix issues.
 
 **Sidebar width**: `w-56` (224px) is the tested minimum for the FindingsList filter sidebar.
 `w-48` truncates longer category labels like "Naming Inconsistency".
+
+**Sticky in flex**: Sticky children inside a flex container need `self-start` (Tailwind)
+to avoid stretching to full row height, which eliminates the sticky scroll range.
 
 ## Code Style
 
