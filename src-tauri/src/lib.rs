@@ -1,8 +1,9 @@
-mod analyzer;
+pub mod analyzer;
 mod commands;
-mod config;
-mod models;
-mod parser;
+pub mod config;
+pub mod dump;
+pub mod models;
+pub mod parser;
 mod watcher;
 
 use watcher::WatcherState;
@@ -30,6 +31,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::detect_noteplan_path,
             commands::scan,
+            commands::system_dump,
             commands::get_note_content,
             commands::open_noteplan_url,
             watcher::start_watching,

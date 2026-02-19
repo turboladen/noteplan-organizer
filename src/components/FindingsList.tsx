@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, forwardRef } from "react";
-import type { Finding, FindingCategory, Severity } from "../types/api";
+import type { Finding, FindingCategory, ReportStats, Severity } from "../types/api";
 import {
   CATEGORY_LABELS,
   CATEGORY_BADGE_STYLES,
@@ -9,6 +9,7 @@ import { NotePreview } from "./NotePreview";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 import { openNotePlanUrl } from "../api/commands";
 import { getFindingId } from "../utils/findingId";
+import { formatRelativeTime } from "../utils/formatTime";
 
 /** Defensive fallbacks for unknown keys (prevents crash if Rust adds new variants) */
 const FALLBACK_SEV_STYLE = { bg: "bg-stone-100", text: "text-stone-600", border: "border-stone-200", dot: "bg-stone-400" };
@@ -17,6 +18,8 @@ const FALLBACK_CAT_STYLE = { bg: "bg-stone-100", text: "text-stone-600", dot: "b
 interface FindingsListProps {
   findings: Finding[];
   basePath: string;
+  stats: ReportStats;
+  scannedAt: string;
   dismissedIds: Set<string>;
   onToggleDismissed: (findingId: string) => void;
   selectedCategory: FindingCategory | "all";
@@ -30,6 +33,8 @@ const PAGE_SIZE = 50;
 export function FindingsList({
   findings,
   basePath,
+  stats,
+  scannedAt,
   dismissedIds,
   onToggleDismissed,
   selectedCategory,
@@ -112,9 +117,11 @@ export function FindingsList({
         }
         case "o": {
           if (focusedIndex >= 0 && focusedIndex <= maxIndex) {
-            e.preventDefault();
             const f = visibleActive[focusedIndex];
-            openNotePlanUrl(buildNotePlanUrl(f.file_path));
+            if (!f.is_folder) {
+              e.preventDefault();
+              openNotePlanUrl(buildNotePlanUrl(f.file_path));
+            }
           }
           break;
         }
@@ -134,8 +141,22 @@ export function FindingsList({
   return (
     <div className="flex gap-6">
       {/* Filters sidebar — glass panel */}
-      <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in">
+      <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in sticky top-[89px] self-start max-h-[calc(100vh-89px-2rem)] overflow-y-auto">
           <div className="glass-sidebar rounded-[var(--radius-panel)] shadow-card p-4 space-y-4">
+            {/* Stats summary */}
+            <div className="pb-3 border-b border-border-light space-y-1 text-xs text-text-muted">
+              <div className="flex justify-between">
+                <span>{stats.total_notes} notes</span>
+                <span>{stats.total_findings} findings</span>
+              </div>
+              {stats.total_daily_notes > 0 && (
+                <div className="flex justify-between">
+                  <span>{stats.total_daily_notes} daily</span>
+                  {stats.total_weekly_notes > 0 && <span>{stats.total_weekly_notes} weekly</span>}
+                </div>
+              )}
+            </div>
+
             <div>
               <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
                 Category
@@ -212,11 +233,16 @@ export function FindingsList({
                   onClick={() => setShowDismissed(!showDismissed)}
                   className="text-xs text-text-tertiary hover:text-text-secondary transition-colors"
                 >
-                  {showDismissed ? "Hide" : "Show"} resolved ({dismissedIds.size}
+                  {showDismissed ? "Hide" : "Show"} resolved ({dismissed.length}
                   )
                 </button>
               </div>
             )}
+
+            {/* Scan time */}
+            <div className="pt-3 border-t border-border-light text-xs text-text-muted">
+              Scanned {formatRelativeTime(scannedAt)}
+            </div>
           </div>
         </div>
 
@@ -248,7 +274,7 @@ export function FindingsList({
         </div>
         <div
           key={`${selectedCategory}::${selectedSeverity}`}
-          className="space-y-2 animate-fade-in"
+          className="space-y-2.5 animate-fade-in"
         >
           {visibleActive.map((finding, i) => {
             const fid = getFindingId(finding);
@@ -297,7 +323,7 @@ export function FindingsList({
             <div className="text-xs text-text-muted mt-6 mb-2 uppercase tracking-wide font-semibold">
               Resolved ({dismissed.length})
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {dismissed.map((finding) => {
                 const fid = getFindingId(finding);
                 return (
@@ -432,11 +458,12 @@ const FindingCard = forwardRef<
 
   const sevStyle = SEVERITY_BADGE_STYLES[finding.severity] ?? FALLBACK_SEV_STYLE;
   const catStyle = CATEGORY_BADGE_STYLES[finding.category] ?? FALLBACK_CAT_STYLE;
+  const hasDetail = finding.context || finding.line_number;
 
   return (
     <div
       ref={ref}
-      className={`bg-surface-raised border rounded-[var(--radius-card)] overflow-hidden transition-all ${
+      className={`group bg-surface-raised border rounded-[var(--radius-card)] overflow-hidden transition-all ${
         isDismissed ? "opacity-50 border-border-light" : "border-border-light"
       } ${
         focused
@@ -445,9 +472,11 @@ const FindingCard = forwardRef<
       }`}
     >
       <div className="flex items-start min-w-0">
-        {/* Styled checkbox */}
+        {/* Checkbox — hidden until hover, always shown when checked */}
         <label
-          className="flex items-center justify-center w-10 flex-shrink-0 pt-3.5 cursor-pointer"
+          className={`flex items-center justify-center w-10 flex-shrink-0 pt-3.5 cursor-pointer transition-opacity ${
+            isDismissed ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          }`}
           title={isDismissed ? "Mark as unresolved" : "Mark as resolved"}
         >
           <input
@@ -463,89 +492,92 @@ const FindingCard = forwardRef<
 
         {/* Card content */}
         <div
-          className={`min-w-0 flex-1 px-2 py-3 ${
+          className={`min-w-0 flex-1 px-2 py-3.5 ${
             isDismissed ? "line-through decoration-text-muted" : ""
           }`}
         >
-          {/* Top row: severity + description + category */}
-          <div className="flex items-start gap-3">
+          {/* Top row: severity dot + description + category label */}
+          <div className="flex items-start gap-2.5">
             <span
-              className={`inline-block px-2 py-0.5 rounded-[var(--radius-badge)] text-xs font-medium flex-shrink-0 mt-0.5 ${sevStyle.bg} ${sevStyle.text}`}
-            >
-              {finding.severity}
-            </span>
+              className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${sevStyle.dot}`}
+              title={finding.severity}
+            />
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-text-primary">
+              <div className="text-sm text-text-primary">
                 {finding.description}
               </div>
             </div>
-            <span
-              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[var(--radius-badge)] text-xs flex-shrink-0 mt-0.5 ${catStyle.bg} ${catStyle.text}`}
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${catStyle.dot}`}
-              />
+            <span className="inline-flex items-center gap-1.5 text-xs text-text-muted flex-shrink-0 mt-0.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${catStyle.dot}`} />
               {CATEGORY_LABELS[finding.category]}
             </span>
           </div>
 
-          {/* Suggestion — always visible */}
-          {finding.suggestion && (
-            <div className="mt-1.5 ml-[calc(2ch+1.25rem)] text-xs text-text-tertiary border-l-2 border-accent-light pl-2">
-              {finding.suggestion}
-            </div>
-          )}
-
-          {/* File path + actions row */}
-          <div className="mt-1.5 ml-[calc(2ch+1.25rem)] flex items-center gap-3 text-xs">
-            <span
-              role="button"
-              tabIndex={0}
-              title="Open in NotePlan"
-              onClick={(e) => {
-                e.stopPropagation();
-                openNotePlanUrl(buildNotePlanUrl(finding.file_path));
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
+          {/* File path row */}
+          <div className="mt-1.5 ml-[18px] flex items-center gap-2 text-xs">
+            {finding.is_folder ? (
+              <span className="text-text-muted truncate" title={finding.file_path}>
+                {shortPath}
+              </span>
+            ) : (
+              <span
+                role="button"
+                tabIndex={0}
+                title="Open in NotePlan"
+                onClick={(e) => {
                   e.stopPropagation();
                   openNotePlanUrl(buildNotePlanUrl(finding.file_path));
-                }
-              }}
-              className="text-text-muted hover:text-accent hover:underline cursor-pointer transition-colors truncate"
-            >
-              {shortPath} &#x2197;
-            </span>
-            {(finding.context || finding.line_number) && (
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.stopPropagation();
+                    openNotePlanUrl(buildNotePlanUrl(finding.file_path));
+                  }
+                }}
+                className="text-text-muted hover:text-accent hover:underline cursor-pointer transition-colors truncate"
+              >
+                {shortPath} ↗
+              </span>
+            )}
+            {hasDetail && (
               <button
                 type="button"
                 onClick={onToggle}
-                className="px-2 py-0.5 rounded-[var(--radius-badge)] border border-border-light text-text-tertiary bg-surface hover:bg-surface-hover hover:text-text-secondary flex-shrink-0 transition-colors"
+                className="text-text-muted hover:text-text-secondary flex-shrink-0 transition-colors"
+                title={expanded ? "Collapse" : "Expand"}
               >
-                {expanded ? "Less" : "More"}
+                {expanded ? "▾" : "›"}
               </button>
             )}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onPreview();
-              }}
-              className={
-                isPreviewActive
-                  ? "px-2 py-0.5 rounded-[var(--radius-badge)] border border-accent bg-accent-50 text-accent-700 hover:bg-accent-100 flex-shrink-0 transition-colors"
-                  : "px-2 py-0.5 rounded-[var(--radius-badge)] border border-border-light text-text-tertiary bg-surface hover:bg-surface-hover hover:text-accent flex-shrink-0 transition-colors"
-              }
-            >
-              {isPreviewActive ? "Close Preview" : "Preview"}
-            </button>
+            {!finding.is_folder && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPreview();
+                }}
+                className={`flex-shrink-0 transition-colors ${
+                  isPreviewActive
+                    ? "text-accent"
+                    : "text-text-muted hover:text-accent opacity-0 group-hover:opacity-100"
+                }`}
+                title={isPreviewActive ? "Close preview" : "Preview"}
+              >
+                {isPreviewActive ? "✕" : "⌕"}
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Expanded details */}
-      {expanded && (finding.context || finding.line_number) && (
+      {/* Expanded details — suggestion + context + line number */}
+      {expanded && (hasDetail || finding.suggestion) && (
         <div className="border-t border-border-light px-4 py-3 bg-surface space-y-2 ml-10">
+          {finding.suggestion && (
+            <div className="text-xs text-text-tertiary border-l-2 border-accent-light pl-2">
+              {finding.suggestion}
+            </div>
+          )}
           {finding.context && (
             <div className="text-xs bg-surface-hover rounded-[var(--radius-badge)] px-3 py-2 font-mono text-text-secondary whitespace-pre-wrap">
               {finding.context}

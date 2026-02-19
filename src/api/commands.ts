@@ -17,6 +17,10 @@ export async function openNotePlanUrl(url: string): Promise<void> {
   return invoke<void>("open_noteplan_url", { url });
 }
 
+export async function systemDump(path: string): Promise<string> {
+  return invoke<string>("system_dump", { path });
+}
+
 export async function startWatching(path: string): Promise<void> {
   return invoke<void>("start_watching", { path });
 }

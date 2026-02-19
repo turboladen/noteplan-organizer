@@ -78,6 +78,7 @@ impl Analyzer for IdConsistencyAnalyzer {
                         )),
                         line_number: None,
                         context: None,
+                    is_folder: false,
                     });
                 }
             }

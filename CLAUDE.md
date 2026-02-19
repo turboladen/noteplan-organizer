@@ -45,9 +45,10 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
 **Frontend (React + TypeScript)**:
 - `api/commands.ts` — Typed wrappers around `invoke()` calls
 - `types/api.ts` — TypeScript types matching Rust models (manually kept in sync, no codegen)
-- `components/FindingsList.tsx` — Main findings UI with filtering, pagination, dismiss/resolve.
-  Three-column flex layout: filter sidebar (w-56), card list (flex-1), inline sticky preview (w-96, conditional).
-- `components/NotePreview.tsx` — Inline sticky preview panel (not a fixed overlay); participates in FindingsList flex layout
+- `components/FindingsList.tsx` — Main findings UI with filtering, pagination, dismiss/resolve, stats sidebar.
+  Three-column flex layout: filter sidebar (w-56), card list (flex-1), inline sticky preview (w-80, conditional).
+  Used for BOTH Findings and Assessment tabs (same component, different data).
+- `components/NotePreview.tsx` — Inline sticky preview panel (w-80, not a fixed overlay); participates in FindingsList flex layout
 - `utils/noteplanUrl.ts` — Builds `noteplan://` x-callback-url links
 
 ## Critical Gotchas
@@ -72,12 +73,25 @@ TypeScript types in `types/api.ts` must be kept in sync manually — there's no 
 **React filter keying**: The findings list uses `key={selectedCategory::selectedSeverity}` on
 the parent div to force React to re-mount when filters change. Removing this causes stale list rendering.
 
-**App header layout**: The `<header>` in App.tsx is `sticky top-0 z-40` (~57px tall).
-Any positioned elements (sticky, fixed) must account for this z-index and height offset.
+**App header layout**: The `<header>` + status tray in App.tsx total ~89px tall (header `sticky top-0 z-40`).
+Sticky elements in the main content area use `top-[89px]` and `max-h-[calc(100vh-89px)]`.
+If header/tray height changes, update these offsets in FindingsList.tsx and NotePreview.tsx.
 
-**Finding expansion**: `context` and `line_number` on `Finding` are optional. The More/Less button,
+**Finding expansion**: `context` and `line_number` on `Finding` are optional. The disclosure chevron,
 Enter key handler, and expanded section all guard on these fields — set both to `None` in analyzers
 that don't need expandable detail.
+
+**Tab architecture**: App.tsx splits findings into Findings vs Assessment tabs using
+`SYSTEM_ASSESSMENT_CATEGORIES` set. Each tab has independent filter state (`selectedCategory`/
+`selectedSeverity` vs `assessCategory`/`assessSeverity`). Both tabs render `<FindingsList>`
+with `computeStats()` deriving per-tab `ReportStats`.
+
+**Card UX convention**: File path click = open in NotePlan (primary action). Preview is a
+secondary hover-reveal `⌕` icon. Don't reassign file path click to preview — users want
+direct access to fix issues.
+
+**Sidebar width**: `w-56` (224px) is the tested minimum for the FindingsList filter sidebar.
+`w-48` truncates longer category labels like "Naming Inconsistency".
 
 ## Code Style
 

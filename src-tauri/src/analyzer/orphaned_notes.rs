@@ -57,6 +57,7 @@ impl Analyzer for OrphanedNoteAnalyzer {
                     ),
                     line_number: None,
                     context: None,
+                    is_folder: false,
                 });
             }
         }

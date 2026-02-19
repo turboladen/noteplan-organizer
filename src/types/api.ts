@@ -1,9 +1,23 @@
 /** Event name constants — must match the Rust side (watcher.rs SCAN_UPDATE_EVENT) */
 export const SCAN_UPDATE_EVENT = "scan-update" as const;
 
+/** System assessment categories — used to split findings into tabs */
+export const SYSTEM_ASSESSMENT_CATEGORIES: ReadonlySet<FindingCategory> =
+  new Set<FindingCategory>([
+    "AreaBalance",
+    "DepthInconsistency",
+    "CategorySprawl",
+    "EmptyStructure",
+    "MissingHub",
+    "StaleArea",
+    "CrossWiredId",
+    "NamingInconsistency",
+  ]);
+
 export type Severity = "Info" | "Warning" | "Error";
 
 export type FindingCategory =
+  // Per-note checks
   | "IdConsistency"
   | "UnfiledSlip"
   | "HubCompleteness"
@@ -11,7 +25,16 @@ export type FindingCategory =
   | "OrphanedNote"
   | "Duplicate"
   | "StaleTask"
-  | "TemplatePlaceholder";
+  | "TemplatePlaceholder"
+  // System assessment
+  | "AreaBalance"
+  | "DepthInconsistency"
+  | "CategorySprawl"
+  | "EmptyStructure"
+  | "MissingHub"
+  | "StaleArea"
+  | "CrossWiredId"
+  | "NamingInconsistency";
 
 export interface Finding {
   severity: Severity;
@@ -22,6 +45,8 @@ export interface Finding {
   /** Integer line number (from Rust usize) */
   line_number: number | null;
   context: string | null;
+  /** When true, file_path is a folder path — suppress Open/Preview actions */
+  is_folder: boolean;
 }
 
 export type NoteKind = "Regular" | "Daily" | "Weekly" | "Monthly" | "Template";
@@ -94,6 +119,14 @@ export const CATEGORY_LABELS: Record<FindingCategory, string> = {
   Duplicate: "Duplicate",
   StaleTask: "Stale Task",
   TemplatePlaceholder: "Template Placeholder",
+  AreaBalance: "Area Balance",
+  DepthInconsistency: "Depth Inconsistency",
+  CategorySprawl: "Category Sprawl",
+  EmptyStructure: "Empty Structure",
+  MissingHub: "Missing Hub",
+  StaleArea: "Stale Area",
+  CrossWiredId: "Cross-wired ID",
+  NamingInconsistency: "Naming Inconsistency",
 };
 
 export const CATEGORY_ICONS: Record<FindingCategory, string> = {
@@ -105,6 +138,14 @@ export const CATEGORY_ICONS: Record<FindingCategory, string> = {
   Duplicate: "copy",
   StaleTask: "clock",
   TemplatePlaceholder: "template",
+  AreaBalance: "scale",
+  DepthInconsistency: "layers",
+  CategorySprawl: "grid",
+  EmptyStructure: "folder-minus",
+  MissingHub: "map",
+  StaleArea: "moon",
+  CrossWiredId: "shuffle",
+  NamingInconsistency: "text-cursor",
 };
 
 export const SEVERITY_COLORS: Record<Severity, string> = {
@@ -138,49 +179,38 @@ export const SEVERITY_BADGE_STYLES: Record<
   },
 };
 
-/** Badge styles for finding categories — bg, text, and colored dot */
+/**
+ * Badge styles for finding categories — grouped into 4 semantic color families:
+ * - Structure/ID (stone): ID, naming, and structural consistency
+ * - Content (blue): links, templates, duplicates, hub completeness
+ * - Organization (violet): filing, orphans, sprawl, empty structure
+ * - Staleness (amber): stale tasks, stale areas, balance issues
+ */
 export const CATEGORY_BADGE_STYLES: Record<
   FindingCategory,
   { bg: string; text: string; dot: string }
 > = {
-  IdConsistency: {
-    bg: "bg-purple-50",
-    text: "text-purple-700",
-    dot: "bg-purple-400",
-  },
-  UnfiledSlip: {
-    bg: "bg-orange-50",
-    text: "text-orange-700",
-    dot: "bg-orange-400",
-  },
-  HubCompleteness: {
-    bg: "bg-teal-50",
-    text: "text-teal-700",
-    dot: "bg-teal-400",
-  },
-  BrokenLink: {
-    bg: "bg-rose-50",
-    text: "text-rose-700",
-    dot: "bg-rose-400",
-  },
-  OrphanedNote: {
-    bg: "bg-stone-100",
-    text: "text-stone-600",
-    dot: "bg-stone-400",
-  },
-  Duplicate: {
-    bg: "bg-yellow-50",
-    text: "text-yellow-700",
-    dot: "bg-yellow-400",
-  },
-  StaleTask: {
-    bg: "bg-pink-50",
-    text: "text-pink-700",
-    dot: "bg-pink-400",
-  },
-  TemplatePlaceholder: {
-    bg: "bg-indigo-50",
-    text: "text-indigo-700",
-    dot: "bg-indigo-400",
-  },
+  // Structure/ID family (stone)
+  IdConsistency:       { bg: "bg-stone-50",  text: "text-stone-600",  dot: "bg-stone-500" },
+  CrossWiredId:        { bg: "bg-stone-50",  text: "text-stone-600",  dot: "bg-stone-500" },
+  NamingInconsistency: { bg: "bg-stone-50",  text: "text-stone-600",  dot: "bg-stone-500" },
+  DepthInconsistency:  { bg: "bg-stone-50",  text: "text-stone-600",  dot: "bg-stone-500" },
+
+  // Content family (blue)
+  BrokenLink:          { bg: "bg-blue-50",   text: "text-blue-700",   dot: "bg-blue-500" },
+  TemplatePlaceholder: { bg: "bg-blue-50",   text: "text-blue-700",   dot: "bg-blue-500" },
+  Duplicate:           { bg: "bg-blue-50",   text: "text-blue-700",   dot: "bg-blue-500" },
+  HubCompleteness:     { bg: "bg-blue-50",   text: "text-blue-700",   dot: "bg-blue-500" },
+
+  // Organization family (violet)
+  UnfiledSlip:         { bg: "bg-violet-50",  text: "text-violet-700", dot: "bg-violet-500" },
+  OrphanedNote:        { bg: "bg-violet-50",  text: "text-violet-700", dot: "bg-violet-500" },
+  CategorySprawl:      { bg: "bg-violet-50",  text: "text-violet-700", dot: "bg-violet-500" },
+  EmptyStructure:      { bg: "bg-violet-50",  text: "text-violet-700", dot: "bg-violet-500" },
+  MissingHub:          { bg: "bg-violet-50",  text: "text-violet-700", dot: "bg-violet-500" },
+
+  // Staleness family (amber)
+  StaleTask:           { bg: "bg-amber-50",   text: "text-amber-700",  dot: "bg-amber-500" },
+  StaleArea:           { bg: "bg-amber-50",   text: "text-amber-700",  dot: "bg-amber-500" },
+  AreaBalance:         { bg: "bg-amber-50",   text: "text-amber-700",  dot: "bg-amber-500" },
 };

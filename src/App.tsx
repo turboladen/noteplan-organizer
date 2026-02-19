@@ -1,17 +1,19 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   detectNotePlanPath,
   scanNotes,
+  systemDump,
   startWatching,
   stopWatching,
   isWatching as checkIsWatching,
 } from "./api/commands";
-import { SummaryBar } from "./components/SummaryBar";
 import { FindingsList } from "./components/FindingsList";
-import { SCAN_UPDATE_EVENT } from "./types/api";
-import type { FindingCategory, Report, Severity } from "./types/api";
+import { SCAN_UPDATE_EVENT, SYSTEM_ASSESSMENT_CATEGORIES } from "./types/api";
+import type { Finding, FindingCategory, Report, ReportStats, Severity } from "./types/api";
 import { getFindingId } from "./utils/findingId";
+
+type AppTab = "findings" | "assessment";
 
 const DISMISSED_KEY = "noteplan-organizer:dismissed";
 
@@ -29,6 +31,27 @@ function saveDismissed(dismissed: Set<string>) {
   localStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissed]));
 }
 
+/** Derive ReportStats from a filtered subset of findings, keeping note counts from the original. */
+function computeStats(
+  findings: Finding[],
+  original: ReportStats | undefined
+): ReportStats {
+  const byCat: Record<string, number> = {};
+  const bySev: Record<string, number> = {};
+  for (const f of findings) {
+    byCat[f.category] = (byCat[f.category] ?? 0) + 1;
+    bySev[f.severity] = (bySev[f.severity] ?? 0) + 1;
+  }
+  return {
+    total_notes: original?.total_notes ?? 0,
+    total_daily_notes: original?.total_daily_notes ?? 0,
+    total_weekly_notes: original?.total_weekly_notes ?? 0,
+    total_findings: findings.length,
+    findings_by_category: byCat,
+    findings_by_severity: bySev,
+  };
+}
+
 function App() {
   const [notePlanPath, setNotePlanPath] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
@@ -39,13 +62,24 @@ function App() {
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const hasScannedRef = useRef(false);
 
-  // Lifted filter state — shared between SummaryBar and FindingsList
+  // Lifted filter state — FindingsList sidebar
   const [selectedCategory, setSelectedCategory] = useState<
     FindingCategory | "all"
   >("all");
   const [selectedSeverity, setSelectedSeverity] = useState<Severity | "all">(
     "all"
   );
+
+  // Assessment tab has its own independent filter state
+  const [assessCategory, setAssessCategory] = useState<
+    FindingCategory | "all"
+  >("all");
+  const [assessSeverity, setAssessSeverity] = useState<Severity | "all">(
+    "all"
+  );
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<AppTab>("findings");
 
   // Toast state for watcher updates
   const [toast, setToast] = useState<{ message: string; key: number } | null>(
@@ -153,6 +187,16 @@ function App() {
     }
   };
 
+  const handleDump = async () => {
+    if (!notePlanPath) return;
+    try {
+      await systemDump(notePlanPath);
+      showToast("System dump saved to Desktop and opened");
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const handleToggleWatch = async () => {
     if (!notePlanPath) return;
     try {
@@ -167,6 +211,33 @@ function App() {
       setError(String(e));
     }
   };
+
+  // Split findings by tab, compute per-tab stats
+  const findingsFindings = useMemo(
+    () =>
+      report?.findings.filter(
+        (f) => !SYSTEM_ASSESSMENT_CATEGORIES.has(f.category)
+      ) ?? [],
+    [report]
+  );
+
+  const assessmentFindings = useMemo(
+    () =>
+      report?.findings.filter((f) =>
+        SYSTEM_ASSESSMENT_CATEGORIES.has(f.category)
+      ) ?? [],
+    [report]
+  );
+
+  const findingsStats = useMemo(
+    () => computeStats(findingsFindings, report?.stats),
+    [findingsFindings, report]
+  );
+
+  const assessmentStats = useMemo(
+    () => computeStats(assessmentFindings, report?.stats),
+    [assessmentFindings, report]
+  );
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">
@@ -183,58 +254,55 @@ function App() {
         </div>
       )}
 
-      {/* Header */}
-      <header className="sticky top-0 z-40 bg-surface-raised/80 backdrop-blur-sm border-b border-border-light px-6 py-4">
+      {/* Header — title + primary action only */}
+      <header className="sticky top-0 z-40 bg-surface-raised/80 backdrop-blur-sm border-b border-border-light px-6 py-3">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h1 className="text-lg font-semibold text-text-primary">
-              NotePlan Organizer
-            </h1>
-          </div>
-          <div className="flex items-center gap-3">
-            {notePlanPath && (
-              <span className="text-xs text-text-muted max-w-xs truncate">
-                {notePlanPath.split("/").slice(-2).join("/")}
-              </span>
-            )}
+          <h1 className="text-lg font-semibold text-text-primary">
+            NotePlan Organizer
+          </h1>
+          <button
+            onClick={handleScan}
+            disabled={scanning || !notePlanPath}
+            className="px-4 py-2 bg-accent text-white text-sm font-medium rounded-[var(--radius-button)] hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+          >
+            {scanning
+              ? "Scanning..."
+              : hasScannedRef.current
+                ? "Rescan"
+                : "Scan Notes"}
+          </button>
+        </div>
+      </header>
 
-            {/* Watch status indicator */}
-            {watching && (
-              <span className="flex items-center gap-1.5 text-xs text-accent-700">
-                <span className="w-2 h-2 bg-accent rounded-full animate-pulse" />
-                Watching
-              </span>
-            )}
-
-            {/* Watch toggle — only shown after first scan */}
+      {/* Status tray — secondary info & controls */}
+      {notePlanPath && (
+        <div className="flex items-center justify-between px-6 py-2 border-b border-border-light bg-surface text-xs">
+          <span className="text-text-muted truncate min-w-0">
+            {notePlanPath.split("/").slice(-3).join("/")}
+          </span>
+          <div className="flex items-center gap-3 flex-shrink-0 text-text-tertiary">
             {report && (
               <button
                 type="button"
                 onClick={handleToggleWatch}
-                className={`px-3 py-2 text-sm rounded-[var(--radius-button)] border transition-colors ${
-                  watching
-                    ? "border-accent-light text-accent-700 bg-accent-50 hover:bg-accent-100"
-                    : "border-border text-text-secondary bg-surface-raised hover:bg-surface-hover"
-                }`}
+                className="hover:text-text-secondary transition-colors flex items-center gap-1.5"
               >
-                {watching ? "Stop Watch" : "Watch"}
+                {watching && (
+                  <span className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
+                )}
+                {watching ? "Watching" : "Watch"}
               </button>
             )}
-
             <button
-              onClick={handleScan}
-              disabled={scanning || !notePlanPath}
-              className="px-4 py-2 bg-accent text-white text-sm font-medium rounded-[var(--radius-button)] hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+              type="button"
+              onClick={handleDump}
+              className="hover:text-text-secondary transition-colors"
             >
-              {scanning
-                ? "Scanning..."
-                : hasScannedRef.current
-                  ? "Rescan"
-                  : "Scan Notes"}
+              System Dump
             </button>
           </div>
         </div>
-      </header>
+      )}
 
       {/* Main content */}
       <main className="flex-1 px-6 py-6">
@@ -281,25 +349,65 @@ function App() {
 
         {report && (
           <>
-            <SummaryBar
-              stats={report.stats}
-              scannedAt={report.scanned_at}
-              dismissedCount={dismissedIds.size}
-              selectedCategory={selectedCategory}
-              selectedSeverity={selectedSeverity}
-              onSelectCategory={setSelectedCategory}
-              onSelectSeverity={setSelectedSeverity}
-            />
-            <FindingsList
-              findings={report.findings}
-              basePath={report.noteplan_path}
-              dismissedIds={dismissedIds}
-              onToggleDismissed={toggleDismissed}
-              selectedCategory={selectedCategory}
-              selectedSeverity={selectedSeverity}
-              onSelectCategory={setSelectedCategory}
-              onSelectSeverity={setSelectedSeverity}
-            />
+            {/* Segmented control tabs */}
+            <div className="inline-flex items-center bg-surface-hover rounded-[var(--radius-button)] p-0.5 mb-5">
+              <button
+                type="button"
+                onClick={() => setActiveTab("findings")}
+                className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
+                  activeTab === "findings"
+                    ? "bg-surface-raised text-text-primary shadow-sm"
+                    : "text-text-tertiary hover:text-text-secondary"
+                }`}
+              >
+                Findings
+                <span className="ml-1.5 text-xs font-mono opacity-60">
+                  {findingsFindings.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("assessment")}
+                className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
+                  activeTab === "assessment"
+                    ? "bg-surface-raised text-text-primary shadow-sm"
+                    : "text-text-tertiary hover:text-text-secondary"
+                }`}
+              >
+                Assessment
+                <span className="ml-1.5 text-xs font-mono opacity-60">
+                  {assessmentFindings.length}
+                </span>
+              </button>
+            </div>
+
+            {activeTab === "findings" ? (
+              <FindingsList
+                findings={findingsFindings}
+                basePath={report.noteplan_path}
+                stats={findingsStats}
+                scannedAt={report.scanned_at}
+                dismissedIds={dismissedIds}
+                onToggleDismissed={toggleDismissed}
+                selectedCategory={selectedCategory}
+                selectedSeverity={selectedSeverity}
+                onSelectCategory={setSelectedCategory}
+                onSelectSeverity={setSelectedSeverity}
+              />
+            ) : (
+              <FindingsList
+                findings={assessmentFindings}
+                basePath={report.noteplan_path}
+                stats={assessmentStats}
+                scannedAt={report.scanned_at}
+                dismissedIds={dismissedIds}
+                onToggleDismissed={toggleDismissed}
+                selectedCategory={assessCategory}
+                selectedSeverity={assessSeverity}
+                onSelectCategory={setAssessCategory}
+                onSelectSeverity={setAssessSeverity}
+              />
+            )}
           </>
         )}
       </main>

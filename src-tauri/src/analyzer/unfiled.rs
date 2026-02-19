@@ -54,6 +54,7 @@ impl Analyzer for UnfiledSlipAnalyzer {
                     ),
                     line_number: None,
                     context: None,
+                    is_folder: false,
                 });
             }
         }

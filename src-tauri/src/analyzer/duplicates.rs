@@ -71,6 +71,7 @@ impl Analyzer for DuplicateAnalyzer {
                     ),
                     line_number: None,
                     context: Some(paths_display),
+                    is_folder: false,
                 });
             }
         }

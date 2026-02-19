@@ -1,4 +1,5 @@
 mod folder;
+pub mod hierarchy;
 mod link;
 mod markdown;
 mod task;

@@ -54,6 +54,7 @@ impl Analyzer for StaleTaskAnalyzer {
                                 ),
                                 line_number: Some(task.line_number),
                                 context: Some(task.text.clone()),
+                    is_folder: false,
                             });
                             reported = true;
                         }
@@ -87,6 +88,7 @@ impl Analyzer for StaleTaskAnalyzer {
                                     ),
                                     line_number: Some(task.line_number),
                                     context: Some(task.text.clone()),
+                    is_folder: false,
                                 });
                             }
                         }

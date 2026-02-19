@@ -1,5 +1,6 @@
 use crate::analyzer::run_all_analyzers;
 use crate::config;
+use crate::dump;
 use crate::models::{NoteKind, Report};
 use crate::parser::scan_noteplan_dir;
 
@@ -80,6 +81,35 @@ pub fn get_note_content(path: String) -> Result<String, String> {
     }
 
     std::fs::read_to_string(&canonical).map_err(|e| format!("Failed to read note: {}", e))
+}
+
+/// Generate a comprehensive system assessment dump, write it to a temp file, and open it.
+/// Returns the dump text. Also writes to ~/Desktop/noteplan-system-dump.txt and opens it.
+#[tauri::command]
+pub fn system_dump(path: String) -> Result<String, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+
+    let store = scan_noteplan_dir(&path);
+    let report = dump::generate_dump(&store, &path);
+
+    // Write to Desktop for easy access
+    let desktop = std::env::var("HOME")
+        .map(|h| std::path::PathBuf::from(h).join("Desktop"))
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let dump_path = desktop.join("noteplan-system-dump.txt");
+
+    std::fs::write(&dump_path, &report)
+        .map_err(|e| format!("Failed to write dump file: {}", e))?;
+
+    // Open in default text editor
+    std::process::Command::new("open")
+        .arg(&dump_path)
+        .status()
+        .ok();
+
+    Ok(report)
 }
 
 /// Opens a noteplan:// URL using macOS `open` command, which launches NotePlan

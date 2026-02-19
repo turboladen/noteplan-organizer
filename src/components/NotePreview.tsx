@@ -36,7 +36,7 @@ export function NotePreview({ path, basePath, onClose }: NotePreviewProps) {
   const shortPath = path.split("/").slice(-2).join("/");
 
   return (
-    <div className="w-96 flex-shrink-0 sticky top-[57px] self-start max-h-[calc(100vh-57px)] bg-surface-raised border border-border-light rounded-[var(--radius-panel)] shadow-card animate-fade-in flex flex-col overflow-hidden">
+    <div className="w-80 flex-shrink-0 sticky top-[89px] self-start max-h-[calc(100vh-89px)] bg-surface-raised border border-border-light rounded-[var(--radius-panel)] shadow-card animate-fade-in flex flex-col overflow-hidden">
       <div className="border-b border-border-light px-4 py-3 flex items-center justify-between flex-shrink-0">
         <h3 className="text-sm font-medium text-text-secondary truncate">
           {shortPath}

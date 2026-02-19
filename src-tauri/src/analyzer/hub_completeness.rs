@@ -68,6 +68,7 @@ impl Analyzer for HubCompletenessAnalyzer {
                         )),
                         line_number: Some(section.line_number),
                         context: None,
+                    is_folder: false,
                     });
                 }
             }
@@ -88,6 +89,7 @@ impl Analyzer for HubCompletenessAnalyzer {
                     ),
                     line_number: None,
                     context: Some(note.placeholders.join(", ")),
+                    is_folder: false,
                 });
             }
         }

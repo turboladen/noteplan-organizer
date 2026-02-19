@@ -52,6 +52,7 @@ impl Analyzer for TemplatePlaceholderAnalyzer {
                     ),
                     line_number: None,
                     context: None,
+                    is_folder: false,
                 });
             }
         }
