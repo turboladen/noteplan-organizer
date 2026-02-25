@@ -4,6 +4,7 @@ import {
   detectNotePlanPath,
   scanNotes,
   systemDump,
+  exportAssessmentContext,
   startWatching,
   stopWatching,
   isWatching as checkIsWatching,
@@ -12,6 +13,7 @@ import { FindingsList } from "./components/FindingsList";
 import { SCAN_UPDATE_EVENT, SYSTEM_ASSESSMENT_CATEGORIES } from "./types/api";
 import type { Finding, FindingCategory, Report, ReportStats, Severity } from "./types/api";
 import { getFindingId } from "./utils/findingId";
+import { writeText as clipboardWrite } from "@tauri-apps/plugin-clipboard-manager";
 
 type AppTab = "findings" | "assessment";
 
@@ -59,6 +61,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(loadDismissed);
   const [watching, setWatching] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const hasScannedRef = useRef(false);
 
@@ -194,6 +197,21 @@ function App() {
       showToast("System dump saved to Desktop and opened");
     } catch (e) {
       setError(String(e));
+    }
+  };
+
+  const handleExportContext = async () => {
+    if (!notePlanPath) return;
+    setExporting(true);
+    try {
+      const context = await exportAssessmentContext(notePlanPath);
+      await clipboardWrite(context);
+      const sizeKB = Math.round(context.length / 1024);
+      showToast(`Assessment context copied (${sizeKB}KB)`);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -395,18 +413,30 @@ function App() {
                 onSelectSeverity={setSelectedSeverity}
               />
             ) : (
-              <FindingsList
-                findings={assessmentFindings}
-                basePath={report.noteplan_path}
-                stats={assessmentStats}
-                scannedAt={report.scanned_at}
-                dismissedIds={dismissedIds}
-                onToggleDismissed={toggleDismissed}
-                selectedCategory={assessCategory}
-                selectedSeverity={assessSeverity}
-                onSelectCategory={setAssessCategory}
-                onSelectSeverity={setAssessSeverity}
-              />
+              <>
+                <div className="flex items-center justify-end mb-3">
+                  <button
+                    type="button"
+                    onClick={handleExportContext}
+                    disabled={!notePlanPath || exporting}
+                    className="px-3 py-1.5 text-xs font-medium rounded-[var(--radius-button)] border border-border-light bg-surface text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {exporting ? "Assembling\u2026" : "Export Context for Claude"}
+                  </button>
+                </div>
+                <FindingsList
+                  findings={assessmentFindings}
+                  basePath={report.noteplan_path}
+                  stats={assessmentStats}
+                  scannedAt={report.scanned_at}
+                  dismissedIds={dismissedIds}
+                  onToggleDismissed={toggleDismissed}
+                  selectedCategory={assessCategory}
+                  selectedSeverity={assessSeverity}
+                  onSelectCategory={setAssessCategory}
+                  onSelectSeverity={setAssessSeverity}
+                />
+              </>
             )}
           </>
         )}

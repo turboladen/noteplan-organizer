@@ -141,7 +141,7 @@ export function FindingsList({
   return (
     <div className="flex gap-6">
       {/* Filters sidebar — glass panel */}
-      <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in sticky top-[89px] self-start max-h-[calc(100vh-89px-2rem)] overflow-y-auto">
+      <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in sticky top-[89px] self-start max-h-[calc(100vh-89px)] overflow-y-auto">
           <div className="glass-sidebar rounded-[var(--radius-panel)] shadow-card p-4 space-y-4">
             {/* Stats summary */}
             <div className="pb-3 border-b border-border-light space-y-1 text-xs text-text-muted">
@@ -262,9 +262,9 @@ export function FindingsList({
               ({activeFindings.length} total)
             </span>
           )}
-          {dismissedIds.size > 0 && (
+          {dismissed.length > 0 && (
             <span className="text-text-muted">
-              {" "}· {dismissedIds.size} resolved
+              {" "}· {dismissed.length} resolved
             </span>
           )}
           {/* Keyboard hints */}
@@ -539,7 +539,7 @@ const FindingCard = forwardRef<
                 {shortPath} ↗
               </span>
             )}
-            {hasDetail && (
+            {(hasDetail || finding.suggestion) && (
               <button
                 type="button"
                 onClick={onToggle}

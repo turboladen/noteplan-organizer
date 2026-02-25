@@ -216,14 +216,14 @@ fn write_hub_coverage(out: &mut String, store: &NoteStore) {
         let _ = writeln!(out, "    - {} (sections: {})", path, sections.join(", "));
     }
 
-    // Find categories without a hub
+    // Find categories without a hub (use area/category path for unambiguous matching)
     let hierarchy = build_hierarchy(store);
-    let hub_folders: Vec<String> = hubs
+    let hub_paths: Vec<String> = hubs
         .iter()
         .filter_map(|(path, _)| {
             let parts: Vec<&str> = path.split('/').collect();
-            if parts.len() >= 2 {
-                Some(parts[parts.len() - 2].to_string())
+            if parts.len() >= 3 {
+                Some(format!("{}/{}", parts[parts.len() - 3], parts[parts.len() - 2]))
             } else {
                 None
             }
@@ -233,7 +233,9 @@ fn write_hub_coverage(out: &mut String, store: &NoteStore) {
     let mut missing_hubs: Vec<String> = Vec::new();
     for area in hierarchy.root.children.values() {
         for cat in area.children.values() {
-            if cat.jd_id.is_some() && !hub_folders.contains(&cat.name) {
+            if cat.jd_id.is_some()
+                && !hub_paths.contains(&format!("{}/{}", area.name, cat.name))
+            {
                 missing_hubs.push(format!("{}/{}", area.name, cat.name));
             }
         }
@@ -338,9 +340,12 @@ fn write_activity_by_area(out: &mut String, store: &NoteStore) {
         }
         let area = parts[1].to_string();
 
-        let modified = std::fs::metadata(&note.file_path)
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::UNIX_EPOCH);
+        let Ok(meta) = std::fs::metadata(&note.file_path) else {
+            continue;
+        };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
 
         let entry = area_activity
             .entry(area)

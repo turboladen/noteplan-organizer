@@ -42,9 +42,12 @@ impl Analyzer for StaleAreaAnalyzer {
                 continue;
             }
 
-            let modified = std::fs::metadata(&note.file_path)
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::UNIX_EPOCH);
+            let Ok(meta) = std::fs::metadata(&note.file_path) else {
+                continue;
+            };
+            let Ok(modified) = meta.modified() else {
+                continue;
+            };
 
             let entry = area_latest.entry(area).or_insert(std::time::UNIX_EPOCH);
             if modified > *entry {

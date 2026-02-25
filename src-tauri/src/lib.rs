@@ -2,6 +2,7 @@ pub mod analyzer;
 mod commands;
 pub mod config;
 pub mod dump;
+pub mod export;
 pub mod models;
 pub mod parser;
 mod watcher;
@@ -11,6 +12,7 @@ use watcher::WatcherState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(WatcherState::new())
         .setup(|app| {
             // Enable logging in both debug and release builds.
@@ -32,6 +34,7 @@ pub fn run() {
             commands::detect_noteplan_path,
             commands::scan,
             commands::system_dump,
+            commands::export_assessment_context,
             commands::get_note_content,
             commands::open_noteplan_url,
             watcher::start_watching,

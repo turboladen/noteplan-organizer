@@ -21,6 +21,16 @@ export async function systemDump(path: string): Promise<string> {
   return invoke<string>("system_dump", { path });
 }
 
+export async function exportAssessmentContext(
+  path: string,
+  guideTitle?: string,
+): Promise<string> {
+  return invoke<string>("export_assessment_context", {
+    path,
+    guide_title: guideTitle ?? null,
+  });
+}
+
 export async function startWatching(path: string): Promise<void> {
   return invoke<void>("start_watching", { path });
 }

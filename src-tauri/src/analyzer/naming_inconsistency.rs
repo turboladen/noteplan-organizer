@@ -75,7 +75,7 @@ impl Analyzer for NamingInconsistencyAnalyzer {
                 findings.push(Finding {
                     severity: Severity::Info,
                     category: FindingCategory::NamingInconsistency,
-                    file_path: format!("(folder: {})", folder),
+                    file_path: format!("Notes/{}", folder),
                     description: format!(
                         "Folder uses '{}' but the majority use '{}' — inconsistent naming",
                         minority_term, majority_term
@@ -111,7 +111,7 @@ impl Analyzer for NamingInconsistencyAnalyzer {
                         findings.push(Finding {
                             severity: Severity::Info,
                             category: FindingCategory::NamingInconsistency,
-                            file_path: format!("(folder: {})", folder),
+                            file_path: format!("Notes/{}", folder),
                             description: format!(
                                 "Folder uses '{}' separator but most folders use '{}' — likely a typo",
                                 sep, majority_sep

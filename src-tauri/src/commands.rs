@@ -1,6 +1,7 @@
 use crate::analyzer::run_all_analyzers;
 use crate::config;
 use crate::dump;
+use crate::export;
 use crate::models::{NoteKind, Report};
 use crate::parser::scan_noteplan_dir;
 
@@ -83,8 +84,8 @@ pub fn get_note_content(path: String) -> Result<String, String> {
     std::fs::read_to_string(&canonical).map_err(|e| format!("Failed to read note: {}", e))
 }
 
-/// Generate a comprehensive system assessment dump, write it to a temp file, and open it.
-/// Returns the dump text. Also writes to ~/Desktop/noteplan-system-dump.txt and opens it.
+/// Generate a comprehensive system assessment dump, write it to ~/Desktop, and open it.
+/// Returns the dump text as a string for the frontend.
 #[tauri::command]
 pub fn system_dump(path: String) -> Result<String, String> {
     if !std::path::Path::new(&path).exists() {
@@ -110,6 +111,21 @@ pub fn system_dump(path: String) -> Result<String, String> {
         .ok();
 
     Ok(report)
+}
+
+/// Assemble an assessment context bundle (guide + dump + flagged notes) for clipboard export.
+/// Returns the assembled text; the frontend copies it to clipboard.
+#[tauri::command]
+pub fn export_assessment_context(
+    path: String,
+    guide_title: Option<String>,
+) -> Result<String, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+
+    let store = scan_noteplan_dir(&path);
+    export::generate_assessment_context(&store, &path, guide_title.as_deref())
 }
 
 /// Opens a noteplan:// URL using macOS `open` command, which launches NotePlan
