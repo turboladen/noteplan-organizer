@@ -43,6 +43,8 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
 - `analyzer/` — 8 modules implementing the `Analyzer` trait; `run_all_analyzers()` collects findings
 - `watcher.rs` — File watching via `notify` crate with 2s debounce; shares `perform_scan()` with
   manual scan
+- `build.rs` — Extends `tauri_build` to embed `GIT_SHORT_REV` env var at compile time via
+  `git rev-parse --short HEAD`; falls back to `"unknown"` without git
 - `commands.rs` — Tauri command handlers exposed to the frontend
 - `config.rs` — Auto-detects NotePlan data directory (App Store, Setapp, or iCloud paths)
 - `models/` — `Note`, `Finding`, `Report` types (must be `Serialize` for IPC)
@@ -113,6 +115,12 @@ truncates longer category labels like "Naming Inconsistency".
 
 **Sticky in flex**: Sticky children inside a flex container need `self-start` (Tailwind) to avoid
 stretching to full row height, which eliminates the sticky scroll range.
+
+**Version display**: The status tray shows `v{version} ({git_rev})` fetched on mount via Tauri's
+built-in `getVersion()` (from `@tauri-apps/api/app`) and a custom `get_git_rev` command. The git
+rev is embedded at compile time by `build.rs`. Do not add `cargo:rerun-if-changed` directives to
+`build.rs` — Cargo's default rebuild-on-any-file-change is correct here (explicit directives can
+cause stale revs because `.git/refs` is a directory, not a file).
 
 ## Code Style
 
