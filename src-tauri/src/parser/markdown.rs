@@ -1,5 +1,5 @@
 use crate::models::{Note, NoteKind, Section};
-use crate::parser::{extract_wiki_links, parse_jd_id, parse_tasks};
+use crate::parser::{extract_wiki_links, parse_jd_id, parse_note_id, parse_tasks};
 use regex::Regex;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -36,8 +36,11 @@ pub fn parse_note(
     // Extract title: first heading, or filename
     let title = extract_title(content).unwrap_or_else(|| filename.clone());
 
-    // Parse JD ID from filename (may be stale if user renamed note in NotePlan)
-    let jd_id = parse_jd_id(&filename);
+    // Parse note ID from filename with kind classification
+    let (jd_id, note_id_kind) = match parse_note_id(&filename) {
+        Some((id, kind)) => (Some(id), Some(kind)),
+        None => (None, None),
+    };
 
     // Parse JD ID from the content title (reflects user's current intent)
     let title_jd_id = parse_jd_id(&title);
@@ -89,6 +92,7 @@ pub fn parse_note(
         jd_id,
         title_jd_id,
         parent_jd_id,
+        note_id_kind,
         kind,
         content: content.to_string(),
         tasks,

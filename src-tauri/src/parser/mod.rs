@@ -4,7 +4,7 @@ mod link;
 mod markdown;
 mod task;
 
-pub use folder::parse_jd_id;
+pub use folder::{parse_jd_id, parse_note_id};
 pub use link::extract_wiki_links;
 pub use markdown::parse_note;
 pub use task::parse_tasks;

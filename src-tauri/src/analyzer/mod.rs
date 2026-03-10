@@ -21,6 +21,22 @@ pub mod stale_area;
 use crate::models::Finding;
 use crate::parser::NoteStore;
 
+/// Section headings that identify a note as a hub/index note.
+/// Shared between hub_completeness and missing_hub analyzers.
+pub const HUB_SECTIONS: &[&str] = &[
+    "Related",
+    "Team Members",
+    "Important Decisions",
+    "Documentation",
+    "Timeline",
+    "Core Concepts",
+    "Key Points",
+    "Sources",
+    "Description",
+    "Summary",
+    "Notes",
+];
+
 /// Trait for all analyzers. Each produces a list of findings from the note store.
 pub trait Analyzer {
     fn analyze(&self, store: &NoteStore) -> Vec<Finding>;

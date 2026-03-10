@@ -48,6 +48,8 @@ export interface Finding {
   is_folder: boolean;
 }
 
+export type NoteIdKind = "JdDotted" | "HubCode" | "Sequential" | "DatePrefix" | "BareHub";
+
 export type NoteKind = "Regular" | "Daily" | "Weekly" | "Monthly" | "Template";
 
 export type TaskState = "Open" | "Done" | "Cancelled" | "Scheduled";
@@ -82,6 +84,7 @@ export interface Note {
   jd_id: string | null;
   title_jd_id: string | null;
   parent_jd_id: string | null;
+  note_id_kind: NoteIdKind | null;
   kind: NoteKind;
   content: string;
   tasks: Task[];

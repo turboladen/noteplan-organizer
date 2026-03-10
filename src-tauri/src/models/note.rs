@@ -1,5 +1,20 @@
 use serde::Serialize;
 
+/// Classifies the format of a note's ID on disk.
+/// - `JdDotted`: Traditional JD-style dotted number (e.g., "42.02", "30.10.04")
+/// - `HubCode`: Hub identifier with suffix (e.g., "00.PH", "00.DH", "00.RH")
+/// - `Sequential`: Simple two-digit sequential number (e.g., "01", "02")
+/// - `DatePrefix`: ISO date prefix (e.g., "2026-03-09")
+/// - `BareHub`: A bare "00" without hub suffix — should be flagged as an error
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum NoteIdKind {
+    JdDotted,
+    HubCode,
+    Sequential,
+    DatePrefix,
+    BareHub,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub enum NoteKind {
     Regular,
@@ -60,6 +75,8 @@ pub struct Note {
     pub title_jd_id: Option<String>,
     /// The parent folder's JD ID
     pub parent_jd_id: Option<String>,
+    /// Classification of the note's ID format
+    pub note_id_kind: Option<NoteIdKind>,
     pub kind: NoteKind,
     pub content: String,
     pub tasks: Vec<Task>,

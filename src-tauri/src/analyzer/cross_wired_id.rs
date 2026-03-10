@@ -1,5 +1,5 @@
 use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, NoteKind, Severity};
+use crate::models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity};
 use crate::parser::{parse_jd_id, NoteStore};
 
 pub struct CrossWiredIdAnalyzer;
@@ -18,6 +18,16 @@ impl Analyzer for CrossWiredIdAnalyzer {
                 || note.relative_path.contains("_attachments")
             {
                 continue;
+            }
+
+            // Skip notes with non-JD ID kinds — sequential, date, and hub IDs
+            // are independent of folder hierarchy by design
+            match note.note_id_kind {
+                Some(NoteIdKind::Sequential)
+                | Some(NoteIdKind::DatePrefix)
+                | Some(NoteIdKind::HubCode)
+                | Some(NoteIdKind::BareHub) => continue,
+                _ => {}
             }
 
             // Get the note's JD ID (prefer title, fall back to filename)
@@ -47,10 +57,9 @@ impl Analyzer for CrossWiredIdAnalyzer {
 
             // The note ID should equal or be a child of one of its ancestor folder IDs.
             // e.g., note "50.04.01" belongs under folder "50.04" or "50"
-            let belongs = ancestor_ids.iter().any(|ancestor| {
-                note_id == ancestor
-                    || note_id.starts_with(&format!("{}.", ancestor))
-            });
+            let belongs = ancestor_ids
+                .iter()
+                .any(|ancestor| note_id == ancestor || note_id.starts_with(&format!("{}.", ancestor)));
 
             if !belongs {
                 // Find the most specific ancestor for context
@@ -77,5 +86,70 @@ impl Analyzer for CrossWiredIdAnalyzer {
         }
 
         findings
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::parse_note;
+
+    #[test]
+    fn test_sequential_id_skipped() {
+        // Sequential IDs should not trigger cross-wired findings
+        let content = "# 01 - My Note\nContent";
+        let note = parse_note(
+            "/fake/Notes/5x - Refs/50 - Products/01 - My Note.md",
+            "Notes/5x - Refs/50 - Products/01 - My Note.md",
+            content,
+            NoteKind::Regular,
+        );
+        let store = NoteStore::new(vec![note]);
+        let findings = CrossWiredIdAnalyzer.analyze(&store);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_date_id_skipped() {
+        let content = "# 2026-03-09 - Daily Log\nContent";
+        let note = parse_note(
+            "/fake/Notes/5x - Refs/50 - Products/2026-03-09 - Daily Log.md",
+            "Notes/5x - Refs/50 - Products/2026-03-09 - Daily Log.md",
+            content,
+            NoteKind::Regular,
+        );
+        let store = NoteStore::new(vec![note]);
+        let findings = CrossWiredIdAnalyzer.analyze(&store);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_hub_code_skipped() {
+        let content = "# 00.PH - Project Hub\nContent";
+        let note = parse_note(
+            "/fake/Notes/5x - Refs/50 - Products/00.PH - Project Hub.md",
+            "Notes/5x - Refs/50 - Products/00.PH - Project Hub.md",
+            content,
+            NoteKind::Regular,
+        );
+        let store = NoteStore::new(vec![note]);
+        let findings = CrossWiredIdAnalyzer.analyze(&store);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_jd_id_cross_wired_still_flagged() {
+        // A JD-dotted ID that doesn't match its folder should still be flagged
+        let content = "# 31.03.01 - Units\nContent";
+        let note = parse_note(
+            "/fake/Notes/5x - Refs/50 - Products/50.04 - Agronomy/31.03.01 - Units.md",
+            "Notes/5x - Refs/50 - Products/50.04 - Agronomy/31.03.01 - Units.md",
+            content,
+            NoteKind::Regular,
+        );
+        let store = NoteStore::new(vec![note]);
+        let findings = CrossWiredIdAnalyzer.analyze(&store);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].description.contains("31.03.01"));
     }
 }

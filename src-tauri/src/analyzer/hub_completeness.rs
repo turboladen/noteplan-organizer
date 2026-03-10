@@ -1,23 +1,8 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, NoteKind, Severity};
+use crate::analyzer::{Analyzer, HUB_SECTIONS};
+use crate::models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity};
 use crate::parser::NoteStore;
 
 pub struct HubCompletenessAnalyzer;
-
-/// Sections that hub notes typically have.
-const HUB_SECTIONS: &[&str] = &[
-    "Related",
-    "Team Members",
-    "Important Decisions",
-    "Documentation",
-    "Timeline",
-    "Core Concepts",
-    "Key Points",
-    "Sources",
-    "Description",
-    "Summary",
-    "Notes",
-];
 
 impl Analyzer for HubCompletenessAnalyzer {
     fn analyze(&self, store: &NoteStore) -> Vec<Finding> {
@@ -37,14 +22,19 @@ impl Analyzer for HubCompletenessAnalyzer {
                 continue;
             }
 
-            // Check if this looks like a hub note (has multiple hub-like sections)
+            // Detect hub notes by either:
+            // 1. Hub code filename (00.PH, 00.DH, 00.RH)
+            // 2. Having 2+ hub-like sections (legacy heuristic)
+            let is_hub_by_filename = matches!(note.note_id_kind, Some(NoteIdKind::HubCode));
+
             let hub_section_count = note
                 .sections
                 .iter()
                 .filter(|s| HUB_SECTIONS.iter().any(|h| s.heading.contains(h)))
                 .count();
+            let is_hub_by_sections = hub_section_count >= 2;
 
-            if hub_section_count < 2 {
+            if !is_hub_by_filename && !is_hub_by_sections {
                 continue; // Not a hub note
             }
 
@@ -68,7 +58,7 @@ impl Analyzer for HubCompletenessAnalyzer {
                         )),
                         line_number: Some(section.line_number),
                         context: None,
-                    is_folder: false,
+                        is_folder: false,
                     });
                 }
             }
