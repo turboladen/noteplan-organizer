@@ -141,7 +141,7 @@ function App() {
         ? `v${version} (${rev})`
         : `v${version}`;
       setAppVersion(display);
-    }).catch(() => {});
+    }).catch((e) => console.warn("Failed to fetch app version:", e));
   }, []);
 
   // Subscribe to scan-update events from the file watcher
