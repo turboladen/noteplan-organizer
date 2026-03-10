@@ -60,12 +60,8 @@ export function NotePreview({ path, basePath, onClose }: NotePreviewProps) {
         </div>
       </div>
       <div className="flex-1 px-4 py-3 overflow-auto">
-        {error && (
-          <div className="text-sm text-red-600">Failed to load: {error}</div>
-        )}
-        {content === null && !error && (
-          <div className="text-sm text-text-muted">Loading...</div>
-        )}
+        {error && <div className="text-sm text-red-600">Failed to load: {error}</div>}
+        {content === null && !error && <div className="text-sm text-text-muted">Loading...</div>}
         {content !== null && (
           <pre className="text-xs text-text-secondary whitespace-pre-wrap font-mono leading-relaxed">
             {content}

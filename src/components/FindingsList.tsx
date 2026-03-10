@@ -1,18 +1,19 @@
-import { useState, useEffect, useRef, useCallback, forwardRef } from "react";
-import type { Finding, FindingCategory, ReportStats, Severity } from "../types/api";
-import {
-  CATEGORY_LABELS,
-  CATEGORY_BADGE_STYLES,
-  SEVERITY_BADGE_STYLES,
-} from "../types/api";
-import { NotePreview } from "./NotePreview";
-import { buildNotePlanUrl } from "../utils/noteplanUrl";
+import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import { openNotePlanUrl } from "../api/commands";
+import type { Finding, FindingCategory, ReportStats, Severity } from "../types/api";
+import { CATEGORY_BADGE_STYLES, CATEGORY_LABELS, SEVERITY_BADGE_STYLES } from "../types/api";
 import { getFindingId } from "../utils/findingId";
 import { formatRelativeTime } from "../utils/formatTime";
+import { buildNotePlanUrl } from "../utils/noteplanUrl";
+import { NotePreview } from "./NotePreview";
 
 /** Defensive fallbacks for unknown keys (prevents crash if Rust adds new variants) */
-const FALLBACK_SEV_STYLE = { bg: "bg-stone-100", text: "text-stone-600", border: "border-stone-200", dot: "bg-stone-400" };
+const FALLBACK_SEV_STYLE = {
+  bg: "bg-stone-100",
+  text: "text-stone-600",
+  border: "border-stone-200",
+  dot: "bg-stone-400",
+};
 const FALLBACK_CAT_STYLE = { bg: "bg-stone-100", text: "text-stone-600", dot: "bg-stone-400" };
 
 interface FindingsListProps {
@@ -58,10 +59,12 @@ export function FindingsList({
   }, [selectedCategory, selectedSeverity, showDismissed, findings]);
 
   const filtered = findings.filter((f) => {
-    if (selectedCategory !== "all" && f.category !== selectedCategory)
+    if (selectedCategory !== "all" && f.category !== selectedCategory) {
       return false;
-    if (selectedSeverity !== "all" && f.severity !== selectedSeverity)
+    }
+    if (selectedSeverity !== "all" && f.severity !== selectedSeverity) {
       return false;
+    }
     return true;
   });
 
@@ -78,7 +81,7 @@ export function FindingsList({
   ] as Severity[];
 
   const activeFindings = findings.filter(
-    (f) => !dismissedIds.has(getFindingId(f))
+    (f) => !dismissedIds.has(getFindingId(f)),
   );
 
   // Keyboard navigation
@@ -135,116 +138,112 @@ export function FindingsList({
         }
       }
     },
-    [focusedIndex, visibleActive, expandedId, onToggleDismissed]
+    [focusedIndex, visibleActive, expandedId, onToggleDismissed],
   );
 
   return (
     <div className="flex gap-6">
       {/* Filters sidebar — glass panel */}
       <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in sticky top-[89px] self-start max-h-[calc(100vh-89px)] overflow-y-auto">
-          <div className="glass-sidebar rounded-[var(--radius-panel)] shadow-card p-4 space-y-4">
-            {/* Stats summary */}
-            <div className="pb-3 border-b border-border-light space-y-1 text-xs text-text-muted">
+        <div className="glass-sidebar rounded-[var(--radius-panel)] shadow-card p-4 space-y-4">
+          {/* Stats summary */}
+          <div className="pb-3 border-b border-border-light space-y-1 text-xs text-text-muted">
+            <div className="flex justify-between">
+              <span>{stats.total_notes} notes</span>
+              <span>{stats.total_findings} findings</span>
+            </div>
+            {stats.total_daily_notes > 0 && (
               <div className="flex justify-between">
-                <span>{stats.total_notes} notes</span>
-                <span>{stats.total_findings} findings</span>
-              </div>
-              {stats.total_daily_notes > 0 && (
-                <div className="flex justify-between">
-                  <span>{stats.total_daily_notes} daily</span>
-                  {stats.total_weekly_notes > 0 && <span>{stats.total_weekly_notes} weekly</span>}
-                </div>
-              )}
-            </div>
-
-            <div>
-              <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
-                Category
-              </h4>
-              <div className="space-y-1">
-                <FilterButton
-                  label="All"
-                  count={activeFindings.length}
-                  active={selectedCategory === "all"}
-                  onClick={() => {
-                    onSelectCategory("all");
-                    onSelectSeverity("all");
-                  }}
-                />
-                {categories.map((cat) => {
-                  const style = CATEGORY_BADGE_STYLES[cat];
-                  return (
-                    <FilterButton
-                      key={cat}
-                      label={CATEGORY_LABELS[cat]}
-                      count={
-                        activeFindings.filter((f) => f.category === cat).length
-                      }
-                      active={selectedCategory === cat}
-                      onClick={() => {
-                        onSelectCategory(cat);
-                        onSelectSeverity("all");
-                      }}
-                      dotColor={style.dot}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-            <div>
-              <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
-                Severity
-              </h4>
-              <div className="space-y-1">
-                <FilterButton
-                  label="All"
-                  count={activeFindings.length}
-                  active={selectedSeverity === "all"}
-                  onClick={() => {
-                    onSelectSeverity("all");
-                    onSelectCategory("all");
-                  }}
-                />
-                {severities.map((sev) => {
-                  const style = SEVERITY_BADGE_STYLES[sev];
-                  return (
-                    <FilterButton
-                      key={sev}
-                      label={sev}
-                      count={
-                        activeFindings.filter((f) => f.severity === sev).length
-                      }
-                      active={selectedSeverity === sev}
-                      onClick={() => {
-                        onSelectSeverity(sev);
-                        onSelectCategory("all");
-                      }}
-                      dotColor={style.dot}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Show/hide dismissed toggle */}
-            {dismissed.length > 0 && (
-              <div className="pt-2 border-t border-border-light">
-                <button
-                  onClick={() => setShowDismissed(!showDismissed)}
-                  className="text-xs text-text-tertiary hover:text-text-secondary transition-colors"
-                >
-                  {showDismissed ? "Hide" : "Show"} resolved ({dismissed.length}
-                  )
-                </button>
+                <span>{stats.total_daily_notes} daily</span>
+                {stats.total_weekly_notes > 0 && <span>{stats.total_weekly_notes} weekly</span>}
               </div>
             )}
+          </div>
 
-            {/* Scan time */}
-            <div className="pt-3 border-t border-border-light text-xs text-text-muted">
-              Scanned {formatRelativeTime(scannedAt)}
+          <div>
+            <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+              Category
+            </h4>
+            <div className="space-y-1">
+              <FilterButton
+                label="All"
+                count={activeFindings.length}
+                active={selectedCategory === "all"}
+                onClick={() => {
+                  onSelectCategory("all");
+                  onSelectSeverity("all");
+                }}
+              />
+              {categories.map((cat) => {
+                const style = CATEGORY_BADGE_STYLES[cat];
+                return (
+                  <FilterButton
+                    key={cat}
+                    label={CATEGORY_LABELS[cat]}
+                    count={activeFindings.filter((f) => f.category === cat).length}
+                    active={selectedCategory === cat}
+                    onClick={() => {
+                      onSelectCategory(cat);
+                      onSelectSeverity("all");
+                    }}
+                    dotColor={style.dot}
+                  />
+                );
+              })}
             </div>
           </div>
+          <div>
+            <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+              Severity
+            </h4>
+            <div className="space-y-1">
+              <FilterButton
+                label="All"
+                count={activeFindings.length}
+                active={selectedSeverity === "all"}
+                onClick={() => {
+                  onSelectSeverity("all");
+                  onSelectCategory("all");
+                }}
+              />
+              {severities.map((sev) => {
+                const style = SEVERITY_BADGE_STYLES[sev];
+                return (
+                  <FilterButton
+                    key={sev}
+                    label={sev}
+                    count={activeFindings.filter((f) => f.severity === sev).length}
+                    active={selectedSeverity === sev}
+                    onClick={() => {
+                      onSelectSeverity(sev);
+                      onSelectCategory("all");
+                    }}
+                    dotColor={style.dot}
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Show/hide dismissed toggle */}
+          {dismissed.length > 0 && (
+            <div className="pt-2 border-t border-border-light">
+              <button
+                onClick={() => setShowDismissed(!showDismissed)}
+                className="text-xs text-text-tertiary hover:text-text-secondary transition-colors"
+              >
+                {showDismissed ? "Hide" : "Show"} resolved ({dismissed.length}
+                )
+              </button>
+            </div>
+          )}
+
+          {/* Scan time */}
+          <div className="pt-3 border-t border-border-light text-xs text-text-muted">
+            Scanned {formatRelativeTime(scannedAt)}
+          </div>
         </div>
+      </div>
 
       {/* Findings */}
       <div
@@ -254,8 +253,7 @@ export function FindingsList({
         onKeyDown={handleKeyDown}
       >
         <div className="text-sm text-text-tertiary mb-3">
-          Showing {Math.min(visibleCount, active.length)} of {active.length}{" "}
-          findings
+          Showing {Math.min(visibleCount, active.length)} of {active.length} findings
           {active.length !== activeFindings.length && (
             <span className="text-text-muted">
               {" "}
@@ -290,14 +288,8 @@ export function FindingsList({
                 expanded={expandedId === fid}
                 focused={focusedIndex === i}
                 isPreviewActive={previewPath === finding.file_path}
-                onToggle={() =>
-                  setExpandedId(expandedId === fid ? null : fid)
-                }
-                onPreview={() =>
-                  setPreviewPath((prev) =>
-                    prev === finding.file_path ? null : finding.file_path
-                  )
-                }
+                onToggle={() => setExpandedId(expandedId === fid ? null : fid)}
+                onPreview={() => setPreviewPath((prev) => prev === finding.file_path ? null : finding.file_path)}
                 onToggleDismissed={() => onToggleDismissed(fid)}
               />
             );
@@ -334,14 +326,8 @@ export function FindingsList({
                     expanded={expandedId === fid}
                     focused={false}
                     isPreviewActive={previewPath === finding.file_path}
-                    onToggle={() =>
-                      setExpandedId(expandedId === fid ? null : fid)
-                    }
-                    onPreview={() =>
-                      setPreviewPath((prev) =>
-                        prev === finding.file_path ? null : finding.file_path
-                      )
-                    }
+                    onToggle={() => setExpandedId(expandedId === fid ? null : fid)}
+                    onPreview={() => setPreviewPath((prev) => prev === finding.file_path ? null : finding.file_path)}
                     onToggleDismissed={() => onToggleDismissed(fid)}
                   />
                 );
@@ -415,9 +401,7 @@ function FilterButton({
         {label}
       </span>
       <span
-        className={`text-xs font-mono ${
-          active ? "text-white/70" : "text-text-muted"
-        }`}
+        className={`text-xs font-mono ${active ? "text-white/70" : "text-text-muted"}`}
       >
         {count}
       </span>
@@ -450,7 +434,7 @@ const FindingCard = forwardRef<
     onPreview,
     onToggleDismissed,
   },
-  ref
+  ref,
 ) {
   const shortPath = finding.file_path
     .replace(/^Notes\//, "")
@@ -492,9 +476,7 @@ const FindingCard = forwardRef<
 
         {/* Card content */}
         <div
-          className={`min-w-0 flex-1 px-2 py-3.5 ${
-            isDismissed ? "line-through decoration-text-muted" : ""
-          }`}
+          className={`min-w-0 flex-1 px-2 py-3.5 ${isDismissed ? "line-through decoration-text-muted" : ""}`}
         >
           {/* Top row: severity dot + description + category label */}
           <div className="flex items-start gap-2.5">
@@ -515,30 +497,32 @@ const FindingCard = forwardRef<
 
           {/* File path row */}
           <div className="mt-1.5 ml-[18px] flex items-center gap-2 text-xs">
-            {finding.is_folder ? (
-              <span className="text-text-muted truncate" title={finding.file_path}>
-                {shortPath}
-              </span>
-            ) : (
-              <span
-                role="button"
-                tabIndex={0}
-                title="Open in NotePlan"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openNotePlanUrl(buildNotePlanUrl(finding.file_path));
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+            {finding.is_folder
+              ? (
+                <span className="text-text-muted truncate" title={finding.file_path}>
+                  {shortPath}
+                </span>
+              )
+              : (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  title="Open in NotePlan"
+                  onClick={(e) => {
                     e.stopPropagation();
                     openNotePlanUrl(buildNotePlanUrl(finding.file_path));
-                  }
-                }}
-                className="text-text-muted hover:text-accent hover:underline cursor-pointer transition-colors truncate"
-              >
-                {shortPath} ↗
-              </span>
-            )}
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.stopPropagation();
+                      openNotePlanUrl(buildNotePlanUrl(finding.file_path));
+                    }
+                  }}
+                  className="text-text-muted hover:text-accent hover:underline cursor-pointer transition-colors truncate"
+                >
+                  {shortPath} ↗
+                </span>
+              )}
             {(hasDetail || finding.suggestion) && (
               <button
                 type="button"

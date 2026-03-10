@@ -15,6 +15,7 @@ Compare Rust models to TypeScript types and fix any drift:
 5. Run `bunx tsc --noEmit` to verify the TypeScript still compiles
 
 Type mapping: Rust → TypeScript
+
 - `String` → `string`
 - `usize`/`u32`/`i32`/`f64` → `number`
 - `bool` → `boolean`

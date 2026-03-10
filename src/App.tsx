@@ -1,19 +1,19 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { writeText as clipboardWrite } from "@tauri-apps/plugin-clipboard-manager";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   detectNotePlanPath,
-  scanNotes,
-  systemDump,
   exportAssessmentContext,
+  isWatching as checkIsWatching,
+  scanNotes,
   startWatching,
   stopWatching,
-  isWatching as checkIsWatching,
+  systemDump,
 } from "./api/commands";
 import { FindingsList } from "./components/FindingsList";
 import { SCAN_UPDATE_EVENT, SYSTEM_ASSESSMENT_CATEGORIES } from "./types/api";
 import type { Finding, FindingCategory, Report, ReportStats, Severity } from "./types/api";
 import { getFindingId } from "./utils/findingId";
-import { writeText as clipboardWrite } from "@tauri-apps/plugin-clipboard-manager";
 
 type AppTab = "findings" | "assessment";
 
@@ -36,7 +36,7 @@ function saveDismissed(dismissed: Set<string>) {
 /** Derive ReportStats from a filtered subset of findings, keeping note counts from the original. */
 function computeStats(
   findings: Finding[],
-  original: ReportStats | undefined
+  original: ReportStats | undefined,
 ): ReportStats {
   const byCat: Record<string, number> = {};
   const bySev: Record<string, number> = {};
@@ -70,7 +70,7 @@ function App() {
     FindingCategory | "all"
   >("all");
   const [selectedSeverity, setSelectedSeverity] = useState<Severity | "all">(
-    "all"
+    "all",
   );
 
   // Assessment tab has its own independent filter state
@@ -78,7 +78,7 @@ function App() {
     FindingCategory | "all"
   >("all");
   const [assessSeverity, setAssessSeverity] = useState<Severity | "all">(
-    "all"
+    "all",
   );
 
   // Tab state
@@ -86,7 +86,7 @@ function App() {
 
   // Toast state for watcher updates
   const [toast, setToast] = useState<{ message: string; key: number } | null>(
-    null
+    null,
   );
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -234,27 +234,24 @@ function App() {
   const findingsFindings = useMemo(
     () =>
       report?.findings.filter(
-        (f) => !SYSTEM_ASSESSMENT_CATEGORIES.has(f.category)
+        (f) => !SYSTEM_ASSESSMENT_CATEGORIES.has(f.category),
       ) ?? [],
-    [report]
+    [report],
   );
 
   const assessmentFindings = useMemo(
-    () =>
-      report?.findings.filter((f) =>
-        SYSTEM_ASSESSMENT_CATEGORIES.has(f.category)
-      ) ?? [],
-    [report]
+    () => report?.findings.filter((f) => SYSTEM_ASSESSMENT_CATEGORIES.has(f.category)) ?? [],
+    [report],
   );
 
   const findingsStats = useMemo(
     () => computeStats(findingsFindings, report?.stats),
-    [findingsFindings, report]
+    [findingsFindings, report],
   );
 
   const assessmentStats = useMemo(
     () => computeStats(assessmentFindings, report?.stats),
-    [assessmentFindings, report]
+    [assessmentFindings, report],
   );
 
   return (
@@ -286,8 +283,8 @@ function App() {
             {scanning
               ? "Scanning..."
               : hasScannedRef.current
-                ? "Rescan"
-                : "Scan Notes"}
+              ? "Rescan"
+              : "Scan Notes"}
           </button>
         </div>
       </header>
@@ -305,9 +302,7 @@ function App() {
                 onClick={handleToggleWatch}
                 className="hover:text-text-secondary transition-colors flex items-center gap-1.5"
               >
-                {watching && (
-                  <span className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
-                )}
+                {watching && <span className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />}
                 {watching ? "Watching" : "Watch"}
               </button>
             )}
@@ -336,19 +331,20 @@ function App() {
               Ready to analyze your notes
             </h2>
             <p className="text-text-tertiary mb-6 max-w-md mx-auto">
-              Click "Scan Notes" to parse your NotePlan files and check for
-              structural issues, broken links, stale tasks, and more.
+              Click "Scan Notes" to parse your NotePlan files and check for structural issues, broken links, stale
+              tasks, and more.
             </p>
-            {notePlanPath ? (
-              <p className="text-xs text-text-muted">
-                Found NotePlan at: {notePlanPath}
-              </p>
-            ) : (
-              <p className="text-xs text-amber-600">
-                NotePlan data directory not found. Make sure NotePlan is
-                installed.
-              </p>
-            )}
+            {notePlanPath
+              ? (
+                <p className="text-xs text-text-muted">
+                  Found NotePlan at: {notePlanPath}
+                </p>
+              )
+              : (
+                <p className="text-xs text-amber-600">
+                  NotePlan data directory not found. Make sure NotePlan is installed.
+                </p>
+              )}
           </div>
         )}
 
@@ -399,45 +395,47 @@ function App() {
               </button>
             </div>
 
-            {activeTab === "findings" ? (
-              <FindingsList
-                findings={findingsFindings}
-                basePath={report.noteplan_path}
-                stats={findingsStats}
-                scannedAt={report.scanned_at}
-                dismissedIds={dismissedIds}
-                onToggleDismissed={toggleDismissed}
-                selectedCategory={selectedCategory}
-                selectedSeverity={selectedSeverity}
-                onSelectCategory={setSelectedCategory}
-                onSelectSeverity={setSelectedSeverity}
-              />
-            ) : (
-              <>
-                <div className="flex items-center justify-end mb-3">
-                  <button
-                    type="button"
-                    onClick={handleExportContext}
-                    disabled={!notePlanPath || exporting}
-                    className="px-3 py-1.5 text-xs font-medium rounded-[var(--radius-button)] border border-border-light bg-surface text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {exporting ? "Assembling\u2026" : "Export Context for Claude"}
-                  </button>
-                </div>
+            {activeTab === "findings"
+              ? (
                 <FindingsList
-                  findings={assessmentFindings}
+                  findings={findingsFindings}
                   basePath={report.noteplan_path}
-                  stats={assessmentStats}
+                  stats={findingsStats}
                   scannedAt={report.scanned_at}
                   dismissedIds={dismissedIds}
                   onToggleDismissed={toggleDismissed}
-                  selectedCategory={assessCategory}
-                  selectedSeverity={assessSeverity}
-                  onSelectCategory={setAssessCategory}
-                  onSelectSeverity={setAssessSeverity}
+                  selectedCategory={selectedCategory}
+                  selectedSeverity={selectedSeverity}
+                  onSelectCategory={setSelectedCategory}
+                  onSelectSeverity={setSelectedSeverity}
                 />
-              </>
-            )}
+              )
+              : (
+                <>
+                  <div className="flex items-center justify-end mb-3">
+                    <button
+                      type="button"
+                      onClick={handleExportContext}
+                      disabled={!notePlanPath || exporting}
+                      className="px-3 py-1.5 text-xs font-medium rounded-[var(--radius-button)] border border-border-light bg-surface text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {exporting ? "Assembling\u2026" : "Export Context for Claude"}
+                    </button>
+                  </div>
+                  <FindingsList
+                    findings={assessmentFindings}
+                    basePath={report.noteplan_path}
+                    stats={assessmentStats}
+                    scannedAt={report.scanned_at}
+                    dismissedIds={dismissedIds}
+                    onToggleDismissed={toggleDismissed}
+                    selectedCategory={assessCategory}
+                    selectedSeverity={assessSeverity}
+                    onSelectCategory={setAssessCategory}
+                    onSelectSeverity={setAssessSeverity}
+                  />
+                </>
+              )}
           </>
         )}
       </main>

@@ -2,17 +2,16 @@
 export const SCAN_UPDATE_EVENT = "scan-update" as const;
 
 /** System assessment categories — used to split findings into tabs */
-export const SYSTEM_ASSESSMENT_CATEGORIES: ReadonlySet<FindingCategory> =
-  new Set<FindingCategory>([
-    "AreaBalance",
-    "DepthInconsistency",
-    "CategorySprawl",
-    "EmptyStructure",
-    "MissingHub",
-    "StaleArea",
-    "CrossWiredId",
-    "NamingInconsistency",
-  ]);
+export const SYSTEM_ASSESSMENT_CATEGORIES: ReadonlySet<FindingCategory> = new Set<FindingCategory>([
+  "AreaBalance",
+  "DepthInconsistency",
+  "CategorySprawl",
+  "EmptyStructure",
+  "MissingHub",
+  "StaleArea",
+  "CrossWiredId",
+  "NamingInconsistency",
+]);
 
 export type Severity = "Info" | "Warning" | "Error";
 
@@ -191,26 +190,26 @@ export const CATEGORY_BADGE_STYLES: Record<
   { bg: string; text: string; dot: string }
 > = {
   // Structure/ID family (stone)
-  IdConsistency:       { bg: "bg-stone-50",  text: "text-stone-600",  dot: "bg-stone-500" },
-  CrossWiredId:        { bg: "bg-stone-50",  text: "text-stone-600",  dot: "bg-stone-500" },
-  NamingInconsistency: { bg: "bg-stone-50",  text: "text-stone-600",  dot: "bg-stone-500" },
-  DepthInconsistency:  { bg: "bg-stone-50",  text: "text-stone-600",  dot: "bg-stone-500" },
+  IdConsistency: { bg: "bg-stone-50", text: "text-stone-600", dot: "bg-stone-500" },
+  CrossWiredId: { bg: "bg-stone-50", text: "text-stone-600", dot: "bg-stone-500" },
+  NamingInconsistency: { bg: "bg-stone-50", text: "text-stone-600", dot: "bg-stone-500" },
+  DepthInconsistency: { bg: "bg-stone-50", text: "text-stone-600", dot: "bg-stone-500" },
 
   // Content family (blue)
-  BrokenLink:          { bg: "bg-blue-50",   text: "text-blue-700",   dot: "bg-blue-500" },
-  TemplatePlaceholder: { bg: "bg-blue-50",   text: "text-blue-700",   dot: "bg-blue-500" },
-  Duplicate:           { bg: "bg-blue-50",   text: "text-blue-700",   dot: "bg-blue-500" },
-  HubCompleteness:     { bg: "bg-blue-50",   text: "text-blue-700",   dot: "bg-blue-500" },
+  BrokenLink: { bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" },
+  TemplatePlaceholder: { bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" },
+  Duplicate: { bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" },
+  HubCompleteness: { bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" },
 
   // Organization family (violet)
-  UnfiledSlip:         { bg: "bg-violet-50",  text: "text-violet-700", dot: "bg-violet-500" },
-  OrphanedNote:        { bg: "bg-violet-50",  text: "text-violet-700", dot: "bg-violet-500" },
-  CategorySprawl:      { bg: "bg-violet-50",  text: "text-violet-700", dot: "bg-violet-500" },
-  EmptyStructure:      { bg: "bg-violet-50",  text: "text-violet-700", dot: "bg-violet-500" },
-  MissingHub:          { bg: "bg-violet-50",  text: "text-violet-700", dot: "bg-violet-500" },
+  UnfiledSlip: { bg: "bg-violet-50", text: "text-violet-700", dot: "bg-violet-500" },
+  OrphanedNote: { bg: "bg-violet-50", text: "text-violet-700", dot: "bg-violet-500" },
+  CategorySprawl: { bg: "bg-violet-50", text: "text-violet-700", dot: "bg-violet-500" },
+  EmptyStructure: { bg: "bg-violet-50", text: "text-violet-700", dot: "bg-violet-500" },
+  MissingHub: { bg: "bg-violet-50", text: "text-violet-700", dot: "bg-violet-500" },
 
   // Staleness family (amber)
-  StaleTask:           { bg: "bg-amber-50",   text: "text-amber-700",  dot: "bg-amber-500" },
-  StaleArea:           { bg: "bg-amber-50",   text: "text-amber-700",  dot: "bg-amber-500" },
-  AreaBalance:         { bg: "bg-amber-50",   text: "text-amber-700",  dot: "bg-amber-500" },
+  StaleTask: { bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-500" },
+  StaleArea: { bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-500" },
+  AreaBalance: { bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-500" },
 };

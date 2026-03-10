@@ -1,12 +1,16 @@
 # NotePlan Organizer
 
-A read-only desktop analysis tool for [NotePlan](https://noteplan.co/) that scans your notes and surfaces structural issues, broken links, stale tasks, and organizational gaps. Built with Tauri v2, Rust, and React.
+A read-only desktop analysis tool for [NotePlan](https://noteplan.co/) that scans your notes and
+surfaces structural issues, broken links, stale tasks, and organizational gaps. Built with Tauri v2,
+Rust, and React.
 
-**Key principle: this app never writes to your NotePlan files.** It reads, analyzes, and presents findings. You decide what to fix and do it yourself in NotePlan.
+**Key principle: this app never writes to your NotePlan files.** It reads, analyzes, and presents
+findings. You decide what to fix and do it yourself in NotePlan.
 
 ## Why
 
-If you use NotePlan with a structured system (PARA, Johnny Decimal, or similar), things inevitably drift:
+If you use NotePlan with a structured system (PARA, Johnny Decimal, or similar), things inevitably
+drift:
 
 - Notes get created from templates but never filled in
 - Daily note content piles up without being filed into project/domain notes
@@ -21,18 +25,19 @@ Manually auditing 1000+ notes for these issues is impractical. This tool does it
 
 ### 8 Structural Analyzers
 
-| Analyzer | What it checks |
-|----------|---------------|
-| **ID Consistency** | Johnny Decimal-style folder/note IDs match their parent hierarchy (e.g., `44.02.02` inside `42.02` is flagged) |
-| **Unfiled Slips** | Notes with placeholder titles like `[Add ID]` or `[Add Title]` that were never properly filed |
-| **Hub Completeness** | Hub/MOC notes with empty sections or unfilled template placeholders (`[link to Project 1]`, `[Brief description]`) |
-| **Broken Links** | `[[wiki-links]]` that don't resolve to any existing note title; date links checked against Calendar files |
-| **Orphaned Notes** | Notes with zero incoming links from any other note (excluding daily/weekly notes and templates) |
-| **Duplicates** | Notes with identical titles in different locations |
-| **Stale Tasks** | Open tasks in daily notes that are more than 2 weeks old (rescheduled items that fell through the cracks) |
-| **Template Placeholders** | Notes created from templates but never filled in (`[Project Name]`, `[date]`, etc. still present in the title) |
+| Analyzer                  | What it checks                                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **ID Consistency**        | Johnny Decimal-style folder/note IDs match their parent hierarchy (e.g., `44.02.02` inside `42.02` is flagged)     |
+| **Unfiled Slips**         | Notes with placeholder titles like `[Add ID]` or `[Add Title]` that were never properly filed                      |
+| **Hub Completeness**      | Hub/MOC notes with empty sections or unfilled template placeholders (`[link to Project 1]`, `[Brief description]`) |
+| **Broken Links**          | `[[wiki-links]]` that don't resolve to any existing note title; date links checked against Calendar files          |
+| **Orphaned Notes**        | Notes with zero incoming links from any other note (excluding daily/weekly notes and templates)                    |
+| **Duplicates**            | Notes with identical titles in different locations                                                                 |
+| **Stale Tasks**           | Open tasks in daily notes that are more than 2 weeks old (rescheduled items that fell through the cracks)          |
+| **Template Placeholders** | Notes created from templates but never filled in (`[Project Name]`, `[date]`, etc. still present in the title)     |
 
-All analyzers use the **note's content title** (first `# heading`), not the filename on disk. This matters because NotePlan doesn't rename files when you change a note's title in the app.
+All analyzers use the **note's content title** (first `# heading`), not the filename on disk. This
+matters because NotePlan doesn't rename files when you change a note's title in the app.
 
 Notes in `@Trash`, `@Archive`, and `_attachments` folders are excluded from analysis.
 
@@ -44,15 +49,19 @@ Notes in `@Trash`, `@Archive`, and `_attachments` folders are excluded from anal
 - **Inline suggestions** shown on each finding card without needing to expand
 - **Expandable detail** for context snippets and line numbers
 - **Note preview panel** to see the full note content without leaving the app
-- **Checkbox to mark findings as resolved** (persisted in localStorage, pruned automatically on rescan)
+- **Checkbox to mark findings as resolved** (persisted in localStorage, pruned automatically on
+  rescan)
 
 ### Open in NotePlan
 
-Every finding has a clickable file path that opens the note directly in NotePlan via `noteplan://` x-callback-url. Works for regular notes, daily notes, and weekly notes.
+Every finding has a clickable file path that opens the note directly in NotePlan via `noteplan://`
+x-callback-url. Works for regular notes, daily notes, and weekly notes.
 
 ### File Watching
 
-After the first scan, the app automatically watches `Notes/` and `Calendar/` for changes. When you fix an issue in NotePlan, the app rescans and updates findings within ~3 seconds. The watcher can be toggled on/off from the header.
+After the first scan, the app automatically watches `Notes/` and `Calendar/` for changes. When you
+fix an issue in NotePlan, the app rescans and updates findings within ~3 seconds. The watcher can be
+toggled on/off from the header.
 
 ## Tech Stack
 
@@ -120,32 +129,46 @@ noteplan-organizer/
 
 ## Roadmap
 
-Phase 1 (current) is pure structural analysis with no AI. Future phases add Claude API integration for semantic understanding.
+Phase 1 (current) is pure structural analysis with no AI. Future phases add Claude API integration
+for semantic understanding.
 
 ### Phase 2: Daily Note Filing Assistant
 
-Use the Claude API to analyze content blocks in daily notes and suggest which existing project, domain, or reference note each block belongs in. Your folder structure provides clear filing targets; the AI matches content to categories rather than inventing new ones.
+Use the Claude API to analyze content blocks in daily notes and suggest which existing project,
+domain, or reference note each block belongs in. Your folder structure provides clear filing
+targets; the AI matches content to categories rather than inventing new ones.
 
 ### Phase 3: Link Suggester
 
-Identify notes that discuss the same topics, people, or projects but aren't cross-referenced. Combines text search with semantic similarity to suggest missing `[[wiki-links]]` between related notes.
+Identify notes that discuss the same topics, people, or projects but aren't cross-referenced.
+Combines text search with semantic similarity to suggest missing `[[wiki-links]]` between related
+notes.
 
 ### Phase 4: Task Triage
 
-Consolidate stale tasks scattered across daily notes. Group them by project or hashtag, surface which are still relevant vs. which can be cancelled, and suggest where to refile active tasks.
+Consolidate stale tasks scattered across daily notes. Group them by project or hashtag, surface
+which are still relevant vs. which can be cancelled, and suggest where to refile active tasks.
 
 ### Phase 5: Archive Advisor
 
-Identify completed projects (all tasks done, no recent activity) and suggest moving them to the searchable archive. Also flag old organizational structures in `@Archive` and `@Trash` that can be cleaned up.
+Identify completed projects (all tasks done, no recent activity) and suggest moving them to the
+searchable archive. Also flag old organizational structures in `@Archive` and `@Trash` that can be
+cleaned up.
 
 ## Design Decisions
 
-- **Read-only by design**: The app never modifies your NotePlan files. This eliminates sync conflict risks and keeps you in full control.
-- **Content title over filename**: NotePlan doesn't rename files on disk when you edit a note's title. All analyzers use the first `# heading` in the file as the source of truth.
-- **Full rescan on every change**: Analyzers like Broken Links and Orphaned Notes need global state (the full link graph). Incremental analysis isn't practical, and a full scan of ~1600 files takes under a second in Rust.
-- **Deterministic Phase 1**: No AI uncertainty in the audit report. Every finding is based on concrete structural rules you can verify.
+- **Read-only by design**: The app never modifies your NotePlan files. This eliminates sync conflict
+  risks and keeps you in full control.
+- **Content title over filename**: NotePlan doesn't rename files on disk when you edit a note's
+  title. All analyzers use the first `# heading` in the file as the source of truth.
+- **Full rescan on every change**: Analyzers like Broken Links and Orphaned Notes need global state
+  (the full link graph). Incremental analysis isn't practical, and a full scan of ~1600 files takes
+  under a second in Rust.
+- **Deterministic Phase 1**: No AI uncertainty in the audit report. Every finding is based on
+  concrete structural rules you can verify.
 
 ## License
 
 MIT
+
 # noteplan-organizer

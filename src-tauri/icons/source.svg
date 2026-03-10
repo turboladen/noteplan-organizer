@@ -1,110 +1,378 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 1024 1024"
+  width="1024"
+  height="1024"
+>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#4F46E5"/>
-      <stop offset="100%" stop-color="#7C3AED"/>
+      <stop offset="0%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#7C3AED" />
     </linearGradient>
     <linearGradient id="page" x1="0.2" y1="0" x2="0.8" y2="1">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="100%" stop-color="#F0EEFF"/>
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#F0EEFF" />
     </linearGradient>
     <linearGradient id="lens" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#818CF8" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#C4B5FD" stop-opacity="0.15"/>
+      <stop offset="0%" stop-color="#818CF8" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#C4B5FD" stop-opacity="0.15" />
     </linearGradient>
     <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
-      <feDropShadow dx="0" dy="8" stdDeviation="18" flood-color="#1E1B4B" flood-opacity="0.35"/>
+      <feDropShadow
+        dx="0"
+        dy="8"
+        stdDeviation="18"
+        flood-color="#1E1B4B"
+        flood-opacity="0.35"
+      />
     </filter>
     <filter id="glassShadow" x="-20%" y="-20%" width="150%" height="150%">
-      <feDropShadow dx="2" dy="4" stdDeviation="8" flood-color="#1E1B4B" flood-opacity="0.3"/>
+      <feDropShadow
+        dx="2"
+        dy="4"
+        stdDeviation="8"
+        flood-color="#1E1B4B"
+        flood-opacity="0.3"
+      />
     </filter>
     <clipPath id="roundedRect">
-      <rect x="64" y="64" width="896" height="896" rx="192" ry="192"/>
+      <rect x="64" y="64" width="896" height="896" rx="192" ry="192" />
     </clipPath>
   </defs>
 
   <!-- Background rounded square -->
-  <rect x="64" y="64" width="896" height="896" rx="192" ry="192" fill="url(#bg)"/>
+  <rect
+    x="64"
+    y="64"
+    width="896"
+    height="896"
+    rx="192"
+    ry="192"
+    fill="url(#bg)"
+  />
 
   <!-- Subtle grid pattern in background -->
   <g clip-path="url(#roundedRect)" opacity="0.06">
-    <line x1="200" y1="64" x2="200" y2="960" stroke="white" stroke-width="1.5"/>
-    <line x1="350" y1="64" x2="350" y2="960" stroke="white" stroke-width="1.5"/>
-    <line x1="500" y1="64" x2="500" y2="960" stroke="white" stroke-width="1.5"/>
-    <line x1="650" y1="64" x2="650" y2="960" stroke="white" stroke-width="1.5"/>
-    <line x1="800" y1="64" x2="800" y2="960" stroke="white" stroke-width="1.5"/>
-    <line x1="64" y1="200" x2="960" y2="200" stroke="white" stroke-width="1.5"/>
-    <line x1="64" y1="350" x2="960" y2="350" stroke="white" stroke-width="1.5"/>
-    <line x1="64" y1="500" x2="960" y2="500" stroke="white" stroke-width="1.5"/>
-    <line x1="64" y1="650" x2="960" y2="650" stroke="white" stroke-width="1.5"/>
-    <line x1="64" y1="800" x2="960" y2="800" stroke="white" stroke-width="1.5"/>
+    <line
+      x1="200"
+      y1="64"
+      x2="200"
+      y2="960"
+      stroke="white"
+      stroke-width="1.5"
+    />
+    <line
+      x1="350"
+      y1="64"
+      x2="350"
+      y2="960"
+      stroke="white"
+      stroke-width="1.5"
+    />
+    <line
+      x1="500"
+      y1="64"
+      x2="500"
+      y2="960"
+      stroke="white"
+      stroke-width="1.5"
+    />
+    <line
+      x1="650"
+      y1="64"
+      x2="650"
+      y2="960"
+      stroke="white"
+      stroke-width="1.5"
+    />
+    <line
+      x1="800"
+      y1="64"
+      x2="800"
+      y2="960"
+      stroke="white"
+      stroke-width="1.5"
+    />
+    <line
+      x1="64"
+      y1="200"
+      x2="960"
+      y2="200"
+      stroke="white"
+      stroke-width="1.5"
+    />
+    <line
+      x1="64"
+      y1="350"
+      x2="960"
+      y2="350"
+      stroke="white"
+      stroke-width="1.5"
+    />
+    <line
+      x1="64"
+      y1="500"
+      x2="960"
+      y2="500"
+      stroke="white"
+      stroke-width="1.5"
+    />
+    <line
+      x1="64"
+      y1="650"
+      x2="960"
+      y2="650"
+      stroke="white"
+      stroke-width="1.5"
+    />
+    <line
+      x1="64"
+      y1="800"
+      x2="960"
+      y2="800"
+      stroke="white"
+      stroke-width="1.5"
+    />
   </g>
 
   <!-- Notebook page -->
   <g filter="url(#shadow)">
-    <rect x="220" y="150" width="440" height="560" rx="24" ry="24" fill="url(#page)"/>
+    <rect
+      x="220"
+      y="150"
+      width="440"
+      height="560"
+      rx="24"
+      ry="24"
+      fill="url(#page)"
+    />
     <!-- Page fold corner -->
-    <path d="M 612 150 L 660 150 L 660 198 Z" fill="#E0E0F0" opacity="0.5"/>
+    <path d="M 612 150 L 660 150 L 660 198 Z" fill="#E0E0F0" opacity="0.5" />
   </g>
 
   <!-- Notebook binding dots -->
-  <circle cx="244" cy="220" r="8" fill="#A5B4FC" opacity="0.5"/>
-  <circle cx="244" cy="310" r="8" fill="#A5B4FC" opacity="0.5"/>
-  <circle cx="244" cy="400" r="8" fill="#A5B4FC" opacity="0.5"/>
-  <circle cx="244" cy="490" r="8" fill="#A5B4FC" opacity="0.5"/>
-  <circle cx="244" cy="580" r="8" fill="#A5B4FC" opacity="0.5"/>
-  <circle cx="244" cy="670" r="8" fill="#A5B4FC" opacity="0.5"/>
+  <circle cx="244" cy="220" r="8" fill="#A5B4FC" opacity="0.5" />
+  <circle cx="244" cy="310" r="8" fill="#A5B4FC" opacity="0.5" />
+  <circle cx="244" cy="400" r="8" fill="#A5B4FC" opacity="0.5" />
+  <circle cx="244" cy="490" r="8" fill="#A5B4FC" opacity="0.5" />
+  <circle cx="244" cy="580" r="8" fill="#A5B4FC" opacity="0.5" />
+  <circle cx="244" cy="670" r="8" fill="#A5B4FC" opacity="0.5" />
 
   <!-- Text lines on notebook -->
   <!-- Line 1 - "heading" -->
-  <rect x="280" y="210" width="260" height="14" rx="7" fill="#4F46E5" opacity="0.7"/>
+  <rect
+    x="280"
+    y="210"
+    width="260"
+    height="14"
+    rx="7"
+    fill="#4F46E5"
+    opacity="0.7"
+  />
   <!-- Line 2 -->
-  <rect x="280" y="255" width="340" height="10" rx="5" fill="#6366F1" opacity="0.25"/>
+  <rect
+    x="280"
+    y="255"
+    width="340"
+    height="10"
+    rx="5"
+    fill="#6366F1"
+    opacity="0.25"
+  />
   <!-- Line 3 -->
-  <rect x="280" y="285" width="300" height="10" rx="5" fill="#6366F1" opacity="0.25"/>
+  <rect
+    x="280"
+    y="285"
+    width="300"
+    height="10"
+    rx="5"
+    fill="#6366F1"
+    opacity="0.25"
+  />
   <!-- Line 4 -->
-  <rect x="280" y="315" width="320" height="10" rx="5" fill="#6366F1" opacity="0.25"/>
+  <rect
+    x="280"
+    y="315"
+    width="320"
+    height="10"
+    rx="5"
+    fill="#6366F1"
+    opacity="0.25"
+  />
   <!-- Line 5 - another heading -->
-  <rect x="280" y="365" width="200" height="14" rx="7" fill="#4F46E5" opacity="0.7"/>
+  <rect
+    x="280"
+    y="365"
+    width="200"
+    height="14"
+    rx="7"
+    fill="#4F46E5"
+    opacity="0.7"
+  />
   <!-- Line 6 -->
-  <rect x="280" y="410" width="330" height="10" rx="5" fill="#6366F1" opacity="0.25"/>
+  <rect
+    x="280"
+    y="410"
+    width="330"
+    height="10"
+    rx="5"
+    fill="#6366F1"
+    opacity="0.25"
+  />
   <!-- Line 7 -->
-  <rect x="280" y="440" width="280" height="10" rx="5" fill="#6366F1" opacity="0.25"/>
+  <rect
+    x="280"
+    y="440"
+    width="280"
+    height="10"
+    rx="5"
+    fill="#6366F1"
+    opacity="0.25"
+  />
   <!-- Line 8 - task checkbox -->
-  <rect x="280" y="490" width="16" height="16" rx="4" fill="none" stroke="#4F46E5" stroke-width="2.5" opacity="0.5"/>
-  <rect x="310" y="493" width="240" height="10" rx="5" fill="#6366F1" opacity="0.25"/>
+  <rect
+    x="280"
+    y="490"
+    width="16"
+    height="16"
+    rx="4"
+    fill="none"
+    stroke="#4F46E5"
+    stroke-width="2.5"
+    opacity="0.5"
+  />
+  <rect
+    x="310"
+    y="493"
+    width="240"
+    height="10"
+    rx="5"
+    fill="#6366F1"
+    opacity="0.25"
+  />
   <!-- Line 9 - completed task -->
-  <rect x="280" y="525" width="16" height="16" rx="4" fill="#4F46E5" opacity="0.4"/>
-  <path d="M 284 533 L 289 538 L 296 528" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <rect x="310" y="528" width="200" height="10" rx="5" fill="#6366F1" opacity="0.15"/>
+  <rect
+    x="280"
+    y="525"
+    width="16"
+    height="16"
+    rx="4"
+    fill="#4F46E5"
+    opacity="0.4"
+  />
+  <path
+    d="M 284 533 L 289 538 L 296 528"
+    fill="none"
+    stroke="white"
+    stroke-width="2.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <rect
+    x="310"
+    y="528"
+    width="200"
+    height="10"
+    rx="5"
+    fill="#6366F1"
+    opacity="0.15"
+  />
 
   <!-- Highlighted/found line (analysis finding) -->
-  <rect x="272" y="400" width="346" height="28" rx="6" fill="#FBBF24" opacity="0.2"/>
-  <rect x="272" y="400" width="4" height="28" rx="2" fill="#F59E0B" opacity="0.8"/>
+  <rect
+    x="272"
+    y="400"
+    width="346"
+    height="28"
+    rx="6"
+    fill="#FBBF24"
+    opacity="0.2"
+  />
+  <rect
+    x="272"
+    y="400"
+    width="4"
+    height="28"
+    rx="2"
+    fill="#F59E0B"
+    opacity="0.8"
+  />
 
   <!-- Magnifying glass -->
   <g filter="url(#glassShadow)">
     <!-- Glass circle -->
-    <circle cx="620" cy="620" r="160" fill="url(#lens)" stroke="#FFFFFF" stroke-width="18"/>
-    <circle cx="620" cy="620" r="160" fill="none" stroke="#E0E7FF" stroke-width="8" opacity="0.3"/>
+    <circle
+      cx="620"
+      cy="620"
+      r="160"
+      fill="url(#lens)"
+      stroke="#FFFFFF"
+      stroke-width="18"
+    />
+    <circle
+      cx="620"
+      cy="620"
+      r="160"
+      fill="none"
+      stroke="#E0E7FF"
+      stroke-width="8"
+      opacity="0.3"
+    />
     <!-- Handle -->
-    <line x1="733" y1="733" x2="860" y2="860" stroke="#FFFFFF" stroke-width="36" stroke-linecap="round"/>
-    <line x1="733" y1="733" x2="860" y2="860" stroke="#E0E7FF" stroke-width="16" stroke-linecap="round" opacity="0.3"/>
+    <line
+      x1="733"
+      y1="733"
+      x2="860"
+      y2="860"
+      stroke="#FFFFFF"
+      stroke-width="36"
+      stroke-linecap="round"
+    />
+    <line
+      x1="733"
+      y1="733"
+      x2="860"
+      y2="860"
+      stroke="#E0E7FF"
+      stroke-width="16"
+      stroke-linecap="round"
+      opacity="0.3"
+    />
   </g>
 
   <!-- Sparkle/insight indicators inside lens -->
   <!-- Checkmark badge -->
-  <circle cx="580" cy="590" r="24" fill="#34D399" opacity="0.9"/>
-  <path d="M 568 590 L 577 599 L 594 580" fill="none" stroke="white" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="580" cy="590" r="24" fill="#34D399" opacity="0.9" />
+  <path
+    d="M 568 590 L 577 599 L 594 580"
+    fill="none"
+    stroke="white"
+    stroke-width="5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
 
   <!-- Warning triangle -->
   <g transform="translate(640, 640)" opacity="0.9">
-    <path d="M 0 -22 L 20 14 L -20 14 Z" fill="#FBBF24" stroke="#F59E0B" stroke-width="2"/>
-    <text x="0" y="9" text-anchor="middle" fill="#92400E" font-size="20" font-weight="bold" font-family="system-ui">!</text>
+    <path
+      d="M 0 -22 L 20 14 L -20 14 Z"
+      fill="#FBBF24"
+      stroke="#F59E0B"
+      stroke-width="2"
+    />
+    <text
+      x="0"
+      y="9"
+      text-anchor="middle"
+      fill="#92400E"
+      font-size="20"
+      font-weight="bold"
+      font-family="system-ui"
+    >!</text>
   </g>
 
   <!-- Small dots representing data/analysis -->
-  <circle cx="600" cy="650" r="5" fill="white" opacity="0.5"/>
-  <circle cx="650" cy="580" r="4" fill="white" opacity="0.4"/>
-  <circle cx="570" cy="630" r="3" fill="white" opacity="0.3"/>
+  <circle cx="600" cy="650" r="5" fill="white" opacity="0.5" />
+  <circle cx="650" cy="580" r="4" fill="white" opacity="0.4" />
+  <circle cx="570" cy="630" r="3" fill="white" opacity="0.3" />
 </svg>

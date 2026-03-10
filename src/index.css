@@ -27,9 +27,15 @@
   --radius-panel: 16px;
 
   /* ── Shadows ── */
-  --shadow-card: 0 1px 3px rgba(28, 25, 23, 0.06), 0 1px 2px rgba(28, 25, 23, 0.04);
-  --shadow-card-hover: 0 4px 12px rgba(28, 25, 23, 0.08), 0 2px 4px rgba(28, 25, 23, 0.04);
-  --shadow-panel: 0 8px 30px rgba(28, 25, 23, 0.12), 0 2px 8px rgba(28, 25, 23, 0.06);
+  --shadow-card:
+    0 1px 3px rgba(28, 25, 23, 0.06),
+    0 1px 2px rgba(28, 25, 23, 0.04);
+  --shadow-card-hover:
+    0 4px 12px rgba(28, 25, 23, 0.08),
+    0 2px 4px rgba(28, 25, 23, 0.04);
+  --shadow-panel:
+    0 8px 30px rgba(28, 25, 23, 0.12),
+    0 2px 8px rgba(28, 25, 23, 0.06);
 
   /* ── Animations ── */
   --animate-slide-in-right: slide-in-right 0.25s ease-out;
@@ -40,7 +46,8 @@
 
 /* ── Base styles ── */
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
     system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
