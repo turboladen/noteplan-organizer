@@ -1,9 +1,11 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { writeText as clipboardWrite } from "@tauri-apps/plugin-clipboard-manager";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import {
   detectNotePlanPath,
   exportAssessmentContext,
+  getGitRev,
   isWatching as checkIsWatching,
   scanNotes,
   startWatching,
@@ -62,6 +64,7 @@ function App() {
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(loadDismissed);
   const [watching, setWatching] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const hasScannedRef = useRef(false);
 
@@ -129,6 +132,16 @@ function App() {
       .catch(() => {
         setError("Could not auto-detect NotePlan data directory.");
       });
+  }, []);
+
+  // Fetch app version + git rev on mount
+  useEffect(() => {
+    Promise.all([getVersion(), getGitRev()]).then(([version, rev]) => {
+      const display = rev && rev !== "unknown"
+        ? `v${version} (${rev})`
+        : `v${version}`;
+      setAppVersion(display);
+    }).catch(() => {});
   }, []);
 
   // Subscribe to scan-update events from the file watcher
@@ -313,6 +326,11 @@ function App() {
             >
               System Dump
             </button>
+            {appVersion && (
+              <span className="border-l border-border-light pl-3 text-text-tertiary">
+                {appVersion}
+              </span>
+            )}
           </div>
         </div>
       )}
