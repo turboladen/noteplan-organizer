@@ -42,3 +42,7 @@ export async function stopWatching(): Promise<void> {
 export async function isWatching(): Promise<boolean> {
   return invoke<boolean>("is_watching");
 }
+
+export async function getGitRev(): Promise<string> {
+  return invoke<string>("get_git_rev");
+}
