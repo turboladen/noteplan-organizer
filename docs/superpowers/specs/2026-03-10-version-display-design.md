@@ -40,7 +40,7 @@ Add `getGitRev()` typed wrapper around `invoke("get_git_rev")`.
 
 ## Edge Cases
 
-- **No `.git` directory** (tarball build): `build.rs` falls back to `"unknown"`, display shows `v0.1.0`
+- **No `.git` directory** (tarball build): `build.rs` falls back to `"unknown"`, render logic hides the rev portion and displays just `v0.1.0`
 - **Status tray not visible** (no NotePlan path detected yet): version not shown — acceptable since the tray is the metadata row and version is secondary info
 
 ## Display Format
