@@ -75,8 +75,11 @@ pub struct Note {
     pub title_jd_id: Option<String>,
     /// The parent folder's JD ID
     pub parent_jd_id: Option<String>,
-    /// Classification of the note's ID format
+    /// Classification of the note's ID format (from filename — may be stale)
     pub note_id_kind: Option<NoteIdKind>,
+    /// Classification of the note's ID format from the content title.
+    /// This reflects the user's intended ID kind even when the filename is stale.
+    pub title_note_id_kind: Option<NoteIdKind>,
     pub kind: NoteKind,
     pub content: String,
     pub tasks: Vec<Task>,

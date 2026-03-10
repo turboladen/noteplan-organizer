@@ -65,8 +65,9 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
 
 **NotePlan does NOT rename files on disk when you change a note's title.** The content title (first
 `# heading`) is the source of truth. Never use filenames for display or matching logic. The `Note`
-struct has both `jd_id` (from filename, may be stale) and `title_jd_id` (from content title). Use
-`note.title` for all analysis.
+struct has parallel field pairs: `jd_id`/`note_id_kind` (from filename, may be stale) and
+`title_jd_id`/`title_note_id_kind` (from content title). **Analyzers must use title-based fields
+exclusively** (`title_jd_id`, `title_note_id_kind`) — never fall back to filename-based fields.
 
 **Tauri v2 capabilities**: Permission names are prefixed with `core:` (e.g., `core:event:default`
 not `event:default`). See `src-tauri/capabilities/default.json`.

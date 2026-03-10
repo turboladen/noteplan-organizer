@@ -1,5 +1,5 @@
 use crate::models::{Note, NoteKind, Section};
-use crate::parser::{extract_wiki_links, parse_jd_id, parse_note_id, parse_tasks};
+use crate::parser::{extract_wiki_links, parse_note_id, parse_tasks};
 use regex::Regex;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -42,8 +42,11 @@ pub fn parse_note(
         None => (None, None),
     };
 
-    // Parse JD ID from the content title (reflects user's current intent)
-    let title_jd_id = parse_jd_id(&title);
+    // Parse JD ID and kind from the content title (reflects user's current intent)
+    let (title_jd_id, title_note_id_kind) = match parse_note_id(&title) {
+        Some((id, kind)) => (Some(id), Some(kind)),
+        None => (None, None),
+    };
 
     // Parse parent JD ID from path
     let parent_jd_id = super::folder::parent_jd_id_from_path(relative_path);
@@ -93,6 +96,7 @@ pub fn parse_note(
         title_jd_id,
         parent_jd_id,
         note_id_kind,
+        title_note_id_kind,
         kind,
         content: content.to_string(),
         tasks,

@@ -20,9 +20,11 @@ impl Analyzer for CrossWiredIdAnalyzer {
                 continue;
             }
 
+            // Use title-based ID kind — NotePlan doesn't rename files when
+            // titles change, so filename-based data is unreliable.
             // Skip notes with non-JD ID kinds — sequential, date, and hub IDs
             // are independent of folder hierarchy by design
-            match note.note_id_kind {
+            match note.title_note_id_kind {
                 Some(NoteIdKind::Sequential)
                 | Some(NoteIdKind::DatePrefix)
                 | Some(NoteIdKind::HubCode)
@@ -30,8 +32,8 @@ impl Analyzer for CrossWiredIdAnalyzer {
                 _ => {}
             }
 
-            // Get the note's JD ID (prefer title, fall back to filename)
-            let note_id = note.title_jd_id.as_ref().or(note.jd_id.as_ref());
+            // Get the note's JD ID from title only
+            let note_id = note.title_jd_id.as_ref();
             let note_id = match note_id {
                 Some(id) => id,
                 None => continue,

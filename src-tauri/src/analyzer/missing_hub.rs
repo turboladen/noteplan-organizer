@@ -31,8 +31,8 @@ impl Analyzer for MissingHubAnalyzer {
                 continue;
             }
 
-            // Check for hub code filename (00.PH, 00.DH, 00.RH)
-            let is_hub_by_filename = matches!(note.note_id_kind, Some(NoteIdKind::HubCode));
+            // Check for hub code in title (00.PH, 00.DH, 00.RH)
+            let is_hub_by_title = matches!(note.title_note_id_kind, Some(NoteIdKind::HubCode));
 
             // Check for hub-like sections (legacy heuristic)
             let hub_section_count = note
@@ -42,7 +42,7 @@ impl Analyzer for MissingHubAnalyzer {
                 .count();
             let is_hub_by_sections = hub_section_count >= 2;
 
-            if is_hub_by_filename || is_hub_by_sections {
+            if is_hub_by_title || is_hub_by_sections {
                 // Record the full parent folder path of this hub note
                 if let Some(pos) = note.relative_path.rfind('/') {
                     let parent = &note.relative_path[..pos];

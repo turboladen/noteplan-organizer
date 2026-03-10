@@ -28,9 +28,12 @@ impl Analyzer for IdConsistencyAnalyzer {
                 continue;
             }
 
-            let Some(ref id_kind) = note.note_id_kind else {
+            // Use title-based ID kind/value only — NotePlan doesn't rename
+            // files when titles change, so filename-based data is unreliable
+            let Some(ref id_kind) = note.title_note_id_kind else {
                 continue;
             };
+            let note_id = note.title_jd_id.as_ref();
 
             match id_kind {
                 // (c) Bare "00" without hub suffix is an error
@@ -52,7 +55,7 @@ impl Analyzer for IdConsistencyAnalyzer {
 
                 // (d) Flag old-style JD-dotted note IDs for migration
                 NoteIdKind::JdDotted => {
-                    if let Some(ref note_id) = note.jd_id {
+                    if let Some(note_id) = note_id {
                         // Only flag deep JD IDs (3+ segments like 42.02.01) that are
                         // children of their parent folder — these are the old-style
                         // hierarchical IDs that should migrate to sequential format
@@ -85,8 +88,8 @@ impl Analyzer for IdConsistencyAnalyzer {
 
                 // (b) Track sequential IDs for duplicate detection
                 NoteIdKind::Sequential => {
-                    if let (Some(ref note_id), Some(parent_pos)) =
-                        (&note.jd_id, note.relative_path.rfind('/'))
+                    if let (Some(note_id), Some(parent_pos)) =
+                        (note_id, note.relative_path.rfind('/'))
                     {
                         let parent_folder = &note.relative_path[..parent_pos];
                         seq_ids_by_folder
@@ -232,5 +235,21 @@ mod tests {
         let store = NoteStore::new(vec![note]);
         let findings = IdConsistencyAnalyzer.analyze(&store);
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_title_fixed_but_filename_stale_no_finding() {
+        // User fixed title from "43.01.01 - X" to "01 - X" but NotePlan
+        // didn't rename the file. The analyzer should use the title, not filename.
+        let note = make_note(
+            "Notes/4x - Family/43 - Daily/43.01 - Category/43.01.01 - The Family - TODOs.md",
+            "01 - The Family - TODOs",
+        );
+        let store = NoteStore::new(vec![note]);
+        let findings = IdConsistencyAnalyzer.analyze(&store);
+        assert!(
+            findings.is_empty(),
+            "Should not flag stale filename when title has been fixed to sequential ID"
+        );
     }
 }

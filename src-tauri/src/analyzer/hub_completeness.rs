@@ -23,9 +23,9 @@ impl Analyzer for HubCompletenessAnalyzer {
             }
 
             // Detect hub notes by either:
-            // 1. Hub code filename (00.PH, 00.DH, 00.RH)
+            // 1. Hub code in title (00.PH, 00.DH, 00.RH)
             // 2. Having 2+ hub-like sections (legacy heuristic)
-            let is_hub_by_filename = matches!(note.note_id_kind, Some(NoteIdKind::HubCode));
+            let is_hub_by_title = matches!(note.title_note_id_kind, Some(NoteIdKind::HubCode));
 
             let hub_section_count = note
                 .sections
@@ -34,7 +34,7 @@ impl Analyzer for HubCompletenessAnalyzer {
                 .count();
             let is_hub_by_sections = hub_section_count >= 2;
 
-            if !is_hub_by_filename && !is_hub_by_sections {
+            if !is_hub_by_title && !is_hub_by_sections {
                 continue; // Not a hub note
             }
 

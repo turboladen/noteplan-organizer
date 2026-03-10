@@ -85,6 +85,7 @@ export interface Note {
   title_jd_id: string | null;
   parent_jd_id: string | null;
   note_id_kind: NoteIdKind | null;
+  title_note_id_kind: NoteIdKind | null;
   kind: NoteKind;
   content: string;
   tasks: Task[];
