@@ -145,3 +145,9 @@ pub fn open_noteplan_url(url: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to open NotePlan: {}", e))?;
     Ok(())
 }
+
+/// Returns the git short rev embedded at compile time.
+#[tauri::command]
+pub fn get_git_rev() -> &'static str {
+    env!("GIT_SHORT_REV")
+}

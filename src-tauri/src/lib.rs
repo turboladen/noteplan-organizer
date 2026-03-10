@@ -37,6 +37,7 @@ pub fn run() {
             commands::export_assessment_context,
             commands::get_note_content,
             commands::open_noteplan_url,
+            commands::get_git_rev,
             watcher::start_watching,
             watcher::stop_watching,
             watcher::is_watching,
