@@ -71,6 +71,10 @@ struct has both `jd_id` (from filename, may be stale) and `title_jd_id` (from co
 **Tauri v2 capabilities**: Permission names are prefixed with `core:` (e.g., `core:event:default`
 not `event:default`). See `src-tauri/capabilities/default.json`.
 
+**Tauri v2 built-in JS APIs**: `@tauri-apps/api/app` provides `getVersion()`, `getName()`, and
+`getTauriVersion()` out of the box (requires `core:app:default` permission). Prefer these over
+custom Rust commands for app metadata.
+
 **This app is strictly read-only.** It never writes to NotePlan files. This is a design invariant,
 not just a current limitation.
 
