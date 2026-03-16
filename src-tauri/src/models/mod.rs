@@ -1,3 +1,4 @@
+pub mod benchmark;
 pub mod block;
 pub mod daily;
 pub mod filing;
@@ -5,6 +6,7 @@ pub mod finding;
 pub mod note;
 pub mod report;
 
+pub use benchmark::BenchmarkResult;
 pub use block::{BlockKind, ContentBlock};
 pub use daily::DailyNoteInfo;
 pub use filing::FilingTarget;

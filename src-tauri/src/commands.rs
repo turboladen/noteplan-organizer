@@ -2,7 +2,8 @@ use crate::analyzer::run_all_analyzers;
 use crate::config;
 use crate::dump;
 use crate::export;
-use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report};
+use crate::mcp::McpState;
+use crate::models::{BenchmarkResult, ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report};
 use crate::parser::matcher::FilingSuggestion;
 use crate::parser::{
     build_filing_targets, extract_content_blocks, match_blocks_to_targets, scan_noteplan_dir,
@@ -234,4 +235,99 @@ pub fn get_filing_suggestions(
     let targets = build_filing_targets(&store);
 
     Ok(match_blocks_to_targets(&blocks, &targets))
+}
+
+/// Benchmark Rust file parsing vs MCP note retrieval.
+/// Runs the Rust parser, then (if MCP connected) lists notes via MCP and
+/// samples individual note retrieval times.
+#[tauri::command]
+pub async fn run_benchmark(
+    path: String,
+    mcp_state: tauri::State<'_, McpState>,
+) -> Result<BenchmarkResult, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+
+    // --- Rust parser benchmark ---
+    let rust_path = path.clone();
+    let (rust_scan_ms, rust_note_count) = tokio::task::spawn_blocking(move || {
+        let start = std::time::Instant::now();
+        let store = scan_noteplan_dir(&rust_path);
+        let elapsed = start.elapsed().as_millis() as u64;
+        (elapsed, store.notes.len())
+    })
+    .await
+    .map_err(|e| format!("Rust benchmark failed: {e}"))?;
+
+    // --- MCP benchmark (if connected) ---
+    let mut mcp_list_ms = None;
+    let mut mcp_note_count = None;
+    let mut mcp_avg_get_ms = None;
+    let mut mcp_sample_size = None;
+
+    if mcp_state.is_connected().await {
+        // Time: list all notes
+        let list_start = std::time::Instant::now();
+        let list_result = mcp_state
+            .call_tool(
+                "noteplan_get_notes",
+                serde_json::json!({ "action": "list" }),
+            )
+            .await;
+        let list_elapsed = list_start.elapsed().as_millis() as u64;
+        mcp_list_ms = Some(list_elapsed);
+
+        if let Ok(result) = list_result {
+            // Count notes from the text response (each line with a title is a note)
+            let text = crate::mcp::tools::extract_text(&result);
+            let count = text.lines().filter(|l| !l.trim().is_empty()).count();
+            mcp_note_count = Some(count);
+        }
+
+        // Time: sample individual note retrieval (first 10 daily notes)
+        let calendar_dir = std::path::Path::new(&path).join("Calendar");
+        if calendar_dir.exists() {
+            let mut sample_dates: Vec<String> = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(&calendar_dir) {
+                for entry in entries.flatten() {
+                    let stem = entry
+                        .path()
+                        .file_stem()
+                        .and_then(|s| s.to_str().map(|s| s.to_string()))
+                        .unwrap_or_default();
+                    if stem.len() == 8 && stem.chars().all(|c| c.is_ascii_digit()) {
+                        sample_dates.push(stem);
+                        if sample_dates.len() >= 10 {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if !sample_dates.is_empty() {
+                let sample_start = std::time::Instant::now();
+                for date in &sample_dates {
+                    let _ = mcp_state
+                        .call_tool(
+                            "noteplan_get_notes",
+                            serde_json::json!({ "action": "get", "date": date }),
+                        )
+                        .await;
+                }
+                let sample_elapsed = sample_start.elapsed().as_millis() as f64;
+                mcp_avg_get_ms = Some(sample_elapsed / sample_dates.len() as f64);
+                mcp_sample_size = Some(sample_dates.len());
+            }
+        }
+    }
+
+    Ok(BenchmarkResult {
+        rust_scan_ms,
+        rust_note_count,
+        mcp_list_ms,
+        mcp_note_count,
+        mcp_avg_get_ms,
+        mcp_sample_size,
+    })
 }

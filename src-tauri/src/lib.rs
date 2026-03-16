@@ -41,6 +41,7 @@ pub fn run() {
             commands::get_note_content,
             commands::open_noteplan_url,
             commands::get_git_rev,
+            commands::run_benchmark,
             commands::get_daily_notes,
             commands::get_content_blocks,
             commands::get_filing_targets,

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  BenchmarkResult,
   ContentBlock,
   DailyNoteInfo,
   FilingSuggestion,
@@ -57,6 +58,10 @@ export async function getGitRev(): Promise<string> {
 // ---------------------------------------------------------------------------
 // Content blocks (filing assistant)
 // ---------------------------------------------------------------------------
+
+export async function runBenchmark(path: string): Promise<BenchmarkResult> {
+  return invoke<BenchmarkResult>("run_benchmark", { path });
+}
 
 export async function getDailyNotes(
   path: string,

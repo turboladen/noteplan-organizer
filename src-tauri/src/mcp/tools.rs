@@ -4,7 +4,7 @@ use serde_json::json;
 
 /// Extracts the text content from a CallToolResult.
 /// MCP tool results contain a `content` array; we concatenate all text entries.
-pub(super) fn extract_text(result: &rmcp::model::CallToolResult) -> String {
+pub(crate) fn extract_text(result: &rmcp::model::CallToolResult) -> String {
     result
         .content
         .iter()

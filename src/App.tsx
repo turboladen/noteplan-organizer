@@ -10,6 +10,7 @@ import {
   mcpConnect,
   mcpDisconnect,
   mcpStatus,
+  runBenchmark,
   scanNotes,
   startWatching,
   stopWatching,
@@ -71,6 +72,7 @@ function App() {
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [mcpConnected, setMcpConnected] = useState(false);
   const [mcpConnecting, setMcpConnecting] = useState(false);
+  const [benchmarking, setBenchmarking] = useState(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const hasScannedRef = useRef(false);
 
@@ -275,6 +277,28 @@ function App() {
     }
   };
 
+  const handleBenchmark = async () => {
+    if (!notePlanPath) return;
+    setBenchmarking(true);
+    try {
+      const r = await runBenchmark(notePlanPath);
+      let msg = `Rust: ${r.rust_scan_ms}ms (${r.rust_note_count} notes)`;
+      if (r.mcp_list_ms != null) {
+        msg += ` · MCP list: ${r.mcp_list_ms}ms`;
+        if (r.mcp_avg_get_ms != null && r.mcp_sample_size != null) {
+          msg += ` · MCP get: ${r.mcp_avg_get_ms.toFixed(0)}ms avg (${r.mcp_sample_size} samples)`;
+        }
+      } else {
+        msg += " · MCP: not connected";
+      }
+      showToast(msg);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBenchmarking(false);
+    }
+  };
+
   // Split findings by tab, compute per-tab stats
   const findingsFindings = useMemo(
     () =>
@@ -370,6 +394,17 @@ function App() {
             >
               System Dump
             </button>
+            {report && (
+              <button
+                type="button"
+                onClick={handleBenchmark}
+                disabled={benchmarking}
+                className="hover:text-text-secondary transition-colors disabled:opacity-50"
+                title="Compare Rust file parsing vs MCP note retrieval speed"
+              >
+                {benchmarking ? "Running..." : "Benchmark"}
+              </button>
+            )}
             {appVersion && (
               <span className="border-l border-border-light pl-3 text-text-tertiary">
                 {appVersion}
