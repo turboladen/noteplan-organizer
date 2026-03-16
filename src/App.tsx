@@ -282,11 +282,11 @@ function App() {
     setBenchmarking(true);
     try {
       const r = await runBenchmark(notePlanPath);
-      let msg = `Rust: ${r.rust_scan_ms}ms (${r.rust_note_count} notes)`;
+      let msg = `Rust full parse: ${r.rust_scan_ms}ms (${r.rust_note_count} notes)`;
       if (r.mcp_list_ms != null) {
-        msg += ` · MCP list: ${r.mcp_list_ms}ms`;
+        msg += ` · MCP list-only: ${r.mcp_list_ms}ms`;
         if (r.mcp_avg_get_ms != null && r.mcp_sample_size != null) {
-          msg += ` · MCP get: ${r.mcp_avg_get_ms.toFixed(0)}ms avg (${r.mcp_sample_size} samples)`;
+          msg += ` · MCP get: ${r.mcp_avg_get_ms.toFixed(0)}ms/note (${r.mcp_sample_size} samples)`;
         }
       } else {
         msg += " · MCP: not connected";

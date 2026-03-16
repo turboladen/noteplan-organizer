@@ -238,18 +238,22 @@ pub fn get_filing_suggestions(
 }
 
 /// Benchmark Rust file parsing vs MCP note retrieval.
-/// Runs the Rust parser, then (if MCP connected) lists notes via MCP and
-/// samples individual note retrieval times.
+///
+/// This is intentionally an apples-to-oranges comparison:
+/// - Rust: full parse of all notes (sections, tasks, links, tags, etc.)
+/// - MCP list: returns note titles/metadata only (no content parsing)
+/// - MCP get: retrieves individual note content (no structural parsing)
+///
+/// The purpose is to measure the overhead of the MCP subprocess/stdio path
+/// vs direct file I/O, to inform whether a config toggle is worthwhile.
 #[tauri::command]
 pub async fn run_benchmark(
     path: String,
     mcp_state: tauri::State<'_, McpState>,
 ) -> Result<BenchmarkResult, String> {
-    if !std::path::Path::new(&path).exists() {
-        return Err(format!("Path does not exist: {}", path));
-    }
+    validate_noteplan_path(&path)?;
 
-    // --- Rust parser benchmark ---
+    // --- Rust parser benchmark (full parse: sections, tasks, links, tags) ---
     let rust_path = path.clone();
     let (rust_scan_ms, rust_note_count) = tokio::task::spawn_blocking(move || {
         let start = std::time::Instant::now();
@@ -279,7 +283,9 @@ pub async fn run_benchmark(
         mcp_list_ms = Some(list_elapsed);
 
         if let Ok(result) = list_result {
-            // Count notes from the text response (each line with a title is a note)
+            // Rough heuristic: count non-empty lines as notes. The MCP list
+            // format may include headers or multi-line entries, so this is
+            // approximate. Not displayed in the toast — only in BenchmarkResult.
             let text = crate::mcp::tools::extract_text(&result);
             let count = text.lines().filter(|l| !l.trim().is_empty()).count();
             mcp_note_count = Some(count);

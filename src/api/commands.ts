@@ -56,12 +56,16 @@ export async function getGitRev(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Content blocks (filing assistant)
+// Diagnostics
 // ---------------------------------------------------------------------------
 
 export async function runBenchmark(path: string): Promise<BenchmarkResult> {
   return invoke<BenchmarkResult>("run_benchmark", { path });
 }
+
+// ---------------------------------------------------------------------------
+// Content blocks (filing assistant)
+// ---------------------------------------------------------------------------
 
 export async function getDailyNotes(
   path: string,
