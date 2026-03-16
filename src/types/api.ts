@@ -131,15 +131,6 @@ export interface ContentBlock {
   wiki_links: string[];
 }
 
-export interface BenchmarkResult {
-  rust_scan_ms: number;
-  rust_note_count: number;
-  mcp_list_ms: number | null;
-  mcp_note_count: number | null;
-  mcp_avg_get_ms: number | null;
-  mcp_sample_size: number | null;
-}
-
 export interface DailyNoteInfo {
   file_path: string;
   date_label: string;

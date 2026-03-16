@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  BenchmarkResult,
   ContentBlock,
   DailyNoteInfo,
   FilingSuggestion,
@@ -53,14 +52,6 @@ export async function isWatching(): Promise<boolean> {
 
 export async function getGitRev(): Promise<string> {
   return invoke<string>("get_git_rev");
-}
-
-// ---------------------------------------------------------------------------
-// Diagnostics
-// ---------------------------------------------------------------------------
-
-export async function runBenchmark(path: string): Promise<BenchmarkResult> {
-  return invoke<BenchmarkResult>("run_benchmark", { path });
 }
 
 // ---------------------------------------------------------------------------
