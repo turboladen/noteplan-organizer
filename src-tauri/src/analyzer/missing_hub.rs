@@ -77,7 +77,7 @@ impl Analyzer for MissingHubAnalyzer {
                         ),
                         line_number: None,
                         context: None,
-                        is_folder: true,
+                        is_folder: true, fix_action: None,
                     });
                 }
             }

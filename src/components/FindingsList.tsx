@@ -27,6 +27,8 @@ interface FindingsListProps {
   selectedSeverity: Severity | "all";
   onSelectCategory: (cat: FindingCategory | "all") => void;
   onSelectSeverity: (sev: Severity | "all") => void;
+  mcpConnected?: boolean;
+  onFixFinding?: (finding: Finding) => Promise<void>;
 }
 
 const PAGE_SIZE = 50;
@@ -42,6 +44,8 @@ export function FindingsList({
   selectedSeverity,
   onSelectCategory,
   onSelectSeverity,
+  mcpConnected,
+  onFixFinding,
 }: FindingsListProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
@@ -291,6 +295,8 @@ export function FindingsList({
                 onToggle={() => setExpandedId(expandedId === fid ? null : fid)}
                 onPreview={() => setPreviewPath((prev) => prev === finding.file_path ? null : finding.file_path)}
                 onToggleDismissed={() => onToggleDismissed(fid)}
+                mcpConnected={mcpConnected}
+                onFix={onFixFinding ? () => onFixFinding(finding) : undefined}
               />
             );
           })}
@@ -422,6 +428,8 @@ const FindingCard = forwardRef<
     onToggle: () => void;
     onPreview: () => void;
     onToggleDismissed: () => void;
+    mcpConnected?: boolean;
+    onFix?: () => void;
   }
 >(function FindingCard(
   {
@@ -433,6 +441,8 @@ const FindingCard = forwardRef<
     onToggle,
     onPreview,
     onToggleDismissed,
+    mcpConnected,
+    onFix,
   },
   ref,
 ) {
@@ -548,6 +558,20 @@ const FindingCard = forwardRef<
                 title={isPreviewActive ? "Close preview" : "Preview"}
               >
                 {isPreviewActive ? "✕" : "⌕"}
+              </button>
+            )}
+            {finding.fix_action && onFix && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFix();
+                }}
+                disabled={!mcpConnected}
+                className="flex-shrink-0 px-2 py-0.5 text-[11px] font-medium rounded-[var(--radius-badge)] border border-border-light bg-surface text-text-secondary hover:bg-accent/10 hover:text-accent hover:border-accent/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors opacity-0 group-hover:opacity-100"
+                title={mcpConnected ? finding.fix_action.label : "Connect MCP to enable fixes"}
+              >
+                {finding.fix_action.label}
               </button>
             )}
           </div>

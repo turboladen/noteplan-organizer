@@ -83,4 +83,19 @@ pub struct Finding {
     /// The frontend should suppress "Open in NotePlan" and "Preview" actions.
     #[serde(default)]
     pub is_folder: bool,
+    /// Optional MCP fix action. When present, the frontend can show a "Fix" button
+    /// that calls the specified MCP tool with the given arguments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix_action: Option<FixAction>,
+}
+
+/// An MCP tool call that can fix a finding.
+#[derive(Debug, Clone, Serialize)]
+pub struct FixAction {
+    /// Human-readable label for the button (e.g., "Complete task", "Move note")
+    pub label: String,
+    /// MCP tool name to call
+    pub tool: String,
+    /// JSON arguments for the tool call
+    pub arguments: serde_json::Value,
 }

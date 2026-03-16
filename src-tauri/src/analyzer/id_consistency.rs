@@ -49,7 +49,7 @@ impl Analyzer for IdConsistencyAnalyzer {
                         ),
                         line_number: None,
                         context: Some(format!("Note title: {}", note.title)),
-                        is_folder: false,
+                        is_folder: false, fix_action: None,
                     });
                 }
 
@@ -78,7 +78,7 @@ impl Analyzer for IdConsistencyAnalyzer {
                                         )),
                                         line_number: None,
                                         context: None,
-                                        is_folder: false,
+                                        is_folder: false, fix_action: None,
                                     });
                                 }
                             }
@@ -133,7 +133,7 @@ impl Analyzer for IdConsistencyAnalyzer {
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             )),
-                            is_folder: false,
+                            is_folder: false, fix_action: None,
                         });
                     }
                 }

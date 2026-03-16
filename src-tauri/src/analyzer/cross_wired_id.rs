@@ -82,7 +82,7 @@ impl Analyzer for CrossWiredIdAnalyzer {
                     )),
                     line_number: None,
                     context: Some(format!("Note title: {}", note.title)),
-                    is_folder: false,
+                    is_folder: false, fix_action: None,
                 });
             }
         }

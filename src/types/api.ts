@@ -35,6 +35,12 @@ export type FindingCategory =
   | "CrossWiredId"
   | "NamingInconsistency";
 
+export interface FixAction {
+  label: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+}
+
 export interface Finding {
   severity: Severity;
   category: FindingCategory;
@@ -46,6 +52,9 @@ export interface Finding {
   context: string | null;
   /** When true, file_path is a folder path — suppress Open/Preview actions */
   is_folder: boolean;
+  /** Optional MCP fix action — when present, the frontend shows a "Fix" button.
+   * Absent from JSON when None on the Rust side (skip_serializing_if). */
+  fix_action?: FixAction;
 }
 
 export type NoteIdKind = "JdDotted" | "HubCode" | "Sequential" | "DatePrefix" | "BareHub";

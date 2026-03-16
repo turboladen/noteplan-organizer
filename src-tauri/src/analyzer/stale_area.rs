@@ -73,7 +73,7 @@ impl Analyzer for StaleAreaAnalyzer {
                         ),
                         line_number: None,
                         context: Some(format_system_time(*latest)),
-                    is_folder: true,
+                    is_folder: true, fix_action: None,
                     });
                 } else if days > QUIET_DAYS {
                     findings.push(Finding {
@@ -89,7 +89,7 @@ impl Analyzer for StaleAreaAnalyzer {
                         ),
                         line_number: None,
                         context: Some(format_system_time(*latest)),
-                    is_folder: true,
+                    is_folder: true, fix_action: None,
                     });
                 }
             }

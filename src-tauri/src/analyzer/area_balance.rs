@@ -34,7 +34,7 @@ impl Analyzer for AreaBalanceAnalyzer {
                     ),
                     line_number: None,
                     context: None,
-                    is_folder: true,
+                    is_folder: true, fix_action: None,
                 });
             } else if avg > 0.0 && (count as f64) > avg * 3.0 {
                 findings.push(Finding {
@@ -53,7 +53,7 @@ impl Analyzer for AreaBalanceAnalyzer {
                         "{} categories, {} notes total",
                         area.category_count, count
                     )),
-                    is_folder: true,
+                    is_folder: true, fix_action: None,
                 });
             }
         }

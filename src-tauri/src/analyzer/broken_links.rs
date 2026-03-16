@@ -59,7 +59,7 @@ impl Analyzer for BrokenLinkAnalyzer {
                         )),
                         line_number: Some(link.line_number),
                         context: Some(format!("[[{}]]", target)),
-                    is_folder: false,
+                    is_folder: false, fix_action: None,
                     });
                 }
             }

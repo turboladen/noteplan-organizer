@@ -7,6 +7,7 @@ import {
   exportAssessmentContext,
   getGitRev,
   isWatching as checkIsWatching,
+  mcpCallTool,
   mcpConnect,
   mcpDisconnect,
   mcpStatus,
@@ -275,6 +276,22 @@ function App() {
     }
   };
 
+  const handleFixFinding = useCallback(
+    async (finding: Finding) => {
+      if (!finding.fix_action || !mcpConnected) return;
+      try {
+        await mcpCallTool(finding.fix_action.tool, finding.fix_action.arguments as Record<string, unknown>);
+        showToast(`Fixed: ${finding.fix_action.label}`);
+        // Auto-dismiss after successful fix
+        const fid = getFindingId(finding);
+        toggleDismissed(fid);
+      } catch (e) {
+        showToast(`Fix failed: ${e}`);
+      }
+    },
+    [mcpConnected, showToast, toggleDismissed],
+  );
+
   // Split findings by tab, compute per-tab stats
   const findingsFindings = useMemo(
     () =>
@@ -480,6 +497,8 @@ function App() {
                 selectedSeverity={selectedSeverity}
                 onSelectCategory={setSelectedCategory}
                 onSelectSeverity={setSelectedSeverity}
+                mcpConnected={mcpConnected}
+                onFixFinding={handleFixFinding}
               />
             )}
 

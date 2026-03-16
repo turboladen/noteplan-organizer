@@ -8,6 +8,6 @@ pub mod report;
 pub use block::{BlockKind, ContentBlock};
 pub use daily::DailyNoteInfo;
 pub use filing::FilingTarget;
-pub use finding::{Finding, FindingCategory, Severity};
+pub use finding::{Finding, FindingCategory, FixAction, Severity};
 pub use note::{Note, NoteIdKind, NoteKind, Section, Task, TaskState, WikiLink};
 pub use report::Report;
