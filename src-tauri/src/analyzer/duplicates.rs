@@ -23,8 +23,7 @@ impl Analyzer for DuplicateAnalyzer {
                 continue;
             }
             // Skip attachment folders and trash
-            if note.relative_path.contains("_attachments")
-                || note.relative_path.contains("@Trash")
+            if note.relative_path.contains("_attachments") || note.relative_path.contains("@Trash")
             {
                 continue;
             }
@@ -71,7 +70,8 @@ impl Analyzer for DuplicateAnalyzer {
                     ),
                     line_number: None,
                     context: Some(paths_display),
-                    is_folder: false, fix_action: None,
+                    is_folder: false,
+                    fix_action: None,
                 });
             }
         }

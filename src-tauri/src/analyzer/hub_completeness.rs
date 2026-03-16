@@ -58,7 +58,8 @@ impl Analyzer for HubCompletenessAnalyzer {
                         )),
                         line_number: Some(section.line_number),
                         context: None,
-                        is_folder: false, fix_action: None,
+                        is_folder: false,
+                        fix_action: None,
                     });
                 }
             }
@@ -74,12 +75,11 @@ impl Analyzer for HubCompletenessAnalyzer {
                         note.placeholders.len(),
                         note.placeholders.join(", ")
                     ),
-                    suggestion: Some(
-                        "Replace placeholder text with actual content".to_string(),
-                    ),
+                    suggestion: Some("Replace placeholder text with actual content".to_string()),
                     line_number: None,
                     context: Some(note.placeholders.join(", ")),
-                    is_folder: false, fix_action: None,
+                    is_folder: false,
+                    fix_action: None,
                 });
             }
         }

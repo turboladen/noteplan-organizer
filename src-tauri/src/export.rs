@@ -219,7 +219,12 @@ fn build_flagged_section(store: &NoteStore, findings: &[Finding]) -> String {
     );
 
     for (path, categories) in &flagged {
-        let _ = writeln!(section, "## {} (Flagged: {})\n", path, categories.join(", "));
+        let _ = writeln!(
+            section,
+            "## {} (Flagged: {})\n",
+            path,
+            categories.join(", ")
+        );
 
         // Look up full note content from the store
         if let Some(&note_idx) = store.path_index.get(*path) {

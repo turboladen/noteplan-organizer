@@ -54,16 +54,16 @@ impl Analyzer for StaleTaskAnalyzer {
                                 ),
                                 line_number: Some(task.line_number),
                                 context: Some(task.text.clone()),
-                    is_folder: false,
-                                    fix_action: Some(FixAction {
-                                        label: "Complete task".to_string(),
-                                        tool: "noteplan_paragraphs".to_string(),
-                                        arguments: serde_json::json!({
-                                            "action": "complete",
-                                            "title": note.title,
-                                            "line": task.line_number,
-                                        }),
+                                is_folder: false,
+                                fix_action: Some(FixAction {
+                                    label: "Complete task".to_string(),
+                                    tool: "noteplan_paragraphs".to_string(),
+                                    arguments: serde_json::json!({
+                                        "action": "complete",
+                                        "title": note.title,
+                                        "line": task.line_number,
                                     }),
+                                }),
                             });
                             reported = true;
                         }
@@ -97,7 +97,7 @@ impl Analyzer for StaleTaskAnalyzer {
                                     ),
                                     line_number: Some(task.line_number),
                                     context: Some(task.text.clone()),
-                    is_folder: false,
+                                    is_folder: false,
                                     fix_action: Some(FixAction {
                                         label: "Complete task".to_string(),
                                         tool: "noteplan_paragraphs".to_string(),

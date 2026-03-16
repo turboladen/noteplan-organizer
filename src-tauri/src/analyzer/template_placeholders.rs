@@ -17,8 +17,7 @@ impl Analyzer for TemplatePlaceholderAnalyzer {
                 continue;
             }
             // Skip trash and attachments
-            if note.relative_path.contains("@Trash")
-                || note.relative_path.contains("_attachments")
+            if note.relative_path.contains("@Trash") || note.relative_path.contains("_attachments")
             {
                 continue;
             }
@@ -52,7 +51,8 @@ impl Analyzer for TemplatePlaceholderAnalyzer {
                     ),
                     line_number: None,
                     context: None,
-                    is_folder: false, fix_action: None,
+                    is_folder: false,
+                    fix_action: None,
                 });
             }
         }

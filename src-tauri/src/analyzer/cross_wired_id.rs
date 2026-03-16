@@ -59,9 +59,9 @@ impl Analyzer for CrossWiredIdAnalyzer {
 
             // The note ID should equal or be a child of one of its ancestor folder IDs.
             // e.g., note "50.04.01" belongs under folder "50.04" or "50"
-            let belongs = ancestor_ids
-                .iter()
-                .any(|ancestor| note_id == ancestor || note_id.starts_with(&format!("{}.", ancestor)));
+            let belongs = ancestor_ids.iter().any(|ancestor| {
+                note_id == ancestor || note_id.starts_with(&format!("{}.", ancestor))
+            });
 
             if !belongs {
                 // Find the most specific ancestor for context

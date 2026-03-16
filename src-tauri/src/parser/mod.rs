@@ -9,10 +9,10 @@ mod task;
 
 pub use block::extract_content_blocks;
 pub use filing::build_filing_targets;
-pub use matcher::match_blocks_to_targets;
 pub use folder::{parse_jd_id, parse_note_id};
 pub use link::extract_wiki_links;
 pub use markdown::parse_note;
+pub use matcher::match_blocks_to_targets;
 pub use task::parse_tasks;
 
 use crate::models::{Note, NoteKind};
@@ -71,10 +71,7 @@ pub fn scan_noteplan_dir(base_path: &str) -> NoteStore {
 
     // Parse regular notes
     if notes_dir.exists() {
-        for entry in WalkDir::new(&notes_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        for entry in WalkDir::new(&notes_dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.extension().map_or(false, |e| e == "md" || e == "txt") {
                 if let Some(note) = parse_note_file(path, base, NoteKind::Regular) {

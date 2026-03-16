@@ -4,14 +4,11 @@ use regex::Regex;
 use std::path::Path;
 use std::sync::LazyLock;
 
-static HEADING_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(#{1,6})\s+(.+)$").unwrap());
+static HEADING_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(#{1,6})\s+(.+)$").unwrap());
 
-static TAG_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"#([\w/\-]+)").unwrap());
+static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#([\w/\-]+)").unwrap());
 
-static MENTION_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"@([\w/\-]+)").unwrap());
+static MENTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@([\w/\-]+)").unwrap());
 
 static PLACEHOLDER_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[(?:Add ID|Add Title|Project Name|Project Version|Brief description|link to (?:Project|Domain|Reference|project|domain|reference|person|concept|related|decision) \d*|date|Link or citation \d+|Link to (?:external|related) \w+|Essential fact \d+|What this is and why I saved it|Category)\]").unwrap()
@@ -21,12 +18,7 @@ static FRONTMATTER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^---\s*\n[\s\S]*?\n---\s*\n").unwrap());
 
 /// Parse a note's content into a structured Note.
-pub fn parse_note(
-    file_path: &str,
-    relative_path: &str,
-    content: &str,
-    kind: NoteKind,
-) -> Note {
+pub fn parse_note(file_path: &str, relative_path: &str, content: &str, kind: NoteKind) -> Note {
     let filename = Path::new(relative_path)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -183,7 +175,12 @@ mod tests {
     #[test]
     fn test_parse_note_basic() {
         let content = "# My Note\n## Related\n- [[Other Note]]\n## Tags\n#work #ai";
-        let note = parse_note("/path/to/note.md", "Notes/note.md", content, NoteKind::Regular);
+        let note = parse_note(
+            "/path/to/note.md",
+            "Notes/note.md",
+            content,
+            NoteKind::Regular,
+        );
         assert_eq!(note.title, "My Note");
         assert_eq!(note.wiki_links.len(), 1);
         assert_eq!(note.wiki_links[0].target, "Other Note");

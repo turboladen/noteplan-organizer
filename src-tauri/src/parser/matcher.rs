@@ -48,9 +48,11 @@ pub fn match_blocks_to_targets(
 
     // Sort: group by block, then descending score within each block
     suggestions.sort_by(|a, b| {
-        a.block_index
-            .cmp(&b.block_index)
-            .then(b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+        a.block_index.cmp(&b.block_index).then(
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
     });
 
     suggestions
@@ -216,16 +218,27 @@ mod tests {
         );
         let target = make_target("Project Alpha", vec![]);
         let (score, reasons) = score_match(&block, &target);
-        assert!(score >= 0.5, "Wiki link match should score high, got {score}");
+        assert!(
+            score >= 0.5,
+            "Wiki link match should score high, got {score}"
+        );
         assert!(reasons.iter().any(|r| r.contains("Wiki link")));
     }
 
     #[test]
     fn test_tag_overlap() {
-        let block = make_block(BlockKind::TaskGroup, "* Fix #backend bug", vec!["backend"], vec![]);
+        let block = make_block(
+            BlockKind::TaskGroup,
+            "* Fix #backend bug",
+            vec!["backend"],
+            vec![],
+        );
         let target = make_target("Backend Service", vec!["backend", "api"]);
         let (score, reasons) = score_match(&block, &target);
-        assert!(score > 0.0, "Tag overlap should produce a score, got {score}");
+        assert!(
+            score > 0.0,
+            "Tag overlap should produce a score, got {score}"
+        );
         assert!(reasons.iter().any(|r| r.contains("Shared tags")));
     }
 
@@ -239,16 +252,27 @@ mod tests {
         );
         let target = make_target("Database Migration Plan", vec![]);
         let (score, reasons) = score_match(&block, &target);
-        assert!(score > 0.0, "Keyword match should produce a score, got {score}");
+        assert!(
+            score > 0.0,
+            "Keyword match should produce a score, got {score}"
+        );
         assert!(reasons.iter().any(|r| r.contains("Keywords")));
     }
 
     #[test]
     fn test_no_match_returns_zero() {
-        let block = make_block(BlockKind::Paragraph, "Bought groceries", vec!["home"], vec![]);
+        let block = make_block(
+            BlockKind::Paragraph,
+            "Bought groceries",
+            vec!["home"],
+            vec![],
+        );
         let target = make_target("Server Architecture", vec!["infra"]);
         let (score, _) = score_match(&block, &target);
-        assert!(score < MIN_SCORE, "Unrelated block/target should score below threshold");
+        assert!(
+            score < MIN_SCORE,
+            "Unrelated block/target should score below threshold"
+        );
     }
 
     #[test]
@@ -261,7 +285,10 @@ mod tests {
         );
         let target = make_target("Project Alpha", vec!["work"]);
         let (score, reasons) = score_match(&block, &target);
-        assert!(score > 0.5, "Multiple signals should produce high score, got {score}");
+        assert!(
+            score > 0.5,
+            "Multiple signals should produce high score, got {score}"
+        );
         assert!(reasons.len() >= 2, "Should have multiple reasons");
     }
 

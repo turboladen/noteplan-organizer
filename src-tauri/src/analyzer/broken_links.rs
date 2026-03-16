@@ -4,8 +4,7 @@ use crate::parser::NoteStore;
 use regex::Regex;
 use std::sync::LazyLock;
 
-static DATE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap());
+static DATE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}$").unwrap());
 
 pub struct BrokenLinkAnalyzer;
 
@@ -22,8 +21,7 @@ impl Analyzer for BrokenLinkAnalyzer {
                 continue;
             }
             // Skip trash and attachments
-            if note.relative_path.contains("@Trash")
-                || note.relative_path.contains("_attachments")
+            if note.relative_path.contains("@Trash") || note.relative_path.contains("_attachments")
             {
                 continue;
             }
@@ -59,7 +57,8 @@ impl Analyzer for BrokenLinkAnalyzer {
                         )),
                         line_number: Some(link.line_number),
                         context: Some(format!("[[{}]]", target)),
-                    is_folder: false, fix_action: None,
+                        is_folder: false,
+                        fix_action: None,
                     });
                 }
             }

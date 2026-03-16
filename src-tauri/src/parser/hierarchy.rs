@@ -36,7 +36,12 @@ impl JdNode {
         if self.children.is_empty() {
             0
         } else {
-            1 + self.children.values().map(|c| c.max_depth()).max().unwrap_or(0)
+            1 + self
+                .children
+                .values()
+                .map(|c| c.max_depth())
+                .max()
+                .unwrap_or(0)
         }
     }
 }

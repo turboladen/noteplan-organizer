@@ -26,7 +26,10 @@ pub type McpResult<T> = Result<T, String>;
 /// Get a note by title, ID, filename, or date.
 pub async fn get_note(state: &McpState, title: &str) -> McpResult<String> {
     let result = state
-        .call_tool("noteplan_get_notes", json!({ "action": "get", "title": title }))
+        .call_tool(
+            "noteplan_get_notes",
+            json!({ "action": "get", "title": title }),
+        )
         .await?;
     Ok(extract_text(&result))
 }
@@ -44,7 +47,10 @@ pub async fn list_notes(state: &McpState, folder: Option<&str>) -> McpResult<Str
 /// Get a daily note by date (YYYYMMDD format).
 pub async fn get_daily_note(state: &McpState, date: &str) -> McpResult<String> {
     let result = state
-        .call_tool("noteplan_get_notes", json!({ "action": "get", "date": date }))
+        .call_tool(
+            "noteplan_get_notes",
+            json!({ "action": "get", "date": date }),
+        )
         .await?;
     Ok(extract_text(&result))
 }
@@ -160,11 +166,7 @@ pub async fn search_tasks(
 }
 
 /// Complete a task by marking it done.
-pub async fn complete_task(
-    state: &McpState,
-    title: &str,
-    line: usize,
-) -> McpResult<String> {
+pub async fn complete_task(state: &McpState, title: &str, line: usize) -> McpResult<String> {
     let result = state
         .call_tool(
             "noteplan_paragraphs",
@@ -181,10 +183,7 @@ pub async fn complete_task(
 /// Full-text search across notes.
 pub async fn search_notes(state: &McpState, query: &str) -> McpResult<String> {
     let result = state
-        .call_tool(
-            "noteplan_search",
-            json!({ "query": query }),
-        )
+        .call_tool("noteplan_search", json!({ "query": query }))
         .await?;
     Ok(extract_text(&result))
 }
@@ -216,10 +215,7 @@ pub async fn list_spaces(state: &McpState) -> McpResult<String> {
 /// Open a note in NotePlan's UI.
 pub async fn open_note(state: &McpState, title: &str) -> McpResult<String> {
     let result = state
-        .call_tool(
-            "noteplan_ui",
-            json!({ "action": "open", "title": title }),
-        )
+        .call_tool("noteplan_ui", json!({ "action": "open", "title": title }))
         .await?;
     Ok(extract_text(&result))
 }
@@ -231,10 +227,7 @@ pub async fn open_note(state: &McpState, title: &str) -> McpResult<String> {
 /// Semantic search using embeddings (requires NotePlan embedding config).
 pub async fn semantic_search(state: &McpState, query: &str) -> McpResult<String> {
     let result = state
-        .call_tool(
-            "noteplan_embeddings",
-            json!({ "query": query }),
-        )
+        .call_tool("noteplan_embeddings", json!({ "query": query }))
         .await?;
     Ok(extract_text(&result))
 }
@@ -244,11 +237,7 @@ pub async fn semantic_search(state: &McpState, query: &str) -> McpResult<String>
 // ---------------------------------------------------------------------------
 
 /// Get calendar events for a date range.
-pub async fn get_events(
-    state: &McpState,
-    start_date: &str,
-    end_date: &str,
-) -> McpResult<String> {
+pub async fn get_events(state: &McpState, start_date: &str, end_date: &str) -> McpResult<String> {
     let result = state
         .call_tool(
             "noteplan_eventkit",

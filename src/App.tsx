@@ -276,20 +276,30 @@ function App() {
     }
   };
 
+  const [fixingIds, setFixingIds] = useState<Set<string>>(new Set());
+
   const handleFixFinding = useCallback(
     async (finding: Finding) => {
       if (!finding.fix_action || !mcpConnected) return;
+      const fid = getFindingId(finding);
+      // Guard against double-clicks
+      if (fixingIds.has(fid)) return;
+      setFixingIds((prev) => new Set([...prev, fid]));
       try {
         await mcpCallTool(finding.fix_action.tool, finding.fix_action.arguments as Record<string, unknown>);
         showToast(`Fixed: ${finding.fix_action.label}`);
-        // Auto-dismiss after successful fix
-        const fid = getFindingId(finding);
         toggleDismissed(fid);
       } catch (e) {
         showToast(`Fix failed: ${e}`);
+      } finally {
+        setFixingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(fid);
+          return next;
+        });
       }
     },
-    [mcpConnected, showToast, toggleDismissed],
+    [mcpConnected, fixingIds, showToast, toggleDismissed],
   );
 
   // Split findings by tab, compute per-tab stats
@@ -525,6 +535,8 @@ function App() {
                   selectedSeverity={assessSeverity}
                   onSelectCategory={setAssessCategory}
                   onSelectSeverity={setAssessSeverity}
+                  mcpConnected={mcpConnected}
+                  onFixFinding={handleFixFinding}
                 />
               </>
             )}

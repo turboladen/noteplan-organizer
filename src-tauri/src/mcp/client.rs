@@ -36,11 +36,9 @@ impl McpState {
             return Ok("Already connected".to_string());
         }
 
-        let transport = TokioChildProcess::new(
-            Command::new("npx").configure(|cmd| {
-                cmd.arg("-y").arg(MCP_PACKAGE);
-            }),
-        )
+        let transport = TokioChildProcess::new(Command::new("npx").configure(|cmd| {
+            cmd.arg("-y").arg(MCP_PACKAGE);
+        }))
         .map_err(|e| format!("Failed to spawn MCP server process: {e}"))?;
 
         let running = ()

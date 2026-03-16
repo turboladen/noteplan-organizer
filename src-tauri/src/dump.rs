@@ -31,9 +31,18 @@ fn section(out: &mut String, title: &str) {
 }
 
 fn write_header(out: &mut String, path: &str) {
-    let _ = writeln!(out, "╔══════════════════════════════════════════════════════════════╗");
-    let _ = writeln!(out, "║           NotePlan System Assessment Dump                   ║");
-    let _ = writeln!(out, "╚══════════════════════════════════════════════════════════════╝");
+    let _ = writeln!(
+        out,
+        "╔══════════════════════════════════════════════════════════════╗"
+    );
+    let _ = writeln!(
+        out,
+        "║           NotePlan System Assessment Dump                   ║"
+    );
+    let _ = writeln!(
+        out,
+        "╚══════════════════════════════════════════════════════════════╝"
+    );
     let _ = writeln!(out);
     let _ = writeln!(out, "Path: {}", path);
     let _ = writeln!(
@@ -45,11 +54,31 @@ fn write_header(out: &mut String, path: &str) {
 }
 
 fn write_overview(out: &mut String, store: &NoteStore) {
-    let regular = store.notes.iter().filter(|n| matches!(n.kind, NoteKind::Regular)).count();
-    let daily = store.notes.iter().filter(|n| matches!(n.kind, NoteKind::Daily)).count();
-    let weekly = store.notes.iter().filter(|n| matches!(n.kind, NoteKind::Weekly)).count();
-    let monthly = store.notes.iter().filter(|n| matches!(n.kind, NoteKind::Monthly)).count();
-    let templates = store.notes.iter().filter(|n| matches!(n.kind, NoteKind::Template)).count();
+    let regular = store
+        .notes
+        .iter()
+        .filter(|n| matches!(n.kind, NoteKind::Regular))
+        .count();
+    let daily = store
+        .notes
+        .iter()
+        .filter(|n| matches!(n.kind, NoteKind::Daily))
+        .count();
+    let weekly = store
+        .notes
+        .iter()
+        .filter(|n| matches!(n.kind, NoteKind::Weekly))
+        .count();
+    let monthly = store
+        .notes
+        .iter()
+        .filter(|n| matches!(n.kind, NoteKind::Monthly))
+        .count();
+    let templates = store
+        .notes
+        .iter()
+        .filter(|n| matches!(n.kind, NoteKind::Template))
+        .count();
 
     section(out, "OVERVIEW");
     let _ = writeln!(out, "  Regular notes:  {}", regular);
@@ -81,7 +110,11 @@ fn write_node(out: &mut String, node: &JdNode, indent: usize) {
     if node.children.is_empty() {
         let _ = writeln!(out, "{}{}/  ({} notes)", prefix, node.name, count);
     } else if direct > 0 {
-        let _ = writeln!(out, "{}{}/  ({} notes, {} direct)", prefix, node.name, count, direct);
+        let _ = writeln!(
+            out,
+            "{}{}/  ({} notes, {} direct)",
+            prefix, node.name, count, direct
+        );
     } else {
         let _ = writeln!(out, "{}{}/  ({} notes)", prefix, node.name, count);
     }
@@ -110,17 +143,30 @@ fn write_jd_statistics(out: &mut String, store: &NoteStore) {
     let cat_min = cat_counts.iter().min().unwrap_or(&0);
     let cat_max = cat_counts.iter().max().unwrap_or(&0);
     let cat_avg = cat_counts.iter().sum::<usize>() as f64 / area_count as f64;
-    let _ = writeln!(out, "  Categories per area: min={}, max={}, avg={:.1}", cat_min, cat_max, cat_avg);
+    let _ = writeln!(
+        out,
+        "  Categories per area: min={}, max={}, avg={:.1}",
+        cat_min, cat_max, cat_avg
+    );
 
     // Notes per area
     let note_counts: Vec<usize> = hierarchy.areas.iter().map(|a| a.total_notes).collect();
     let note_min = note_counts.iter().min().unwrap_or(&0);
     let note_max = note_counts.iter().max().unwrap_or(&0);
     let note_avg = note_counts.iter().sum::<usize>() as f64 / area_count as f64;
-    let _ = writeln!(out, "  Notes per area: min={}, max={}, avg={:.1}", note_min, note_max, note_avg);
+    let _ = writeln!(
+        out,
+        "  Notes per area: min={}, max={}, avg={:.1}",
+        note_min, note_max, note_avg
+    );
 
     // Max depth
-    let max_depth = hierarchy.areas.iter().map(|a| a.max_depth).max().unwrap_or(0);
+    let max_depth = hierarchy
+        .areas
+        .iter()
+        .map(|a| a.max_depth)
+        .max()
+        .unwrap_or(0);
     let _ = writeln!(out, "  Maximum folder depth: {}", max_depth);
 
     // Notes without JD IDs
@@ -145,7 +191,11 @@ fn write_jd_statistics(out: &mut String, store: &NoteStore) {
         })
         .filter(|n| n.jd_id.is_some() && n.title_jd_id.is_some() && n.jd_id != n.title_jd_id)
         .count();
-    let _ = writeln!(out, "  Notes with stale IDs (filename != title): {}", stale_id_count);
+    let _ = writeln!(
+        out,
+        "  Notes with stale IDs (filename != title): {}",
+        stale_id_count
+    );
 
     // Single-note folders
     let mut single_note_folders: Vec<String> = Vec::new();
@@ -153,7 +203,11 @@ fn write_jd_statistics(out: &mut String, store: &NoteStore) {
 
     if !single_note_folders.is_empty() {
         let _ = writeln!(out);
-        let _ = writeln!(out, "  Single-note folders ({}):", single_note_folders.len());
+        let _ = writeln!(
+            out,
+            "  Single-note folders ({}):",
+            single_note_folders.len()
+        );
         for f in &single_note_folders {
             let _ = writeln!(out, "    - {}", f);
         }
@@ -162,7 +216,11 @@ fn write_jd_statistics(out: &mut String, store: &NoteStore) {
     // Per-area breakdown
     let _ = writeln!(out);
     let _ = writeln!(out, "  Per-area breakdown:");
-    let _ = writeln!(out, "  {:<40} {:>6} {:>6} {:>6}", "Area", "Notes", "Cats", "Depth");
+    let _ = writeln!(
+        out,
+        "  {:<40} {:>6} {:>6} {:>6}",
+        "Area", "Notes", "Cats", "Depth"
+    );
     let _ = writeln!(out, "  {}", "─".repeat(62));
     for area in &hierarchy.areas {
         let _ = writeln!(
@@ -185,9 +243,17 @@ fn collect_single_note_folders(node: &JdNode, results: &mut Vec<String>) {
 
 fn write_hub_coverage(out: &mut String, store: &NoteStore) {
     const HUB_SECTIONS: &[&str] = &[
-        "Related", "Team Members", "Important Decisions", "Documentation",
-        "Timeline", "Core Concepts", "Key Points", "Sources",
-        "Description", "Summary", "Notes",
+        "Related",
+        "Team Members",
+        "Important Decisions",
+        "Documentation",
+        "Timeline",
+        "Core Concepts",
+        "Key Points",
+        "Sources",
+        "Description",
+        "Summary",
+        "Notes",
     ];
 
     section(out, "HUB COVERAGE");
@@ -223,7 +289,11 @@ fn write_hub_coverage(out: &mut String, store: &NoteStore) {
         .filter_map(|(path, _)| {
             let parts: Vec<&str> = path.split('/').collect();
             if parts.len() >= 3 {
-                Some(format!("{}/{}", parts[parts.len() - 3], parts[parts.len() - 2]))
+                Some(format!(
+                    "{}/{}",
+                    parts[parts.len() - 3],
+                    parts[parts.len() - 2]
+                ))
             } else {
                 None
             }
@@ -233,9 +303,7 @@ fn write_hub_coverage(out: &mut String, store: &NoteStore) {
     let mut missing_hubs: Vec<String> = Vec::new();
     for area in hierarchy.root.children.values() {
         for cat in area.children.values() {
-            if cat.jd_id.is_some()
-                && !hub_paths.contains(&format!("{}/{}", area.name, cat.name))
-            {
+            if cat.jd_id.is_some() && !hub_paths.contains(&format!("{}/{}", area.name, cat.name)) {
                 missing_hubs.push(format!("{}/{}", area.name, cat.name));
             }
         }
@@ -243,7 +311,11 @@ fn write_hub_coverage(out: &mut String, store: &NoteStore) {
 
     if !missing_hubs.is_empty() {
         let _ = writeln!(out);
-        let _ = writeln!(out, "  Categories WITHOUT a hub note ({}):", missing_hubs.len());
+        let _ = writeln!(
+            out,
+            "  Categories WITHOUT a hub note ({}):",
+            missing_hubs.len()
+        );
         for m in &missing_hubs {
             let _ = writeln!(out, "    - {}", m);
         }
@@ -374,7 +446,11 @@ fn write_activity_by_area(out: &mut String, store: &NoteStore) {
         .collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let _ = writeln!(out, "  {:<40} {:>12} {:>14}", "Area", "Active (90d)", "Last Modified");
+    let _ = writeln!(
+        out,
+        "  {:<40} {:>12} {:>14}",
+        "Area", "Active (90d)", "Last Modified"
+    );
     let _ = writeln!(out, "  {}", "─".repeat(68));
 
     for (area, active_count, latest) in &sorted {
@@ -391,7 +467,11 @@ fn write_activity_by_area(out: &mut String, store: &NoteStore) {
             ""
         };
 
-        let _ = writeln!(out, "  {:<40} {:>12} {:>14}{}", area, active_count, latest_str, stale_marker);
+        let _ = writeln!(
+            out,
+            "  {:<40} {:>12} {:>14}{}",
+            area, active_count, latest_str, stale_marker
+        );
     }
     let _ = writeln!(out);
 }

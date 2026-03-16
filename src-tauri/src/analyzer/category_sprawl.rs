@@ -109,13 +109,15 @@ impl Analyzer for CategorySprawlAnalyzer {
                 severity: Severity::Warning,
                 category: FindingCategory::CategorySprawl,
                 file_path: path.to_string(),
-                description: "Note is sitting directly in the Notes/ root — not filed in any area".to_string(),
+                description: "Note is sitting directly in the Notes/ root — not filed in any area"
+                    .to_string(),
                 suggestion: Some(
                     "Move this note into the appropriate JD area and category folder.".to_string(),
                 ),
                 line_number: None,
                 context: None,
-                is_folder: false, fix_action: None,
+                is_folder: false,
+                fix_action: None,
             });
         }
 

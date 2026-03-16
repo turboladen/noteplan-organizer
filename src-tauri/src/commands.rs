@@ -106,8 +106,7 @@ pub fn system_dump(path: String) -> Result<String, String> {
         .unwrap_or_else(|_| std::env::temp_dir());
     let dump_path = desktop.join("noteplan-system-dump.txt");
 
-    std::fs::write(&dump_path, &report)
-        .map_err(|e| format!("Failed to write dump file: {}", e))?;
+    std::fs::write(&dump_path, &report).map_err(|e| format!("Failed to write dump file: {}", e))?;
 
     // Open in default text editor
     std::process::Command::new("open")
@@ -227,8 +226,8 @@ pub fn get_filing_suggestions(
     }
 
     let canonical = validate_noteplan_path(&note_path)?;
-    let content = std::fs::read_to_string(&canonical)
-        .map_err(|e| format!("Failed to read note: {}", e))?;
+    let content =
+        std::fs::read_to_string(&canonical).map_err(|e| format!("Failed to read note: {}", e))?;
     let blocks = extract_content_blocks(&content);
     let store = scan_noteplan_dir(&base_path);
     let targets = build_filing_targets(&store);

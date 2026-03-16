@@ -2,28 +2,21 @@ use crate::models::{BlockKind, ContentBlock};
 use regex::Regex;
 use std::sync::LazyLock;
 
-static HEADING_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(#{1,6})\s+(.+)$").unwrap());
+static HEADING_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(#{1,6})\s+(.+)$").unwrap());
 
-static TAG_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"#([\w/\-]+)").unwrap());
+static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#([\w/\-]+)").unwrap());
 
-static MENTION_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"@([\w/\-]+)").unwrap());
+static MENTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@([\w/\-]+)").unwrap());
 
-static WIKI_LINK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[\[([^\]]+)\]\]").unwrap());
+static WIKI_LINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\[([^\]]+)\]\]").unwrap());
 
-static TASK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[\t ]*[*]\s+(?:\[([x\->  ])\]\s+)?(.+)$").unwrap()
-});
+static TASK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\t ]*[*]\s+(?:\[([x\->  ])\]\s+)?(.+)$").unwrap());
 
-static CHECKBOX_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[\t ]*[-]\s+\[([x\->  ])\]\s+(.+)$").unwrap()
-});
+static CHECKBOX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\t ]*[-]\s+\[([x\->  ])\]\s+(.+)$").unwrap());
 
-static FRONTMATTER_END_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^---\s*$").unwrap());
+static FRONTMATTER_END_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^---\s*$").unwrap());
 
 /// Extract discrete content blocks from a daily note's content.
 ///

@@ -3,9 +3,8 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 // Match task lines: * text, * [x] text, * [-] text, * [>] text, - [ ] text, - [x] text
-static TASK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[\t ]*[*\-]\s+(?:\[([x\->  ])\]\s+)?(.+)$").unwrap()
-});
+static TASK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\t ]*[*\-]\s+(?:\[([x\->  ])\]\s+)?(.+)$").unwrap());
 
 // Match date references in tasks
 static SCHEDULED_TO_RE: LazyLock<Regex> =
@@ -17,10 +16,8 @@ static DONE_DATE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@done\((\d{4}-\d{2}-\d{2})").unwrap());
 
 // Match tags and mentions
-static TAG_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"#([\w/\-]+)").unwrap());
-static MENTION_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"@([\w/\-]+)").unwrap());
+static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#([\w/\-]+)").unwrap());
+static MENTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@([\w/\-]+)").unwrap());
 
 /// Parse all tasks from note content.
 pub fn parse_tasks(content: &str) -> Vec<Task> {
@@ -46,9 +43,7 @@ pub fn parse_tasks(content: &str) -> Vec<Task> {
                 continue; // Plain list item, not a task
             }
 
-            let scheduled_to = SCHEDULED_TO_RE
-                .captures(&text)
-                .map(|c| c[1].to_string());
+            let scheduled_to = SCHEDULED_TO_RE.captures(&text).map(|c| c[1].to_string());
             let rescheduled_from = RESCHEDULED_FROM_RE
                 .captures(&text)
                 .map(|c| c[1].to_string());

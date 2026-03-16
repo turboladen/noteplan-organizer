@@ -4,12 +4,10 @@ use std::sync::LazyLock;
 
 /// Regex to match Johnny Decimal-style IDs at the start of a folder or file name.
 /// Matches patterns like: "42", "42.02", "42.02.01", "30.10.04"
-static JD_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(\d+(?:\.\d+)*)").unwrap());
+static JD_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+(?:\.\d+)*)").unwrap());
 
 /// Regex to match hub codes: "00.PH", "00.DH", "00.RH"
-static HUB_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^00\.(PH|DH|RH)\b").unwrap());
+static HUB_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^00\.(PH|DH|RH)\b").unwrap());
 
 /// Regex to match ISO date prefix: "2026-03-09"
 static DATE_ID_RE: LazyLock<Regex> =

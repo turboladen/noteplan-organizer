@@ -26,8 +26,7 @@ impl Analyzer for UnfiledSlipAnalyzer {
             // filename on disk can still contain "[Add ID]" even after the user has
             // given the note a proper title. We check the title, not the filename.
             let title = &note.title;
-            let title_has_placeholder =
-                title.contains("[Add ID]") || title.contains("[Add Title]");
+            let title_has_placeholder = title.contains("[Add ID]") || title.contains("[Add Title]");
 
             if title_has_placeholder {
                 let has_content = note.content.lines().count() > 3; // More than just template scaffolding
@@ -54,7 +53,8 @@ impl Analyzer for UnfiledSlipAnalyzer {
                     ),
                     line_number: None,
                     context: None,
-                    is_folder: false, fix_action: None,
+                    is_folder: false,
+                    fix_action: None,
                 });
             }
         }

@@ -92,7 +92,8 @@ impl Analyzer for NamingInconsistencyAnalyzer {
                         snips_folders.len(),
                         "Snips"
                     )),
-                    is_folder: true, fix_action: None,
+                    is_folder: true,
+                    fix_action: None,
                 });
             }
         }
