@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ContentBlock,
+  DailyNoteInfo,
   FilingSuggestion,
   FilingTarget,
   McpStatus,
@@ -56,6 +57,12 @@ export async function getGitRev(): Promise<string> {
 // ---------------------------------------------------------------------------
 // Content blocks (filing assistant)
 // ---------------------------------------------------------------------------
+
+export async function getDailyNotes(
+  path: string,
+): Promise<DailyNoteInfo[]> {
+  return invoke<DailyNoteInfo[]>("get_daily_notes", { path });
+}
 
 export async function getContentBlocks(
   notePath: string,

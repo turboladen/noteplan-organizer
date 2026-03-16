@@ -131,6 +131,11 @@ export interface ContentBlock {
   wiki_links: string[];
 }
 
+export interface DailyNoteInfo {
+  file_path: string;
+  date_label: string;
+}
+
 export interface FilingSuggestion {
   block_index: number;
   target: FilingTarget;

@@ -3,6 +3,7 @@ use crate::config;
 use crate::dump;
 use crate::export;
 use crate::models::{ContentBlock, FilingTarget, NoteKind, Report};
+use serde::Serialize;
 use crate::parser::matcher::FilingSuggestion;
 use crate::parser::{
     build_filing_targets, extract_content_blocks, match_blocks_to_targets, scan_noteplan_dir,
@@ -155,6 +156,47 @@ pub fn open_noteplan_url(url: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_git_rev() -> &'static str {
     env!("GIT_SHORT_REV")
+}
+
+/// Lightweight info about a daily note — enough for the filing assistant selector.
+#[derive(Serialize)]
+pub struct DailyNoteInfo {
+    pub file_path: String,
+    pub date_label: String,
+}
+
+/// List daily notes from the Calendar directory, most recent first.
+#[tauri::command]
+pub fn get_daily_notes(path: String) -> Result<Vec<DailyNoteInfo>, String> {
+    let calendar_dir = std::path::Path::new(&path).join("Calendar");
+    if !calendar_dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut notes: Vec<DailyNoteInfo> = std::fs::read_dir(&calendar_dir)
+        .map_err(|e| format!("Failed to read Calendar directory: {}", e))?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            let ext = path.extension()?.to_str()?;
+            if ext != "md" && ext != "txt" {
+                return None;
+            }
+            let stem = path.file_stem()?.to_str()?.to_string();
+            // Only include daily notes (YYYYMMDD format), skip weekly (YYYY-Wnn) and monthly
+            if stem.len() != 8 || !stem.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            let date_label = format!("{}-{}-{}", &stem[..4], &stem[4..6], &stem[6..8]);
+            Some(DailyNoteInfo {
+                file_path: path.to_string_lossy().to_string(),
+                date_label,
+            })
+        })
+        .collect();
+
+    notes.sort_by(|a, b| b.date_label.cmp(&a.date_label));
+    Ok(notes)
 }
 
 /// Extract content blocks from a note for the filing assistant.

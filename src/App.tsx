@@ -15,12 +15,13 @@ import {
   stopWatching,
   systemDump,
 } from "./api/commands";
+import { FilingAssistant } from "./components/FilingAssistant";
 import { FindingsList } from "./components/FindingsList";
 import { SCAN_UPDATE_EVENT, SYSTEM_ASSESSMENT_CATEGORIES } from "./types/api";
 import type { Finding, FindingCategory, Report, ReportStats, Severity } from "./types/api";
 import { getFindingId } from "./utils/findingId";
 
-type AppTab = "findings" | "assessment";
+type AppTab = "findings" | "assessment" | "filing";
 
 const DISMISSED_KEY = "noteplan-organizer:dismissed";
 
@@ -454,49 +455,68 @@ function App() {
                   {assessmentFindings.length}
                 </span>
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("filing")}
+                className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
+                  activeTab === "filing"
+                    ? "bg-surface-raised text-text-primary shadow-sm"
+                    : "text-text-tertiary hover:text-text-secondary"
+                }`}
+              >
+                Filing
+              </button>
             </div>
 
-            {activeTab === "findings"
-              ? (
+            {activeTab === "findings" && (
+              <FindingsList
+                findings={findingsFindings}
+                basePath={report.noteplan_path}
+                stats={findingsStats}
+                scannedAt={report.scanned_at}
+                dismissedIds={dismissedIds}
+                onToggleDismissed={toggleDismissed}
+                selectedCategory={selectedCategory}
+                selectedSeverity={selectedSeverity}
+                onSelectCategory={setSelectedCategory}
+                onSelectSeverity={setSelectedSeverity}
+              />
+            )}
+
+            {activeTab === "assessment" && (
+              <>
+                <div className="flex items-center justify-end mb-3">
+                  <button
+                    type="button"
+                    onClick={handleExportContext}
+                    disabled={!notePlanPath || exporting}
+                    className="px-3 py-1.5 text-xs font-medium rounded-[var(--radius-button)] border border-border-light bg-surface text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {exporting ? "Assembling\u2026" : "Export Context for Claude"}
+                  </button>
+                </div>
                 <FindingsList
-                  findings={findingsFindings}
+                  findings={assessmentFindings}
                   basePath={report.noteplan_path}
-                  stats={findingsStats}
+                  stats={assessmentStats}
                   scannedAt={report.scanned_at}
                   dismissedIds={dismissedIds}
                   onToggleDismissed={toggleDismissed}
-                  selectedCategory={selectedCategory}
-                  selectedSeverity={selectedSeverity}
-                  onSelectCategory={setSelectedCategory}
-                  onSelectSeverity={setSelectedSeverity}
+                  selectedCategory={assessCategory}
+                  selectedSeverity={assessSeverity}
+                  onSelectCategory={setAssessCategory}
+                  onSelectSeverity={setAssessSeverity}
                 />
-              )
-              : (
-                <>
-                  <div className="flex items-center justify-end mb-3">
-                    <button
-                      type="button"
-                      onClick={handleExportContext}
-                      disabled={!notePlanPath || exporting}
-                      className="px-3 py-1.5 text-xs font-medium rounded-[var(--radius-button)] border border-border-light bg-surface text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {exporting ? "Assembling\u2026" : "Export Context for Claude"}
-                    </button>
-                  </div>
-                  <FindingsList
-                    findings={assessmentFindings}
-                    basePath={report.noteplan_path}
-                    stats={assessmentStats}
-                    scannedAt={report.scanned_at}
-                    dismissedIds={dismissedIds}
-                    onToggleDismissed={toggleDismissed}
-                    selectedCategory={assessCategory}
-                    selectedSeverity={assessSeverity}
-                    onSelectCategory={setAssessCategory}
-                    onSelectSeverity={setAssessSeverity}
-                  />
-                </>
-              )}
+              </>
+            )}
+
+            {activeTab === "filing" && (
+              <FilingAssistant
+                basePath={report.noteplan_path}
+                mcpConnected={mcpConnected}
+                onToast={showToast}
+              />
+            )}
           </>
         )}
       </main>
