@@ -101,10 +101,10 @@ function App() {
   );
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showToast = useCallback((message: string) => {
+  const showToast = useCallback((message: string, durationMs = 3000) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ message, key: Date.now() });
-    toastTimerRef.current = setTimeout(() => setToast(null), 3000);
+    toastTimerRef.current = setTimeout(() => setToast(null), durationMs);
   }, []);
 
   const toggleDismissed = useCallback((findingId: string) => {
@@ -291,7 +291,7 @@ function App() {
       } else {
         msg += " · MCP: not connected";
       }
-      showToast(msg);
+      showToast(msg, 8000);
     } catch (e) {
       setError(String(e));
     } finally {
