@@ -3,10 +3,12 @@ mod commands;
 pub mod config;
 pub mod dump;
 pub mod export;
+pub mod mcp;
 pub mod models;
 pub mod parser;
 mod watcher;
 
+use mcp::McpState;
 use watcher::WatcherState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -14,6 +16,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(WatcherState::new())
+        .manage(McpState::new())
         .setup(|app| {
             // Enable logging in both debug and release builds.
             // Debug: Info level (verbose, for development).
@@ -38,9 +41,16 @@ pub fn run() {
             commands::get_note_content,
             commands::open_noteplan_url,
             commands::get_git_rev,
+            commands::get_content_blocks,
+            commands::get_filing_targets,
+            commands::get_filing_suggestions,
             watcher::start_watching,
             watcher::stop_watching,
             watcher::is_watching,
+            mcp::commands::mcp_connect,
+            mcp::commands::mcp_disconnect,
+            mcp::commands::mcp_status,
+            mcp::commands::mcp_call_tool,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

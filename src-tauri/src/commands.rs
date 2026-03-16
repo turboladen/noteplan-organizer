@@ -2,8 +2,36 @@ use crate::analyzer::run_all_analyzers;
 use crate::config;
 use crate::dump;
 use crate::export;
-use crate::models::{NoteKind, Report};
-use crate::parser::scan_noteplan_dir;
+use crate::models::{ContentBlock, FilingTarget, NoteKind, Report};
+use crate::parser::matcher::FilingSuggestion;
+use crate::parser::{
+    build_filing_targets, extract_content_blocks, match_blocks_to_targets, scan_noteplan_dir,
+};
+use std::path::PathBuf;
+
+/// Validate that a file path is within the NotePlan data directory.
+/// Returns the canonicalized path on success.
+fn validate_noteplan_path(path: &str) -> Result<PathBuf, String> {
+    let canonical = std::path::Path::new(path)
+        .canonicalize()
+        .map_err(|e| format!("Invalid path: {}", e))?;
+
+    let allowed = config::detect_noteplan_path()
+        .and_then(|base| std::path::Path::new(&base).canonicalize().ok());
+
+    if let Some(ref base) = allowed {
+        if !canonical.starts_with(base) {
+            return Err("Access denied: path is outside the NotePlan data directory".to_string());
+        }
+    } else {
+        let path_str = canonical.to_string_lossy();
+        if !path_str.contains("co.noteplan.NotePlan") && !path_str.contains("iCloud~co~noteplan") {
+            return Err("Access denied: path is outside the NotePlan data directory".to_string());
+        }
+    }
+
+    Ok(canonical)
+}
 
 #[tauri::command]
 pub fn detect_noteplan_path() -> Result<String, String> {
@@ -57,30 +85,7 @@ pub fn scan(path: String) -> Result<Report, String> {
 /// to prevent path-traversal reads of arbitrary files.
 #[tauri::command]
 pub fn get_note_content(path: String) -> Result<String, String> {
-    let requested = std::path::Path::new(&path);
-
-    // Canonicalize to resolve symlinks and ".." components
-    let canonical = requested
-        .canonicalize()
-        .map_err(|e| format!("Invalid path: {}", e))?;
-
-    // Ensure the resolved path is inside a known NotePlan location
-    let allowed = config::detect_noteplan_path()
-        .and_then(|base| std::path::Path::new(&base).canonicalize().ok());
-
-    if let Some(ref base) = allowed {
-        if !canonical.starts_with(base) {
-            return Err("Access denied: path is outside the NotePlan data directory".to_string());
-        }
-    } else {
-        // If we can't detect the NotePlan path, only allow paths that look like
-        // they're inside a NotePlan container directory.
-        let path_str = canonical.to_string_lossy();
-        if !path_str.contains("co.noteplan.NotePlan") && !path_str.contains("iCloud~co~noteplan") {
-            return Err("Access denied: path is outside the NotePlan data directory".to_string());
-        }
-    }
-
+    let canonical = validate_noteplan_path(&path)?;
     std::fs::read_to_string(&canonical).map_err(|e| format!("Failed to read note: {}", e))
 }
 
@@ -150,4 +155,45 @@ pub fn open_noteplan_url(url: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_git_rev() -> &'static str {
     env!("GIT_SHORT_REV")
+}
+
+/// Extract content blocks from a note for the filing assistant.
+#[tauri::command]
+pub fn get_content_blocks(note_path: String) -> Result<Vec<ContentBlock>, String> {
+    let canonical = validate_noteplan_path(&note_path)?;
+    let content =
+        std::fs::read_to_string(&canonical).map_err(|e| format!("Failed to read note: {}", e))?;
+    Ok(extract_content_blocks(&content))
+}
+
+/// Build a list of filing targets from the note hierarchy.
+/// These are non-daily Regular notes that can serve as destinations for daily note content.
+#[tauri::command]
+pub fn get_filing_targets(path: String) -> Result<Vec<FilingTarget>, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    let store = scan_noteplan_dir(&path);
+    Ok(build_filing_targets(&store))
+}
+
+/// Get filing suggestions for a specific note: extract its content blocks,
+/// scan the hierarchy for filing targets, and match them.
+#[tauri::command]
+pub fn get_filing_suggestions(
+    base_path: String,
+    note_path: String,
+) -> Result<Vec<FilingSuggestion>, String> {
+    if !std::path::Path::new(&base_path).exists() {
+        return Err(format!("Path does not exist: {}", base_path));
+    }
+
+    let canonical = validate_noteplan_path(&note_path)?;
+    let content = std::fs::read_to_string(&canonical)
+        .map_err(|e| format!("Failed to read note: {}", e))?;
+    let blocks = extract_content_blocks(&content);
+    let store = scan_noteplan_dir(&base_path);
+    let targets = build_filing_targets(&store);
+
+    Ok(match_blocks_to_targets(&blocks, &targets))
 }

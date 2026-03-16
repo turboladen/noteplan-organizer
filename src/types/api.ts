@@ -113,6 +113,52 @@ export interface Report {
   noteplan_path: string;
 }
 
+// ---------------------------------------------------------------------------
+// Content block types (filing assistant)
+// ---------------------------------------------------------------------------
+
+export type BlockKind = "Heading" | "TaskGroup" | "Paragraph";
+
+export interface ContentBlock {
+  kind: BlockKind;
+  start_line: number;
+  end_line: number;
+  raw_text: string;
+  heading: string | null;
+  heading_level: number | null;
+  tags: string[];
+  mentions: string[];
+  wiki_links: string[];
+}
+
+export interface FilingSuggestion {
+  block_index: number;
+  target: FilingTarget;
+  score: number;
+  reasons: string[];
+}
+
+export interface FilingTarget {
+  title: string;
+  file_path: string;
+  relative_path: string;
+  jd_id: string | null;
+  folder_path: string;
+  is_hub: boolean;
+  section_headings: string[];
+  tags: string[];
+  mentions: string[];
+}
+
+// ---------------------------------------------------------------------------
+// MCP integration types
+// ---------------------------------------------------------------------------
+
+export interface McpStatus {
+  connected: boolean;
+  tools: string[];
+}
+
 export const CATEGORY_LABELS: Record<FindingCategory, string> = {
   IdConsistency: "ID Consistency",
   UnfiledSlip: "Unfiled Slip",

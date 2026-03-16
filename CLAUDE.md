@@ -39,7 +39,11 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
 
 **Backend (Rust)**:
 
-- `parser/` — Parses NotePlan markdown files into `Note` structs stored in `NoteStore`
+- `parser/` — Parses NotePlan markdown files into `Note` structs stored in `NoteStore`.
+  Sub-modules for the Phase 2 filing assistant:
+  - `block.rs` — Extracts `ContentBlock`s (Heading/TaskGroup/Paragraph) from daily notes
+  - `filing.rs` — Builds `FilingTarget` list from Regular notes in the hierarchy
+  - `matcher.rs` — Scores block→target matches (wiki links, tag overlap, title keywords)
 - `analyzer/` — 8 modules implementing the `Analyzer` trait; `run_all_analyzers()` collects findings
 - `watcher.rs` — File watching via `notify` crate with 2s debounce; shares `perform_scan()` with
   manual scan
@@ -47,7 +51,12 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
   `git rev-parse --short HEAD`; falls back to `"unknown"` without git
 - `commands.rs` — Tauri command handlers exposed to the frontend
 - `config.rs` — Auto-detects NotePlan data directory (App Store, Setapp, or iCloud paths)
-- `models/` — `Note`, `Finding`, `Report` types (must be `Serialize` for IPC)
+- `models/` — `Note`, `Finding`, `Report`, `ContentBlock`, `FilingTarget` types (must be
+  `Serialize` for IPC)
+- `mcp/` — Optional MCP client integration for NotePlan's `@noteplanco/noteplan-mcp` server:
+  - `client.rs` — `McpState` (managed Tauri state), spawn/connect/disconnect lifecycle via rmcp
+  - `commands.rs` — Tauri commands: `mcp_connect`, `mcp_disconnect`, `mcp_status`, `mcp_call_tool`
+  - `tools.rs` — Typed wrappers for NotePlan MCP tools (get/edit notes, tasks, folders, search)
 
 **Frontend (React + TypeScript)**:
 
@@ -76,8 +85,16 @@ not `event:default`). See `src-tauri/capabilities/default.json`.
 `getTauriVersion()` out of the box (requires `core:app:default` permission). Prefer these over
 custom Rust commands for app metadata.
 
-**This app is strictly read-only.** It never writes to NotePlan files. This is a design invariant,
-not just a current limitation.
+**No custom file writes.** The app never writes to NotePlan files directly. Write operations are only
+permitted through NotePlan's own MCP server (`mcp/tools.rs`), which is a trusted, user-initiated
+channel. Custom file mutation code remains off-limits.
+
+**MCP is optional**: The MCP client (`mcp/client.rs`) wraps `RunningService` in
+`Arc<Mutex<Option<...>>>`. All MCP tool calls check `is_some()` first and return clear errors if
+not connected. The app fully functions without MCP — it's only needed for write actions and
+advanced queries. The MCP server is spawned as `npx -y @noteplanco/noteplan-mcp` (child process,
+stdio transport). `RunningService` derefs to `Peer<RoleClient>` so `call_tool`/`list_all_tools`
+methods are called directly on it.
 
 **Analyzer pattern**: To add a new analyzer, create a module in `src-tauri/src/analyzer/`, implement
 the `Analyzer` trait, and register it in `run_all_analyzers()` in `analyzer/mod.rs`.

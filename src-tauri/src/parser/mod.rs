@@ -1,9 +1,15 @@
+pub mod block;
+pub mod filing;
 mod folder;
 pub mod hierarchy;
 mod link;
 mod markdown;
+pub mod matcher;
 mod task;
 
+pub use block::extract_content_blocks;
+pub use filing::build_filing_targets;
+pub use matcher::match_blocks_to_targets;
 pub use folder::{parse_jd_id, parse_note_id};
 pub use link::extract_wiki_links;
 pub use markdown::parse_note;

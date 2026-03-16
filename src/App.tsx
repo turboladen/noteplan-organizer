@@ -7,6 +7,9 @@ import {
   exportAssessmentContext,
   getGitRev,
   isWatching as checkIsWatching,
+  mcpConnect,
+  mcpDisconnect,
+  mcpStatus,
   scanNotes,
   startWatching,
   stopWatching,
@@ -65,6 +68,8 @@ function App() {
   const [watching, setWatching] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [mcpConnected, setMcpConnected] = useState(false);
+  const [mcpConnecting, setMcpConnecting] = useState(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const hasScannedRef = useRef(false);
 
@@ -178,6 +183,13 @@ function App() {
     checkIsWatching().then(setWatching).catch(() => {});
   }, []);
 
+  // Sync MCP connection state on mount
+  useEffect(() => {
+    mcpStatus()
+      .then((s) => setMcpConnected(s.connected))
+      .catch(() => {});
+  }, []);
+
   const handleScan = async () => {
     if (!notePlanPath) return;
     setScanning(true);
@@ -240,6 +252,25 @@ function App() {
       }
     } catch (e) {
       setError(String(e));
+    }
+  };
+
+  const handleToggleMcp = async () => {
+    setMcpConnecting(true);
+    try {
+      if (mcpConnected) {
+        await mcpDisconnect();
+        setMcpConnected(false);
+        showToast("MCP server disconnected");
+      } else {
+        const msg = await mcpConnect();
+        setMcpConnected(true);
+        showToast(msg);
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setMcpConnecting(false);
     }
   };
 
@@ -317,6 +348,18 @@ function App() {
               >
                 {watching && <span className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />}
                 {watching ? "Watching" : "Watch"}
+              </button>
+            )}
+            {report && (
+              <button
+                type="button"
+                onClick={handleToggleMcp}
+                disabled={mcpConnecting}
+                className="hover:text-text-secondary transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                title={mcpConnected ? "Disconnect NotePlan MCP server" : "Connect to NotePlan MCP server for write actions"}
+              >
+                {mcpConnected && <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />}
+                {mcpConnecting ? "Connecting…" : "MCP"}
               </button>
             )}
             <button

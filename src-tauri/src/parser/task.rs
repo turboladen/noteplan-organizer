@@ -59,7 +59,7 @@ pub fn parse_tasks(content: &str) -> Vec<Task> {
                 .collect();
             let mentions: Vec<String> = MENTION_RE
                 .captures_iter(&text)
-                .filter(|c| !c[1].starts_with("done"))
+                .filter(|c| c[1].as_bytes() != b"done" && !c[1].starts_with("done("))
                 .map(|c| c[1].to_string())
                 .collect();
 
