@@ -2,8 +2,7 @@ use crate::analyzer::run_all_analyzers;
 use crate::config;
 use crate::dump;
 use crate::export;
-use crate::models::{ContentBlock, FilingTarget, NoteKind, Report};
-use serde::Serialize;
+use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report};
 use crate::parser::matcher::FilingSuggestion;
 use crate::parser::{
     build_filing_targets, extract_content_blocks, match_blocks_to_targets, scan_noteplan_dir,
@@ -158,16 +157,13 @@ pub fn get_git_rev() -> &'static str {
     env!("GIT_SHORT_REV")
 }
 
-/// Lightweight info about a daily note — enough for the filing assistant selector.
-#[derive(Serialize)]
-pub struct DailyNoteInfo {
-    pub file_path: String,
-    pub date_label: String,
-}
-
 /// List daily notes from the Calendar directory, most recent first.
+/// Validates the path is within the NotePlan data directory.
 #[tauri::command]
 pub fn get_daily_notes(path: String) -> Result<Vec<DailyNoteInfo>, String> {
+    // Validate the base path is a known NotePlan location
+    validate_noteplan_path(&path)?;
+
     let calendar_dir = std::path::Path::new(&path).join("Calendar");
     if !calendar_dir.exists() {
         return Ok(vec![]);

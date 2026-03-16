@@ -123,6 +123,11 @@ export function FilingAssistant({
     setDismissedBlocks((prev) => new Set([...prev, blockIdx]));
   }, []);
 
+  const allDismissed = useMemo(
+    () => blocks.length > 0 && blocks.every((_, i) => dismissedBlocks.has(i)),
+    [blocks, dismissedBlocks],
+  );
+
   return (
     <div className="flex gap-5">
       {/* Daily note selector sidebar */}
@@ -172,7 +177,7 @@ export function FilingAssistant({
           </div>
         )}
 
-        {!loading && blocks.length > 0 && blocks.every((_, i) => dismissedBlocks.has(i)) && (
+        {!loading && allDismissed && (
           <div className="text-center py-12">
             <p className="text-sm text-text-tertiary">
               All blocks filed or dismissed.
@@ -246,17 +251,17 @@ export function FilingAssistant({
                     {/* Tags & links */}
                     {(block.tags.length > 0 || block.wiki_links.length > 0) && (
                       <div className="flex flex-wrap gap-1.5 mt-2">
-                        {block.tags.map((tag) => (
+                        {block.tags.map((tag, i) => (
                           <span
-                            key={tag}
+                            key={`tag-${i}`}
                             className="px-2 py-0.5 rounded-[var(--radius-badge)] border border-border-light text-text-tertiary bg-surface text-[11px]"
                           >
                             #{tag}
                           </span>
                         ))}
-                        {block.wiki_links.map((link) => (
+                        {block.wiki_links.map((link, i) => (
                           <span
-                            key={link}
+                            key={`link-${i}`}
                             className="px-2 py-0.5 rounded-[var(--radius-badge)] border border-blue-200 text-blue-700 bg-blue-50 text-[11px]"
                           >
                             [[{link}]]
