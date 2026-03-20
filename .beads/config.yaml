@@ -53,4 +53,4 @@
 # - github.org
 # - github.repo
 
-sync.git-remote: "origin"
+sync.git-remote: "ssh://git@github.com/turboladen/noteplan-organizer.git"
