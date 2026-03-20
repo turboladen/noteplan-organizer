@@ -2,12 +2,14 @@ use crate::analyzer::run_all_analyzers;
 use crate::config;
 use crate::dump;
 use crate::export;
+use crate::mcp::McpState;
 use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report};
 use crate::parser::matcher::FilingSuggestion;
 use crate::parser::{
     build_filing_targets, extract_content_blocks, match_blocks_to_targets, scan_noteplan_dir,
 };
 use std::path::PathBuf;
+use tauri::State;
 
 /// Validate that a file path is within the NotePlan data directory.
 /// Returns the canonicalized path on success.
@@ -212,6 +214,18 @@ pub fn get_filing_targets(path: String) -> Result<Vec<FilingTarget>, String> {
     }
     let store = scan_noteplan_dir(&path);
     Ok(build_filing_targets(&store))
+}
+
+/// Search for tasks via MCP's noteplan_paragraphs tool.
+/// Returns the raw text response for the frontend to parse and display.
+#[tauri::command]
+pub async fn search_tasks(
+    mcp_state: State<'_, McpState>,
+    query: Option<String>,
+    completed: Option<bool>,
+) -> Result<String, String> {
+    use crate::mcp::tools;
+    tools::search_tasks(&mcp_state, query.as_deref(), completed).await
 }
 
 /// Get filing suggestions for a specific note: extract its content blocks,

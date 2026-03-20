@@ -85,6 +85,20 @@ export async function getFilingSuggestions(
 }
 
 // ---------------------------------------------------------------------------
+// Task triage (MCP-backed)
+// ---------------------------------------------------------------------------
+
+export async function searchTasks(
+  query?: string,
+  completed?: boolean,
+): Promise<string> {
+  return invoke<string>("search_tasks", {
+    query: query ?? null,
+    completed: completed ?? null,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // MCP integration commands
 // ---------------------------------------------------------------------------
 

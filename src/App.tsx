@@ -18,11 +18,12 @@ import {
 } from "./api/commands";
 import { FilingAssistant } from "./components/FilingAssistant";
 import { FindingsList } from "./components/FindingsList";
+import { TaskTriage } from "./components/TaskTriage";
 import { SCAN_UPDATE_EVENT, SYSTEM_ASSESSMENT_CATEGORIES } from "./types/api";
 import type { Finding, FindingCategory, Report, ReportStats, Severity } from "./types/api";
 import { getFindingId } from "./utils/findingId";
 
-type AppTab = "findings" | "assessment" | "filing";
+type AppTab = "findings" | "assessment" | "filing" | "tasks";
 
 const DISMISSED_KEY = "noteplan-organizer:dismissed";
 
@@ -414,7 +415,7 @@ function App() {
           </div>
         )}
 
-        {!report && !scanning && (
+        {!report && !scanning && activeTab !== "tasks" && (
           <div className="text-center py-24 animate-fade-in">
             <h2 className="text-xl font-medium text-text-secondary mb-2">
               Ready to analyze your notes
@@ -434,6 +435,13 @@ function App() {
                   NotePlan data directory not found. Make sure NotePlan is installed.
                 </p>
               )}
+            <button
+              type="button"
+              onClick={() => setActiveTab("tasks")}
+              className="mt-4 text-xs text-accent hover:underline"
+            >
+              Or jump to Task Triage (requires MCP)
+            </button>
           </div>
         )}
 
@@ -493,6 +501,17 @@ function App() {
               >
                 Filing
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("tasks")}
+                className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
+                  activeTab === "tasks"
+                    ? "bg-surface-raised text-text-primary shadow-sm"
+                    : "text-text-tertiary hover:text-text-secondary"
+                }`}
+              >
+                Tasks
+              </button>
             </div>
 
             {activeTab === "findings" && (
@@ -548,7 +567,31 @@ function App() {
                 onToast={showToast}
               />
             )}
+
           </>
+        )}
+
+        {activeTab === "tasks" && !report && (
+          <>
+            <button
+              type="button"
+              onClick={() => setActiveTab("findings")}
+              className="text-xs text-accent hover:underline mb-5"
+            >
+              &larr; Back to scan
+            </button>
+            <TaskTriage
+              mcpConnected={mcpConnected}
+              onToast={showToast}
+            />
+          </>
+        )}
+
+        {activeTab === "tasks" && report && (
+          <TaskTriage
+            mcpConnected={mcpConnected}
+            onToast={showToast}
+          />
         )}
       </main>
     </div>
