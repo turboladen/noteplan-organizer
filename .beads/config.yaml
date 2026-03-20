@@ -54,3 +54,6 @@
 # - github.repo
 
 sync.git-remote: "ssh://git@github.com/turboladen/noteplan-organizer.git"
+
+dolt:
+  port: 53901
