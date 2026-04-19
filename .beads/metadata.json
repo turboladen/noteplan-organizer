@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "noteplan_organizer",
+  "project_id": "a8450fa6-3e1e-453e-986e-ac3abeb55b8c"
+}

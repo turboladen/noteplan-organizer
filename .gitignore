@@ -29,8 +29,7 @@ dist-ssr
 # Dolt database files (added by bd init)
 .dolt/
 *.db
-.beads/metadata.json
-.beads/.beads-credential-key
-.beads/dolt-monitor.pid
-.beads/dolt-server.activity
 
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key

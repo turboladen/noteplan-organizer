@@ -1,14 +1,36 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "PreCompact": [
       {
-        "matcher": "Edit|Write",
         "hooks": [
           {
-            "type": "command",
-            "command": "case \"$CLAUDE_FILE_PATH\" in */capabilities/default.json|*/Cargo.lock|*/bun.lock|*/gen/*) echo 'BLOCKED: This file should not be edited directly.' >&2; exit 1 ;; esac; exit 0"
+            "command": "bd prime",
+            "type": "command"
           }
-        ]
+        ],
+        "matcher": ""
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "case \"$CLAUDE_FILE_PATH\" in */capabilities/default.json|*/Cargo.lock|*/bun.lock|*/gen/*) echo 'BLOCKED: This file should not be edited directly.' \u003e\u00262; exit 1 ;; esac; exit 0",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit|Write"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bd prime",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
       }
     ]
   }
