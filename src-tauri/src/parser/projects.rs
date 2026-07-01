@@ -159,11 +159,15 @@ fn build_project(store: &NoteStore, rank: u32, title: &str, folder: &str) -> Boa
         }
     }
 
-    // Sort: priority desc, then soonest scheduled date, then note path + line.
+    // Sort: priority desc, then dated tasks before undated and soonest first,
+    // then note path + line. `is_none()` sorts `Some` (false) ahead of `None`.
     tasks.sort_by(|a, b| {
         b.priority
             .cmp(&a.priority)
-            .then_with(|| a.scheduled_to.cmp(&b.scheduled_to))
+            .then_with(|| {
+                (a.scheduled_to.is_none(), &a.scheduled_to)
+                    .cmp(&(b.scheduled_to.is_none(), &b.scheduled_to))
+            })
             .then_with(|| a.source_relative_path.cmp(&b.source_relative_path))
             .then_with(|| a.line_number.cmp(&b.line_number))
     });
@@ -197,13 +201,12 @@ pub fn build_project_board(store: &NoteStore) -> ProjectBoard {
     for (name, refs) in &control.contexts {
         let mut projects = Vec::new();
         let mut unresolved = Vec::new();
-        let mut rank = 0u32;
-        for reference in refs {
+        // Rank reflects the reference's position in the control note, so an
+        // unresolved earlier ref does not renumber the projects that follow it.
+        for (i, reference) in refs.iter().enumerate() {
+            let rank = (i + 1) as u32;
             match resolve_folder(store, reference) {
-                Some(folder) => {
-                    rank += 1;
-                    projects.push(build_project(store, rank, reference, &folder));
-                }
+                Some(folder) => projects.push(build_project(store, rank, reference, &folder)),
                 None => unresolved.push(reference.clone()),
             }
         }
@@ -350,5 +353,102 @@ mod tests {
         let board = build_project_board(&store);
         assert_eq!(board.control_note_title, None);
         assert!(board.contexts.is_empty());
+    }
+
+    #[test]
+    fn test_rank_reflects_control_note_ordinal() {
+        // An unresolved first ref must not renumber later resolved projects.
+        let control = parse_note(
+            "/c.md",
+            "Notes/_NotePlan Organizer/P.md",
+            "# P #np-projects\n## Work\n1. [[99 - Typo]]\n2. [[32 - Product Ownership]]\n",
+            NoteKind::Regular,
+        );
+        let note_a = parse_note(
+            "/a.md",
+            "Notes/32 - Product Ownership/32.01 - Janet.md",
+            "# Janet\n* Email Palwasha !\n",
+            NoteKind::Regular,
+        );
+        let store = store_multi(vec![control, note_a]);
+        let board = build_project_board(&store);
+        let ctx = &board.contexts[0];
+        assert_eq!(ctx.unresolved, vec!["99 - Typo"]);
+        assert_eq!(ctx.projects.len(), 1);
+        assert_eq!(ctx.projects[0].rank, 2, "resolved ref keeps its ordinal");
+        assert_eq!(ctx.projects[0].title, "32 - Product Ownership");
+    }
+
+    #[test]
+    fn test_resolve_by_leading_jd_id_when_name_differs() {
+        // Ref carries only the JD id (folder was renamed on disk); the leading-JD
+        // branch of resolve_folder must still match the folder.
+        let control = parse_note(
+            "/c.md",
+            "Notes/_NotePlan Organizer/P.md",
+            "# P #np-projects\n## Work\n1. [[32 - Renamed Later]]\n",
+            NoteKind::Regular,
+        );
+        let note_a = parse_note(
+            "/a.md",
+            "Notes/32 - Product Ownership/32.01 - Janet.md",
+            "# Janet\n* Email Palwasha !\n",
+            NoteKind::Regular,
+        );
+        let store = store_multi(vec![control, note_a]);
+        let board = build_project_board(&store);
+        let ctx = &board.contexts[0];
+        assert!(ctx.unresolved.is_empty(), "JD id 32 matches the folder");
+        assert_eq!(ctx.projects.len(), 1);
+        assert_eq!(
+            ctx.projects[0].folder_relative_path,
+            "Notes/32 - Product Ownership"
+        );
+        assert_eq!(ctx.projects[0].open_count, 1);
+    }
+
+    #[test]
+    fn test_scheduled_task_rolls_up() {
+        let control = parse_note(
+            "/c.md",
+            "Notes/_NotePlan Organizer/P.md",
+            "# P #np-projects\n## Work\n1. [[32 - Product Ownership]]\n",
+            NoteKind::Regular,
+        );
+        let note_a = parse_note(
+            "/a.md",
+            "Notes/32 - Product Ownership/32.01 - Janet.md",
+            "# Janet\n* [>] Foo >2026-08-01\n",
+            NoteKind::Regular,
+        );
+        let store = store_multi(vec![control, note_a]);
+        let board = build_project_board(&store);
+        let proj = &board.contexts[0].projects[0];
+        assert_eq!(proj.open_count, 1, "scheduled task counted in rollup");
+        assert!(matches!(proj.tasks[0].state, TaskState::Scheduled));
+        assert_eq!(proj.tasks[0].scheduled_to.as_deref(), Some("2026-08-01"));
+    }
+
+    #[test]
+    fn test_multiple_control_notes_warn_and_pick_sorted_first() {
+        // Two notes carry the tag; the one sorting first by relative path wins.
+        let first = parse_note(
+            "/a.md",
+            "Notes/_NotePlan Organizer/A Priorities.md",
+            "# Alpha #np-projects\n## Work\n1. [[32 - Product Ownership]]\n",
+            NoteKind::Regular,
+        );
+        let second = parse_note(
+            "/b.md",
+            "Notes/_NotePlan Organizer/B Priorities.md",
+            "# Bravo #np-projects\n## Home\n1. [[42 - House Reno]]\n",
+            NoteKind::Regular,
+        );
+        // Insert in reverse order to prove the sort — not insertion order — decides.
+        let store = store_multi(vec![second, first]);
+        let board = build_project_board(&store);
+        assert_eq!(board.control_note_title.as_deref(), Some("Alpha"));
+        assert!(!board.warnings.is_empty(), "conflict is surfaced as a warning");
+        assert_eq!(board.contexts[0].name, "Work");
     }
 }
