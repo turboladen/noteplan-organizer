@@ -12,9 +12,26 @@ export function ProjectBoard({ basePath }: { basePath: string }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    // `cancelled` drops the result of a superseded load so a slow prior fetch
+    // can't overwrite a newer one. On settle we reset the sibling state (error
+    // vs board) and the active context, so a stale error or out-of-range
+    // context tab from a previous basePath can't leak into the new board.
+    let cancelled = false;
     getProjectBoard(basePath)
-      .then(setBoard)
-      .catch((e) => setError(String(e)));
+      .then((b) => {
+        if (cancelled) return;
+        setBoard(b);
+        setError(null);
+        setActiveContext(0);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setBoard(null);
+        setError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [basePath]);
 
   const context = board?.contexts[activeContext];
