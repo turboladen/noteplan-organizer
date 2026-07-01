@@ -71,6 +71,43 @@ export interface Task {
   scheduled_to: string | null;
   tags: string[];
   mentions: string[];
+  /** Native NotePlan priority: 0 (none), 1 (!), 2 (!!), 3 (!!!) */
+  priority: number;
+  /** NotePlan block/line ID (^abc123) if present */
+  block_id: string | null;
+}
+
+export interface BoardTask {
+  text: string;
+  priority: number;
+  state: TaskState;
+  source_note_title: string;
+  source_relative_path: string;
+  line_number: number;
+  scheduled_to: string | null;
+  block_id: string | null;
+}
+
+export interface BoardProject {
+  rank: number;
+  title: string;
+  folder_relative_path: string;
+  tasks: BoardTask[];
+  open_count: number;
+  /** [none, !, !!, !!!] */
+  priority_counts: [number, number, number, number];
+}
+
+export interface BoardContext {
+  name: string;
+  projects: BoardProject[];
+  unresolved: string[];
+}
+
+export interface ProjectBoard {
+  contexts: BoardContext[];
+  control_note_title: string | null;
+  warnings: string[];
 }
 
 export interface WikiLink {

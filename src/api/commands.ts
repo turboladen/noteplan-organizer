@@ -5,6 +5,7 @@ import type {
   FilingSuggestion,
   FilingTarget,
   McpStatus,
+  ProjectBoard,
   Report,
 } from "../types/api";
 
@@ -82,6 +83,14 @@ export async function getFilingSuggestions(
     base_path: basePath,
     note_path: notePath,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Priority board (read-only)
+// ---------------------------------------------------------------------------
+
+export async function getProjectBoard(path: string): Promise<ProjectBoard> {
+  return invoke<ProjectBoard>("get_project_board", { path });
 }
 
 // ---------------------------------------------------------------------------
