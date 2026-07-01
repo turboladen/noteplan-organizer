@@ -14,7 +14,7 @@ pub use folder::{parse_jd_id, parse_note_id};
 pub use link::extract_wiki_links;
 pub use markdown::parse_note;
 pub use matcher::match_blocks_to_targets;
-pub use projects::{parse_project_control, ProjectControl};
+pub use projects::{build_project_board, parse_project_control, ProjectControl};
 pub use task::parse_tasks;
 
 /// Folders whose notes are excluded from analysis and task rollups:
