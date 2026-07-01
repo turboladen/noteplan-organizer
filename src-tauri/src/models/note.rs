@@ -43,6 +43,10 @@ pub struct Task {
     pub scheduled_to: Option<String>,
     pub tags: Vec<String>,
     pub mentions: Vec<String>,
+    /// Native NotePlan priority: 0 (none), 1 (`!`), 2 (`!!`), 3 (`!!!`).
+    pub priority: u8,
+    /// NotePlan block/line ID (`^abc123`) if present — stable task identity.
+    pub block_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
