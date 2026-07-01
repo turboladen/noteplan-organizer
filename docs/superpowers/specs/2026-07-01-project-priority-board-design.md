@@ -60,7 +60,17 @@ Two kinds of new state, with very different natures:
 
 ### Control notes (two)
 
-Both are located by a **marker tag** so they can live anywhere and can't collide on title.
+**Home folder.** All app-owned notes (`#np-projects`, `#np-backlog`, and any future
+Organizer meta-notes) live under a dedicated folder **`_NotePlan Organizer/`**. The leading
+underscore sorts it to the top and signals "not a regular folder" (an `@`-prefix is avoided —
+NotePlan reserves those for system folders). This folder is **excluded from all task rollups
+and from analysis** (added to the existing exclusion set alongside `@Trash`, `@Archive`,
+`@Templates`, `_attachments`) so the app's own notes never masquerade as project tasks or
+findings.
+
+Both control notes are located by a **marker tag** (robust to being moved/renamed), but
+`_NotePlan Organizer/` is their expected home. If the folder/notes don't exist yet, the app
+offers to create them (an additive write — creating notes, never deleting).
 
 **Project control note** (`#np-projects`) — ranks projects, defines contexts:
 
@@ -123,7 +133,8 @@ not count; `!!!!`+ clamps to 3.
 
 - **Board rollup:** per project, all open/scheduled tasks in all notes recursively under
   the project folder, excluding done/cancelled and excluded folders (`@Trash`, `@Archive`,
-  `@Templates`, `_attachments`). Sorted `!!! → !! → ! → none`, then soonest `>date`.
+  `@Templates`, `_attachments`, `_NotePlan Organizer`). Sorted `!!! → !! → ! → none`, then
+  soonest `>date`.
 - **Backlog (per context):** a **Ranked** list (order from `#np-backlog`) plus an
   **Unranked pool** = all open tasks in that context's projects not already ranked. Ranked
   order is *manual only* — `!` shows as a badge but does not affect ordering.
@@ -231,7 +242,7 @@ writes are precisely targeted and verifiable.
 
 | Situation | Behavior |
 |---|---|
-| No `#np-projects` / `#np-backlog` note | Friendly empty state with a "create this note" snippet |
+| No `#np-projects` / `#np-backlog` note | Friendly empty state offering to create it under `_NotePlan Organizer/` (additive write), or a copy-paste snippet |
 | Multiple notes with a marker tag | Use first by sorted path + warning banner |
 | Project `[[link]]` resolves to no folder | `⚠ unresolved` row under its context |
 | Backlog `^id` no longer found on any task (task deleted) | Entry shown as "stale — remove?"; offer one-click cleanup of the backlog note (backlog-note-only edit) |
