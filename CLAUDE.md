@@ -72,6 +72,23 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
 
 ## Critical Gotchas
 
+**⚠️ DATA SAFETY IS PARAMOUNT (applies to ALL work on this app).** This app has, in the past,
+caused NotePlan notes to be deleted without the user's knowledge (found later in the Trash).
+Destroying or losing user data is the single worst outcome — worse than any missing feature or
+bug. For any code that touches NotePlan files, enforce these non-negotiables:
+- **Prefer append/insert over replace; never delete or move a content note.** Do not call
+  destructive MCP tools (`delete_line`, `move_note`, etc.) on user content notes.
+- **Verify-before-write.** Line numbers go stale between scans. Before mutating a line, re-fetch
+  the note via MCP and confirm the target line still matches the expected content; if it doesn't
+  match (or matches ambiguously), **abort and surface the mismatch** — never write to a line
+  number blind. Wrong-line writes are the exact mechanism of silent data loss.
+- **Make writes idempotent and logged** (before/after via the `log` plugin) so any change is
+  auditable.
+- **Test write paths against a mock MCP** that asserts no destructive tool is invoked and that
+  verify-before-write precedes every mutation.
+See `docs/superpowers/specs/2026-07-01-project-priority-board-design.md` §"Data Safety" for the
+worked example.
+
 **NotePlan does NOT rename files on disk when you change a note's title.** The content title (first
 `# heading`) is the source of truth. Never use filenames for display or matching logic. The `Note`
 struct has parallel field pairs: `jd_id`/`note_id_kind` (from filename, may be stale) and

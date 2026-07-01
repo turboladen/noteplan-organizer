@@ -1,59 +1,71 @@
-# Project Priority Board — Design
+# Project & Task Priority Board — Design
 
 **Date:** 2026-07-01
 **Status:** Approved design, ready for implementation plan
-**Scope:** A new read-only "Priorities" tab in NotePlan Organizer that rolls up tasks
-across multi-note projects, ranks projects, and slices by context — with all state
-living in NotePlan so it syncs across machines.
+**Scope:** A new "Priorities" tab in NotePlan Organizer with two toggleable views —
+a read-only **Board** (projects ranked, tasks rolled up and grouped by native `!`
+priority) and a drag-to-reorder **Backlog** (a per-context, manually-ranked task
+queue). All state lives in NotePlan so it syncs across machines. The Backlog is the
+app's first feature that writes to NotePlan; it does so under strict data-safety
+invariants (see **Data Safety**).
 
 ---
 
 ## Problem
 
-NotePlan lets tasks live in any note, which is flexible but leaves three gaps:
+NotePlan lets tasks live in any note, which is flexible but leaves four gaps:
 
-1. **No cross-note project rollup.** A project spans several notes (e.g. JD `32.01`,
-   `32.02`, …), each with its own tasks. NotePlan's folder Kanban shows one folder at a
-   time and requires manual per-folder column setup — a deterrent — and can't show tasks
-   across projects.
-2. **No project-level prioritization.** There is no way to say "project #3 matters more
-   than project #7" and see that ranking at a glance.
-3. **Weak context switching for the above.** The Dashboard plugin slices tasks by
-   hashtag perspective (work/home), but doesn't provide the project ranking or rollup.
+1. **No cross-note project rollup.** A project spans several notes (JD `32.01`, `32.02`,
+   …), each with tasks. NotePlan's folder Kanban shows one folder at a time with manual
+   per-folder columns, and can't show tasks across projects.
+2. **No project-level prioritization.** No way to say "project #3 matters more than #7"
+   and see that ranking at a glance.
+3. **No manual task ranking (the primary ask).** NotePlan's `!` markers give 4 coarse
+   priority *buckets*, not a total ordering. There is no way to hand-rank a backlog and
+   work it top-to-bottom, Jira-style, across projects.
+4. **Weak context switching for the above.** The Dashboard plugin slices by hashtag but
+   provides neither project ranking/rollup nor a manually-ranked backlog.
 
-The desired mental model is Jira-like: **Epic → tasks**, where the Epic (project) carries
-a rank and rolls up its tasks, and the whole thing is filterable by context.
+Mental model: Jira-like. Projects are Epics with a rank; each context has a **ranked
+backlog** you drag into order and chip away at top-down.
 
 ## What is already built-in (and deliberately reused)
 
-- **Task-level priority is native.** NotePlan supports `!`, `!!`, `!!!` markers and the
-  Dashboard plugin already sorts by them. We standardize on these markers rather than
-  inventing a custom task-priority scheme.
-- **Context switching is native** via Dashboard perspectives / hashtags.
+- **Task-level priority (`!`/`!!`/`!!!`) is native** — used for the Board's grouping. We
+  don't invent a custom priority scheme.
+- **Block references (`^blockId`) are NotePlan's native stable-task-identity primitive** —
+  used to anchor backlog rank to a task that survives text edits and line moves. We don't
+  invent a custom task-ID scheme.
+- **Context switching** is conceptually native (perspectives/hashtags); here it's driven
+  by the project→context mapping.
 
-The genuinely missing piece — and this design's entire value-add — is the **project
-layer**: ranking projects and rolling their tasks into one context-filterable board.
-Task priority stays native; only the *project ranking* needs a new home in NotePlan.
+The genuinely missing pieces are the **project ranking layer** and the **manual task
+ranking layer**. Priority and identity reuse NotePlan primitives; only the two *orderings*
+(project rank, task rank) are new state.
 
 ## Key insight
 
-The only new state this feature introduces is a small amount of project-ranking metadata
-(order + context). Task priority already persists in NotePlan as native `!` markers
-(synced via iCloud). So there is no database and no backend store to build — just one
-hand-editable control note read from disk.
+Two kinds of new state, with very different natures:
+
+- **Project rank** and **task rank** are *relational orderings* with no native NotePlan
+  home. We store each as list-order in a single hand-editable/app-editable **control note**
+  (`#np-projects`, `#np-backlog`). List order = rank; no numbers to keep in sync.
+- **Task identity** for the backlog is *not* invented — it reuses NotePlan block IDs. The
+  only content-note mutation the whole feature performs is *appending* a `^blockId` token
+  to a task line the first time it is ranked (an additive, non-destructive augmentation).
 
 ---
 
 ## Data model & semantics
 
-### Control note
+### Control notes (two)
 
-A single NotePlan note is the source of truth for project ranking and context. It is
-identified by a **marker tag** (default `#np-projects`) so it can live anywhere in the
-vault and can't collide on title.
+Both are located by a **marker tag** so they can live anywhere and can't collide on title.
+
+**Project control note** (`#np-projects`) — ranks projects, defines contexts:
 
 ```markdown
-# Project Priorities        (this note carries the tag #np-projects)
+# Project Priorities        (tag: #np-projects)
 
 ## Work
 1. [[32 - Product Ownership]]
@@ -61,127 +73,157 @@ vault and can't collide on title.
 
 ## Home
 1. [[42 - House Reno]]
-2. [[45 - Taxes]]
 ```
 
-- **Context tabs are derived, not hardcoded.** Every `##` heading becomes a context tab.
-  Adding `## Side Projects` produces a third tab with no code change.
-- **Rank = list order** under each heading (top item = P1). No priority numbers to keep
-  in sync.
-- **List style:** both numbered (`1.`) and bulleted (`-`/`*`) items are accepted; order
-  is as-written. **Numbered is recommended** — `1.` lines are not parsed as tasks, so the
-  control note never pollutes a task rollup even if it lives inside a project folder.
-- Each list item's project reference is the `[[wikilink]]` text if present, else the
-  trimmed line text. Non-list prose lines under a heading are ignored.
+**Backlog control note** (`#np-backlog`) — ranks tasks, per context:
 
-### Project resolution
+```markdown
+# Backlog                   (tag: #np-backlog)
 
-Each project reference resolves to a **JD category folder** by matching the folder name
-(case-insensitive) or its leading JD id (`32`). The app already indexes folders and JD
-ids, so this is a lookup. A reference that resolves to nothing is surfaced in the board
-as a `⚠ unresolved: "<text>"` row under its context — never silently dropped.
+## Work
+1. [[32.01 Janet^a1b2]]      Ship v2 spec
+2. [[35.03 Migrate^c3d4]]    Fix migration script
 
-### Task rollup
+## Home
+1. [[42 Reno^g7h8]]          Call contractor
+```
 
-For each resolved project, roll up every **open or scheduled** task in **all notes
-recursively under the project folder**, excluding:
+- **Context tabs are derived** from `##` headings; the two notes share the same context
+  names (Work/Home/…). Adding a heading adds a tab, no code change.
+- **Rank = list order** (top = rank 1). Both notes use numbered lists (recommended:
+  numbered lines are never parsed as tasks, so a control note never pollutes a rollup).
+- Each backlog entry is a `[[Note^blockId]]` block-reference link; the trailing text after
+  it is a human-readable snapshot for eyeballing in NotePlan (not authoritative — the
+  block ID is).
 
-- done / cancelled tasks
-- notes in `@Trash`, `@Archive`, `@Templates`, `_attachments` (existing exclusions)
+### Task identity (block IDs)
 
-Each task retains its **source note title and line number** (for display "where to fix
-it", and for the future write-back seam).
+- A block ID is a `^` + 6-char `[a-z0-9]` token appended at the end of a task line.
+- Generated by the app, **collision-checked** against all block IDs already present in the
+  vault before use.
+- Parsing: the task parser recognizes a trailing `^id` token, records it on the `Task`
+  (`block_id: Option<String>`), and strips it from display text.
+- Identity join: a backlog entry `[[Note^id]]` resolves to the live task whose source note
+  matches and whose line carries `^id`. Survives task text edits and line moves.
 
-### Context, ranking & sorting
+### Context model (shared)
 
-- **Context** of a project = the control-note heading it appears under. Task-level
-  hashtags are *not* used for context in v1 (that's the Dashboard's model; this feature
-  is project-based).
-- **Project order** within a context = control-note list order.
-- **Task order within a project:** `!!! → !! → ! → none`, then soonest `>date` first,
-  then source note/line for stable ordering.
-- **Unranked group:** projects present in a context's area but absent from the control
-  note appear under an "Unranked" group at the bottom of that context — visible but
-  clearly deprioritized. (Determining a context's "area" for unranked discovery: the
-  top-level area folder(s) that the context's ranked projects belong to.)
+A task's **context = the context of its project** (task's note → owning JD project folder
+→ that project's `##` heading in `#np-projects`). Tasks whose folder maps to no listed
+project have no context and do not appear in the Backlog pool (consistent with the Board).
+One context model, not two.
+
+### Priority parsing
+
+Extend `parser/task.rs`; add `priority: u8` (0–3) to `Task`. Parse a whitespace-bounded
+`!`/`!!`/`!!!` token, strip from display text. `!` attached to a word ("Ship it!") does
+not count; `!!!!`+ clamps to 3.
+
+### Rollup / pool
+
+- **Board rollup:** per project, all open/scheduled tasks in all notes recursively under
+  the project folder, excluding done/cancelled and excluded folders (`@Trash`, `@Archive`,
+  `@Templates`, `_attachments`). Sorted `!!! → !! → ! → none`, then soonest `>date`.
+- **Backlog (per context):** a **Ranked** list (order from `#np-backlog`) plus an
+  **Unranked pool** = all open tasks in that context's projects not already ranked. Ranked
+  order is *manual only* — `!` shows as a badge but does not affect ordering.
+
+---
+
+## The two views
+
+Both live under a single "Priorities" tab with a Board/Backlog toggle; contexts are tabs
+within each.
+
+### Board (read-only)
+
+Projects listed top-down by rank within a context; each row shows open count + a `!!!×N`
+badge; expand to reveal nested tasks sorted by `!`. Clicking a task's source note opens it
+in NotePlan. Unresolved project links and unranked projects surface as their own rows/
+group. No writes.
+
+### Backlog (drag-to-reorder — writes)
+
+Per context: a **Ranked** zone (top) over an **Unranked pool** (below). Drag pool→ranked
+to add a task; drag within ranked to reorder; drag out to remove. Ranking/reordering
+writes to NotePlan via MCP (see Data Safety + Write path). Reading the ranked order is a
+pure file read and works offline on any machine; only *reordering* needs NotePlan + MCP
+live. When MCP is not connected, the Backlog is read-only and drag is disabled with a
+"connect NotePlan to reorder" hint.
+
+---
+
+## Data Safety (hard constraints — non-negotiable)
+
+Context: this app has, in the past, resulted in notes ending up in the Trash without the
+user's knowledge. Destroying or losing user data is the single worst outcome. These
+invariants bind **this feature specifically**; the project-wide policy lives in CLAUDE.md.
+
+1. **Content notes are append-only for this feature.** The *only* mutation performed on a
+   user's content note is appending a `^blockId` token to the end of an existing task
+   line. The feature never deletes a content-note line, never removes text, never reorders
+   content-note lines, and never moves/renames/deletes a content note.
+2. **No `delete_line` / `move_note` / destructive MCP calls on content notes** anywhere in
+   this feature. Destructive-capable MCP tools are simply not called.
+3. **Verify-before-write.** Before appending a block ID, the app re-fetches the target
+   note via MCP and confirms the target line still exactly equals the expected task text
+   (from the last scan, modulo an existing block ID). If it does not match — or matches
+   ambiguously — the write is **aborted** and surfaced to the user ("note changed since
+   last scan; rescan and retry"). The app never writes to a line number without
+   re-confirming its content. (Line numbers go stale; this is the exact failure mode that
+   causes wrong-line corruption.)
+4. **Idempotent block IDs.** If a task already carries a block ID, reuse it; never stamp a
+   second one.
+5. **The only note the app rewrites structurally is its own backlog control note**
+   (`#np-backlog`), and even there it prefers targeted insert/replace of specific lines
+   over rewriting the whole note. Removing a task from the backlog edits only this note; it
+   never touches the source task (an orphaned `^id` left behind is harmless).
+6. **Every write is logged** (what note, what line, before/after) via the existing `log`
+   plugin, so any unexpected change is auditable after the fact.
+7. **Dry-run in tests.** Write orchestration is unit-tested against a mock MCP that asserts
+   no destructive tool is ever invoked and that verify-before-write precedes every mutation.
 
 ---
 
 ## Architecture & components
 
-This is a **new top-level tab, not an analyzer/Finding.** The existing `Finding`/
-`Analyzer` pipeline models "a problem with a note"; a prioritized board is a live
-projection of the vault and needs its own data path.
+New top-level tab, **not** an analyzer/Finding.
 
 ### Backend (Rust)
 
-1. **Priority parsing** — extend `parser/task.rs`; add `priority: u8` (0–3) to the `Task`
-   struct (`models/note.rs`). Parse a whitespace-bounded `!`/`!!`/`!!!` token, strip it
-   from display text. `!` attached to a word ("Ship it!") does not count. `!!!!`+ clamps
-   to 3. (Closes a real gap — priority is invisible to the model today.)
-2. **Project-index builder** — a new module `parser/projects.rs` that:
-   - locates the control note by marker tag (first by sorted path if multiple; warn),
-   - parses heading → ordered project references,
-   - resolves references to folders,
-   - rolls up tasks,
-   - returns a `ProjectBoard`.
-3. **One new Tauri command** — `get_project_board()` serializing `ProjectBoard`.
-   Read-only, **no MCP required** — a pure file read that works on any machine.
-
-Proposed serialized shape (names may be refined in the plan):
-
-```rust
-struct ProjectBoard {
-    contexts: Vec<Context>,
-    control_note_title: Option<String>,   // None => empty state
-    warnings: Vec<String>,                 // e.g. multiple control notes
-}
-struct Context {
-    name: String,                          // heading text
-    projects: Vec<Project>,
-    unranked: Vec<Project>,
-    unresolved: Vec<String>,               // reference texts that matched no folder
-}
-struct Project {
-    rank: Option<u32>,                     // None for unranked
-    title: String,
-    folder_relative_path: String,
-    tasks: Vec<BoardTask>,
-    open_count: usize,
-    priority_counts: [usize; 4],           // [none, !, !!, !!!]
-}
-struct BoardTask {
-    text: String,                          // priority marker stripped
-    priority: u8,                          // 0-3
-    state: TaskState,
-    source_note_title: String,
-    source_relative_path: String,
-    line_number: usize,
-    scheduled_to: Option<String>,
-}
-```
+1. **Task parsing** (`parser/task.rs`, `models/note.rs`): add `priority: u8` and
+   `block_id: Option<String>`; parse + strip both tokens.
+2. **`parser/projects.rs`** — locate `#np-projects`, parse heading→ordered links, resolve
+   to folders, roll up tasks → `ProjectBoard` (read-only).
+3. **`parser/backlog.rs`** — locate `#np-backlog`, parse heading→ordered block-refs,
+   resolve via block IDs, compute Ranked + Unranked pool per context → `Backlog`.
+4. **Read commands:** `get_project_board()`, `get_backlog()` — pure file reads, no MCP.
+5. **Write commands (MCP-backed, safety-gated):**
+   - `backlog_rank_task(note_title, line, expected_text, context, position)` — verify line,
+     stamp block ID if absent (append-only), insert the block-ref into `#np-backlog` at
+     position.
+   - `backlog_reorder(context, ordered_block_ids)` — rewrite only the affected lines of the
+     `#np-backlog` section.
+   - `backlog_remove(context, block_id)` — remove the entry from `#np-backlog` only.
+   - All route through `McpState`, call only non-destructive tools
+     (`get_note`, `noteplan_edit_content` insert/replace/append), and follow Data Safety.
 
 ### Frontend (React)
 
-4. **New "Priorities" tab** in `App.tsx` alongside Findings/Assessment.
-5. **New `ProjectBoard.tsx` component** — context tabs; ranked project rows collapsed by
-   default, each showing open count and a `!!!×N` badge; expand to reveal nested tasks.
-   Clicking a task's source note opens it in NotePlan (reuse `utils/noteplanUrl.ts` and
-   the existing card-UX convention: file/note click = open in NotePlan). This is a *new*
-   component, not `FindingsList` — the data is a tree, not a flat finding list.
-6. **Type sync** — add matching TypeScript types to `types/api.ts` (manual, per the
-   no-codegen convention).
+6. **New "Priorities" tab** in `App.tsx` with a **Board/Backlog toggle** and context tabs.
+7. **`ProjectBoard.tsx`** — the read-only board (ranked projects, nested tasks). New
+   component, not `FindingsList` (tree, not flat list).
+8. **`Backlog.tsx`** — Ranked zone + Unranked pool with drag-and-drop; optimistic reorder
+   with rollback if the write command reports an aborted/failed write. Drag disabled when
+   MCP disconnected.
+9. **Type sync** — add matching TS types to `types/api.ts` (manual; no codegen).
 
-### Persistence / write-back seam (deferred)
+### Persistence / write path
 
-v1 writes nothing. Later in-app editing flows through the existing `FixAction` →
-`mcp_call_tool` plumbing:
-
-- reorder projects = rewrite the control-note lines (`replace`/`insert`/`delete`),
-- bump a task's priority = `replace_line` on the task.
-
-The read model already keeps `line_number` + source note title on every task and every
-control-note entry, so those edits are line-addressable without rework.
+Writes go through new Rust commands that orchestrate MCP `McpState` calls server-side (not
+the generic `FixAction` path, since ranking is multi-step and safety-gated). Read model
+keeps `block_id`, source note title, and line number on every task and backlog entry so
+writes are precisely targeted and verifiable.
 
 ---
 
@@ -189,38 +231,43 @@ control-note entry, so those edits are line-addressable without rework.
 
 | Situation | Behavior |
 |---|---|
-| No note carries the marker tag | Friendly empty state with a 3-line "create your control note" snippet — not an error |
-| Multiple notes carry the marker tag | Use first by sorted path (deterministic) + warning banner naming duplicates |
-| `[[link]]` resolves to no folder | `⚠ unresolved: "<text>"` row under its context — never silently dropped |
-| Project folder has 0 open tasks | Still shown ("0 open ✓"): ranking is visible regardless of task count |
-| Same folder listed twice in one context | Dedupe, keep first occurrence |
-| Numbered vs bulleted control-note list | Both accepted; order as-written; numbered recommended (never parsed as tasks) |
-| `!` attached to a word ("Ship it!") | Not counted — regex requires a whitespace-bounded `!`-run |
-| `!!!!` (4+) | Clamped to 3 |
-| Scheduled (`[>]`) / `>date` tasks | Included as active; done/cancelled excluded |
-| Control note edited on another machine | Re-read on scan/refresh (iCloud-synced file) |
+| No `#np-projects` / `#np-backlog` note | Friendly empty state with a "create this note" snippet |
+| Multiple notes with a marker tag | Use first by sorted path + warning banner |
+| Project `[[link]]` resolves to no folder | `⚠ unresolved` row under its context |
+| Backlog `^id` no longer found on any task (task deleted) | Entry shown as "stale — remove?"; offer one-click cleanup of the backlog note (backlog-note-only edit) |
+| Ranked task completed in NotePlan | Drops from active Ranked list; offered for backlog cleanup |
+| Project folder with 0 open tasks | Still shown ("0 open ✓") — ranking visible regardless |
+| Same task ranked twice in backlog note | Dedupe on read, keep first + warn |
+| Task text edited after ranking | Rank preserved via block ID; snapshot text in backlog note may drift (cosmetic) |
+| `!` attached to a word / `!!!!` | Not counted / clamped to 3 |
+| MCP disconnected during a drag | Reorder disabled; ranked list still readable; hint shown |
+| Target line changed since last scan | Write aborted + surfaced (Data Safety #3); no wrong-line write |
+| Two machines reorder concurrently | Last write wins on the single backlog note (acceptable for personal use) |
 
 ---
 
 ## Testing
 
-- **Rust unit tests** (logic lives here):
-  - priority parsing: each level, mid-word rejection, clamp
-  - control-note parsing: headings → ordered references, ignores prose, numbered + bulleted
-  - link → folder resolution: name match, JD-id match, unresolved
-  - rollup: recursion, folder exclusions, sort order
-  - missing / empty control note
-- **Type sync:** `bunx tsc --noEmit` clean after adding TS types.
-- **Manual:** `cargo tauri dev`, open the Priorities tab against the real vault.
+- **Rust unit tests:**
+  - priority parsing (levels, mid-word rejection, clamp); block-ID parsing/strip
+  - `#np-projects` parsing + link→folder resolution (name, JD-id, unresolved)
+  - `#np-backlog` parsing + block-ID resolution; Ranked/pool computation; context bucketing
+  - rollup recursion, exclusions, sort order; missing/empty control notes
+  - **write orchestration against a mock MCP:** verify-before-write precedes every mutation;
+    aborts on line-content mismatch; never invokes a destructive tool; block-ID idempotency;
+    block-ID collision avoidance
+- **Type sync:** `bunx tsc --noEmit` clean.
+- **Manual:** `cargo tauri dev` against the real vault; confirm a reorder writes exactly the
+  expected lines (inspect the diff of the affected notes) before trusting it broadly.
 
 ---
 
 ## Out of scope for v1 (YAGNI)
 
-- In-app editing / write-back (clean seam left)
-- Flat "next-actions" priority queue mode (a second view toggle)
-- Progress / velocity stats (done-count, burndown)
-- Composite project-rank × task-priority scoring
-- Drag-to-reorder
+- In-app editing of project rank (the `#np-projects` note stays hand-edited for now)
+- Completing/editing task text from the app
+- Flat cross-context (global) backlog
+- Progress/velocity stats, burndown
+- Composite auto-scoring; the Board's `!` sort and the Backlog's manual rank stay separate
 
 Each has a clean seam to add later.
