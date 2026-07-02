@@ -5,6 +5,13 @@ testing MCP servers directly. Use it to poke the **NotePlan MCP server**
 (`@noteplanco/noteplan-mcp`) by hand — the same server this app spawns — so you can see
 exactly what its tools return and do, independent of our code.
 
+> **noteplan-organizer is an MCP _client_, not a server.** It spawns and calls NotePlan's MCP
+> server; it does **not** expose an MCP server of its own. So there is no "organizer MCP server"
+> for the Inspector to connect to — the Inspector is only ever pointed at the upstream
+> **NotePlan** server. To observe or debug what *our* app sends to NotePlan (our client-side MCP
+> calls and write path), watch the app's logs — see
+> [Watching the organizer's own MCP calls](#watching-the-organizers-own-mcp-calls-our-side).
+
 ## What this tests — and what it doesn't
 
 | | MCP Inspector | The app (`cargo tauri dev`) |
@@ -25,8 +32,8 @@ These tools mutate your **real vault** — there is no sandbox. Before using any
 - **Never** call `noteplan_manage_note` (`move`/`rename`) or a `delete`-style action on real
   content. The app itself never calls these on content notes — don't do by hand what the app
   is forbidden to do.
-- If in doubt, only use read actions (`get`/`list`/`search`) plus `replace`/`append` on the
-  scratch note.
+- If in doubt, only use read tools (`noteplan_get_notes`, `noteplan_search`) plus
+  `noteplan_edit_content` `edit_line`/`append` on the scratch note.
 
 ## Launch
 
@@ -97,6 +104,31 @@ The Inspector can't prove *our orchestration* is safe. That requires the running
 
 If step 2 ever shows anything other than a single appended `^id`, stop — that's the one
 invariant that must be perfect.
+
+## Watching the organizer's own MCP calls (our side)
+
+The Inspector shows NotePlan's tools; to see what **our app** actually sends (the client side),
+watch its logs. The write executor (`apply_ops` in `src-tauri/src/commands.rs`) logs **every**
+write op via the `log` crate — the note, line, scope (`content-note (append-only)` vs
+`backlog-note`), and text — so a live run is fully auditable.
+
+- Run the app from a terminal: `cargo tauri dev`. In debug builds logging is at **Info** level
+  (`src-tauri/src/lib.rs`), and `tauri_plugin_log` prints to that terminal (and the webview
+  console).
+- Filter to the backlog write path:
+
+  ```bash
+  cargo tauri dev 2>&1 | grep -i "backlog:"
+  ```
+
+- Then Rank / reorder / remove in the app and read the logged ops. For a single Rank you should
+  see exactly one `content-note (append-only)` op (the `^id` stamp) plus one `backlog-note`
+  insert — nothing else touching a content note. This is the client-side counterpart to the
+  on-disk check in the authoritative test above.
+
+If a write is rejected by the server, the wrapper parses the response's `success` field and the
+op surfaces as an **error** (the app aborts rather than assuming success) — you'll see that in the
+same log stream.
 
 ## References
 
