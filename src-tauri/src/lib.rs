@@ -1,4 +1,5 @@
 pub mod analyzer;
+mod app_state;
 mod backlog_write;
 mod commands;
 pub mod config;
@@ -9,6 +10,7 @@ pub mod models;
 pub mod parser;
 mod watcher;
 
+use app_state::{NoteStoreCache, WriteSuppression};
 use mcp::McpState;
 use watcher::WatcherState;
 
@@ -18,6 +20,8 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(WatcherState::new())
         .manage(McpState::new())
+        .manage(NoteStoreCache::default())
+        .manage(WriteSuppression::new())
         .setup(|app| {
             // Enable logging in both debug and release builds.
             // Debug: Info level (verbose, for development).

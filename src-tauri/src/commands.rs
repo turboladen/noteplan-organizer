@@ -1,4 +1,5 @@
 use crate::analyzer::run_all_analyzers;
+use crate::app_state::{NoteStoreCache, WriteSuppression};
 use crate::backlog_write::{
     locate_unique_task_line, plan_append_entry, plan_remove, plan_reorder, plan_stamp_block_id,
     WriteOp,
@@ -13,9 +14,10 @@ use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report}
 use crate::parser::matcher::FilingSuggestion;
 use crate::parser::{
     build_backlog, build_filing_targets, build_project_board, extract_content_blocks,
-    match_blocks_to_targets, scan_noteplan_dir,
+    match_blocks_to_targets, parse_note, scan_noteplan_dir, NoteStore,
 };
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use tauri::State;
 
 /// Validate that a file path is within the NotePlan data directory.
@@ -50,7 +52,8 @@ pub fn detect_noteplan_path() -> Result<String, String> {
 }
 
 /// Core scan logic shared by the manual scan command and the file watcher.
-pub fn perform_scan(path: &str) -> Result<Report, String> {
+/// Also refreshes the read cache with the freshly-parsed store.
+pub fn perform_scan(path: &str, cache: &NoteStoreCache) -> Result<Report, String> {
     if !std::path::Path::new(path).exists() {
         return Err(format!("Path does not exist: {}", path));
     }
@@ -75,18 +78,21 @@ pub fn perform_scan(path: &str) -> Result<Report, String> {
 
     let findings = run_all_analyzers(&store);
 
-    Ok(Report::new(
+    let report = Report::new(
         findings,
         total_notes,
         total_daily,
         total_weekly,
         path.to_string(),
-    ))
+    );
+    // Populate the read cache so board/backlog reads don't rescan.
+    cache.set(store);
+    Ok(report)
 }
 
 #[tauri::command]
-pub fn scan(path: String) -> Result<Report, String> {
-    perform_scan(&path)
+pub fn scan(path: String, cache: State<'_, NoteStoreCache>) -> Result<Report, String> {
+    perform_scan(&path, &cache)
 }
 
 /// Read a note's content for the preview panel.
@@ -223,26 +229,55 @@ pub fn get_filing_targets(path: String) -> Result<Vec<FilingTarget>, String> {
     Ok(build_filing_targets(&store))
 }
 
-/// Build the read-only project priority board from the `#np-projects` control note.
-/// Pure file read — no MCP, no writes.
-#[tauri::command]
-pub fn get_project_board(path: String) -> Result<crate::models::ProjectBoard, String> {
-    if !std::path::Path::new(&path).exists() {
+/// Run `build` against the cached store. When the cache is empty, do a one-time
+/// scan and populate it (so Priorities/Backlog can load without a prior manual
+/// scan). Holds only a short read lock for the in-memory build; no rescan on a
+/// cache hit.
+fn read_from_cache<T>(
+    cache: &NoteStoreCache,
+    path: &str,
+    build: impl Fn(&NoteStore) -> T,
+) -> Result<T, String> {
+    {
+        let guard = cache.0.read().unwrap_or_else(|p| p.into_inner());
+        if let Some(store) = guard.as_ref() {
+            return Ok(build(store));
+        }
+    }
+    if !std::path::Path::new(path).exists() {
         return Err(format!("Path does not exist: {}", path));
     }
-    let store = scan_noteplan_dir(&path);
-    Ok(build_project_board(&store))
+    log::info!("read cache empty — scanning {path} to populate");
+    let store = scan_noteplan_dir(path);
+    let out = build(&store);
+    cache.set(store);
+    Ok(out)
+}
+
+/// Build the read-only project priority board from the `#np-projects` control note.
+/// Pure read — no MCP, no writes. Served from the cache when populated.
+#[tauri::command]
+pub fn get_project_board(
+    path: String,
+    cache: State<'_, NoteStoreCache>,
+) -> Result<crate::models::ProjectBoard, String> {
+    let t0 = Instant::now();
+    let board = read_from_cache(&cache, &path, build_project_board)?;
+    log::info!("get_project_board served in {:?}", t0.elapsed());
+    Ok(board)
 }
 
 /// Build the read-only backlog (ranked + pool) from #np-backlog + #np-projects.
-/// Pure file read — no MCP, no writes.
+/// Pure read — no MCP, no writes. Served from the cache when populated.
 #[tauri::command]
-pub fn get_backlog(path: String) -> Result<crate::models::Backlog, String> {
-    if !std::path::Path::new(&path).exists() {
-        return Err(format!("Path does not exist: {}", path));
-    }
-    let store = scan_noteplan_dir(&path);
-    Ok(build_backlog(&store))
+pub fn get_backlog(
+    path: String,
+    cache: State<'_, NoteStoreCache>,
+) -> Result<crate::models::Backlog, String> {
+    let t0 = Instant::now();
+    let backlog = read_from_cache(&cache, &path, build_backlog)?;
+    log::info!("get_backlog served in {:?}", t0.elapsed());
+    Ok(backlog)
 }
 
 /// Search for tasks via MCP's noteplan_paragraphs tool.
@@ -303,7 +338,7 @@ pub fn get_filing_suggestions(
 // ---------------------------------------------------------------------------
 
 /// Gather every block ID already present in the vault (for collision-free gen).
-fn existing_block_ids(store: &crate::parser::NoteStore) -> HashSet<String> {
+fn existing_block_ids(store: &NoteStore) -> HashSet<String> {
     let mut ids = HashSet::new();
     for note in &store.notes {
         for task in &note.tasks {
@@ -314,6 +349,71 @@ fn existing_block_ids(store: &crate::parser::NoteStore) -> HashSet<String> {
     }
     ids
 }
+
+/// Collision-id set from the cached store (no full scan when the cache is warm).
+/// Falls back to a one-time scan-and-populate only when the cache is empty.
+/// NOTE: this set is for collision avoidance only, NOT write verification — a
+/// slightly stale set can't cause a wrong write (the id is a hash, and verify /
+/// relocate run on fresh MCP content).
+fn existing_ids_from_cache(cache: &NoteStoreCache, path: &str) -> HashSet<String> {
+    {
+        let guard = cache.0.read().unwrap_or_else(|p| p.into_inner());
+        if let Some(store) = guard.as_ref() {
+            return existing_block_ids(store);
+        }
+    }
+    log::info!("rank: cache empty — scanning {path} to seed the block-id set");
+    let store = scan_noteplan_dir(path);
+    let ids = existing_block_ids(&store);
+    cache.set(store);
+    ids
+}
+
+/// After the app writes to notes, re-parse ONLY those files from disk and patch
+/// them into the cache, so the frontend's follow-up read reflects the write
+/// without a full rescan. Notes are located by title via the cache's index.
+fn refresh_cached_notes_by_title(cache: &NoteStoreCache, titles: &[&str]) {
+    // Snapshot the (file_path, relative_path, kind) of every cached note whose
+    // title matches — under a brief read lock, then drop it before doing I/O.
+    let targets: Vec<(String, String, NoteKind)> = {
+        let guard = cache.0.read().unwrap_or_else(|p| p.into_inner());
+        let Some(store) = guard.as_ref() else {
+            return;
+        };
+        titles
+            .iter()
+            .filter_map(|t| store.title_index.get(&t.to_lowercase()))
+            .flatten()
+            .map(|&i| {
+                let n = &store.notes[i];
+                (n.file_path.clone(), n.relative_path.clone(), n.kind.clone())
+            })
+            .collect()
+    };
+    if targets.is_empty() {
+        return;
+    }
+    let reparsed: Vec<_> = targets
+        .into_iter()
+        .filter_map(|(fp, rp, kind)| match std::fs::read_to_string(&fp) {
+            Ok(content) => Some(parse_note(&fp, &rp, &content, kind)),
+            Err(e) => {
+                log::warn!("cache refresh: failed to re-read {fp}: {e}");
+                None
+            }
+        })
+        .collect();
+    let mut guard = cache.0.write().unwrap_or_else(|p| p.into_inner());
+    if let Some(store) = guard.as_mut() {
+        for note in reparsed {
+            store.update_note(note);
+        }
+    }
+}
+
+/// Window during which the file watcher skips its rescan after the app writes.
+/// Covers the writes plus the watcher's 2s debounce, with margin.
+const WRITE_SUPPRESS_WINDOW: Duration = Duration::from_secs(4);
 
 /// Apply planned write ops via MCP. Content notes are only ever appended to
 /// (AppendBlockId -> relocate the line by content, then replace it with
@@ -415,24 +515,46 @@ async fn apply_ops(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn backlog_rank_task(
     mcp_state: State<'_, McpState>,
+    cache: State<'_, NoteStoreCache>,
+    suppress: State<'_, WriteSuppression>,
     path: String,
     source_note_title: String,
     expected_text: String,
     context: String,
     backlog_note_title: String,
 ) -> Result<(), String> {
-    let store = scan_noteplan_dir(&path);
-    let existing = existing_block_ids(&store);
+    let t0 = Instant::now();
+    // Phase 1: collision-id set from the warm cache (no full rescan).
+    let existing = existing_ids_from_cache(&cache, &path);
+    let t_ids = t0.elapsed();
 
+    // Phase 2: fetch FRESH content via MCP and plan (verify-before-write).
+    let t1 = Instant::now();
     let source_content = tools::get_note(&mcp_state, &source_note_title).await?;
     let (block_id, mut ops) =
         plan_stamp_block_id(&source_content, &source_note_title, &expected_text, &existing)?;
-
     let entry = format!("- [[{}^{}]] {}", source_note_title, block_id, expected_text);
     let backlog_content = tools::get_note(&mcp_state, &backlog_note_title).await?;
     ops.extend(plan_append_entry(&backlog_content, &context, &entry)?);
+    let t_plan = t1.elapsed();
 
-    apply_ops(&mcp_state, &backlog_note_title, ops).await
+    // Phase 3: apply, with the watcher suppressed around the writes.
+    let t2 = Instant::now();
+    suppress.suppress(WRITE_SUPPRESS_WINDOW);
+    let write_result = apply_ops(&mcp_state, &backlog_note_title, ops).await;
+    suppress.suppress(WRITE_SUPPRESS_WINDOW);
+    write_result?;
+    let t_write = t2.elapsed();
+
+    // Phase 4: patch only the two touched notes into the cache.
+    let t3 = Instant::now();
+    refresh_cached_notes_by_title(&cache, &[&source_note_title, &backlog_note_title]);
+    log::info!(
+        "rank timing: ids {t_ids:?}, mcp+plan {t_plan:?}, writes {t_write:?}, refresh {:?}, total {:?}",
+        t3.elapsed(),
+        t0.elapsed()
+    );
+    Ok(())
 }
 
 /// Reorder a backlog context: `ordered_block_ids` is the section's current
@@ -442,24 +564,42 @@ pub async fn backlog_rank_task(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn backlog_reorder(
     mcp_state: State<'_, McpState>,
+    cache: State<'_, NoteStoreCache>,
+    suppress: State<'_, WriteSuppression>,
     context: String,
     ordered_block_ids: Vec<String>,
     backlog_note_title: String,
 ) -> Result<(), String> {
+    let t0 = Instant::now();
     let backlog_content = tools::get_note(&mcp_state, &backlog_note_title).await?;
     let ops = plan_reorder(&backlog_content, &context, &ordered_block_ids)?;
-    apply_ops(&mcp_state, &backlog_note_title, ops).await
+    suppress.suppress(WRITE_SUPPRESS_WINDOW);
+    let write_result = apply_ops(&mcp_state, &backlog_note_title, ops).await;
+    suppress.suppress(WRITE_SUPPRESS_WINDOW);
+    write_result?;
+    refresh_cached_notes_by_title(&cache, &[&backlog_note_title]);
+    log::info!("reorder total {:?}", t0.elapsed());
+    Ok(())
 }
 
 /// Remove a task from the backlog (backlog note only; source task untouched).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn backlog_remove(
     mcp_state: State<'_, McpState>,
+    cache: State<'_, NoteStoreCache>,
+    suppress: State<'_, WriteSuppression>,
     context: String,
     block_id: String,
     backlog_note_title: String,
 ) -> Result<(), String> {
+    let t0 = Instant::now();
     let backlog_content = tools::get_note(&mcp_state, &backlog_note_title).await?;
     let ops = plan_remove(&backlog_content, &context, &block_id)?;
-    apply_ops(&mcp_state, &backlog_note_title, ops).await
+    suppress.suppress(WRITE_SUPPRESS_WINDOW);
+    let write_result = apply_ops(&mcp_state, &backlog_note_title, ops).await;
+    suppress.suppress(WRITE_SUPPRESS_WINDOW);
+    write_result?;
+    refresh_cached_notes_by_title(&cache, &[&backlog_note_title]);
+    log::info!("remove total {:?}", t0.elapsed());
+    Ok(())
 }
