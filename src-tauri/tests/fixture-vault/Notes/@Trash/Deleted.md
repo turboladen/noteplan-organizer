@@ -1,0 +1,3 @@
+# Deleted
+
+* Trashed task !
