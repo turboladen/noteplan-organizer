@@ -1,8 +1,13 @@
 use crate::analyzer::run_all_analyzers;
+use crate::backlog_write::{
+    plan_append_entry, plan_remove, plan_reorder, plan_stamp_block_id, WriteOp,
+};
 use crate::config;
 use crate::dump;
 use crate::export;
+use crate::mcp::tools;
 use crate::mcp::McpState;
+use std::collections::HashSet;
 use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report};
 use crate::parser::matcher::FilingSuggestion;
 use crate::parser::{
@@ -247,7 +252,6 @@ pub async fn search_tasks(
     query: Option<String>,
     completed: Option<bool>,
 ) -> Result<String, String> {
-    use crate::mcp::tools;
     tools::search_tasks(&mcp_state, query.as_deref(), completed).await
 }
 
@@ -270,4 +274,154 @@ pub fn get_filing_suggestions(
     let targets = build_filing_targets(&store);
 
     Ok(match_blocks_to_targets(&blocks, &targets))
+}
+
+// ---------------------------------------------------------------------------
+// Backlog write path (data-safety gated). See docs/superpowers/specs §Data Safety
+// and CLAUDE.md: content notes are APPEND-ONLY (the only content mutation is
+// stamping a trailing `^blockId`); all delete/replace ops target the app-owned
+// backlog note. Every op is verified-before-write and logged.
+//
+// RESIDUAL RISK (get_note line offset): `tools::get_note` returns the note text
+// via `extract_text` on the MCP result. If that text's line base differs from
+// the on-disk file the parser scanned (e.g. it drops frontmatter or a title),
+// the `line` the frontend supplies (from an on-disk scan) may not address the
+// same line in `get_note`'s content. This is contained — not eliminated — by
+// verify-before-write: `plan_stamp_block_id` aborts unless the target line's
+// cleaned text still equals `expected_text`, so a mis-addressed line aborts
+// rather than mutating the wrong task. Must be confirmed against a scratch note
+// (Task 11 manual step) before trusting writes at scale.
+// ---------------------------------------------------------------------------
+
+/// Gather every block ID already present in the vault (for collision-free gen).
+fn existing_block_ids(store: &crate::parser::NoteStore) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    for note in &store.notes {
+        for task in &note.tasks {
+            if let Some(id) = &task.block_id {
+                ids.insert(id.clone());
+            }
+        }
+    }
+    ids
+}
+
+/// Apply planned write ops via MCP. Content notes are only ever appended to
+/// (AppendBlockId -> replace the line with text+^id, an additive change).
+/// Backlog ops target the app-owned backlog note. Every op is logged, tagged
+/// with whether it mutates a user content note (append-only) or the backlog.
+async fn apply_ops(
+    mcp: &McpState,
+    backlog_note_title: &str,
+    ops: Vec<WriteOp>,
+) -> Result<(), String> {
+    for op in ops {
+        let scope = if op.touches_content_note() {
+            "content-note (append-only)"
+        } else {
+            "backlog-note"
+        };
+        match op {
+            WriteOp::AppendBlockId {
+                note_title,
+                line,
+                new_line_text,
+                block_id,
+            } => {
+                log::info!(
+                    "backlog[{}]: stamp ^{} on \"{}\" line {} -> {:?}",
+                    scope,
+                    block_id,
+                    note_title,
+                    line,
+                    new_line_text
+                );
+                tools::replace_line(mcp, &note_title, line, &new_line_text).await?;
+            }
+            WriteOp::InsertBacklogLine { line, text } => {
+                log::info!(
+                    "backlog[{}]: insert into \"{}\" line {}: {}",
+                    scope,
+                    backlog_note_title,
+                    line,
+                    text
+                );
+                tools::insert_in_note(mcp, backlog_note_title, &text, line).await?;
+            }
+            WriteOp::ReplaceBacklogLine { line, text } => {
+                log::info!(
+                    "backlog[{}]: replace \"{}\" line {}: {}",
+                    scope,
+                    backlog_note_title,
+                    line,
+                    text
+                );
+                tools::replace_line(mcp, backlog_note_title, line, &text).await?;
+            }
+            WriteOp::DeleteBacklogLine { line } => {
+                log::info!(
+                    "backlog[{}]: delete \"{}\" line {}",
+                    scope,
+                    backlog_note_title,
+                    line
+                );
+                tools::delete_line(mcp, backlog_note_title, line).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Rank a task: stamp a block ID (verify-before-write) and append it to the
+/// backlog note's context section. `expected_text` is the cleaned display text
+/// the frontend last saw (used to confirm the line hasn't changed).
+#[tauri::command]
+pub async fn backlog_rank_task(
+    mcp_state: State<'_, McpState>,
+    path: String,
+    source_note_title: String,
+    line: usize,
+    expected_text: String,
+    context: String,
+    backlog_note_title: String,
+) -> Result<(), String> {
+    let store = scan_noteplan_dir(&path);
+    let existing = existing_block_ids(&store);
+
+    let source_content = tools::get_note(&mcp_state, &source_note_title).await?;
+    let (block_id, mut ops) =
+        plan_stamp_block_id(&source_content, &source_note_title, line, &expected_text, &existing)?;
+
+    let entry = format!("- [[{}^{}]] {}", source_note_title, block_id, expected_text);
+    let backlog_content = tools::get_note(&mcp_state, &backlog_note_title).await?;
+    ops.extend(plan_append_entry(&backlog_content, &context, &entry)?);
+
+    apply_ops(&mcp_state, &backlog_note_title, ops).await
+}
+
+/// Reorder a backlog context: `ordered_lines` is the full new set of entry
+/// lines (same membership, new order).
+#[tauri::command]
+pub async fn backlog_reorder(
+    mcp_state: State<'_, McpState>,
+    context: String,
+    ordered_lines: Vec<String>,
+    backlog_note_title: String,
+) -> Result<(), String> {
+    let backlog_content = tools::get_note(&mcp_state, &backlog_note_title).await?;
+    let ops = plan_reorder(&backlog_content, &context, &ordered_lines)?;
+    apply_ops(&mcp_state, &backlog_note_title, ops).await
+}
+
+/// Remove a task from the backlog (backlog note only; source task untouched).
+#[tauri::command]
+pub async fn backlog_remove(
+    mcp_state: State<'_, McpState>,
+    context: String,
+    block_id: String,
+    backlog_note_title: String,
+) -> Result<(), String> {
+    let backlog_content = tools::get_note(&mcp_state, &backlog_note_title).await?;
+    let ops = plan_remove(&backlog_content, &context, &block_id)?;
+    apply_ops(&mcp_state, &backlog_note_title, ops).await
 }
