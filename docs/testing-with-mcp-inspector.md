@@ -30,15 +30,33 @@ These tools mutate your **real vault** — there is no sandbox. Before using any
 
 ## Launch
 
-Point the Inspector at the NotePlan server (it spawns it over stdio, exactly as the app does):
+The NotePlan MCP server is a **STDIO** server — the app spawns it as a child process over
+stdin/stdout (`src-tauri/src/mcp/client.rs`), **not** HTTP. Start the Inspector:
 
 ```bash
 npx @modelcontextprotocol/inspector npx -y @noteplanco/noteplan-mcp
 ```
 
-The UI opens at <http://localhost:6274>. Connect, then use the **Tools** tab to list and call
-tools. (For scripting instead of the UI, add `--cli`:
-`npx @modelcontextprotocol/inspector --cli npx -y @noteplanco/noteplan-mcp --method tools/list`.)
+It prints a tokenized URL and opens your browser to <http://localhost:6274>.
+
+**Then set the transport explicitly in the UI.** The Inspector remembers your last config in the
+browser and often opens defaulting to **Streamable HTTP → `http://localhost:3000/mcp`** — that is
+**wrong** for this server and Connect will fail with `ECONNREFUSED` (nothing is listening on
+3000). Set instead:
+
+| Field | Value |
+|---|---|
+| **Transport Type** | `STDIO` |
+| **Command** | `npx` |
+| **Arguments** | `-y @noteplanco/noteplan-mcp` |
+
+Then click **Connect** (NotePlan must be running). Use the **Tools** tab to list and call tools.
+
+For scripting instead of the UI:
+
+```bash
+npx @modelcontextprotocol/inspector --cli npx -y @noteplanco/noteplan-mcp --method tools/list
+```
 
 ## Checks that matter for the backlog write path
 
