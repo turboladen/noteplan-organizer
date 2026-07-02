@@ -1,6 +1,7 @@
 use crate::analyzer::run_all_analyzers;
 use crate::backlog_write::{
-    plan_append_entry, plan_remove, plan_reorder, plan_stamp_block_id, WriteOp,
+    locate_unique_task_line, plan_append_entry, plan_remove, plan_reorder, plan_stamp_block_id,
+    WriteOp,
 };
 use crate::config;
 use crate::dump;
@@ -293,13 +294,15 @@ pub fn get_filing_suggestions(
 // wrong (but identical-looking) task. Must be confirmed against a scratch note
 // (Task 11 manual step) before trusting writes at scale.
 //
-// RESIDUAL RISK 2 (TOCTOU): `AppendBlockId` is executed as an MCP `replace` by
-// line number, whose text is `raw + " ^id"` captured from the single get_note
-// snapshot. If the user edits that line between get_note and the replace, the
-// replace overwrites the edit with the pre-edit text. The MCP API exposes no
-// compare-and-swap, so this window cannot be closed here; it is narrow (two
-// sequential awaits) and the append stays additive w.r.t. the snapshot. Flagged
-// for the reviewer; not code-fixable without a conditional-write MCP primitive.
+// RESIDUAL RISK 2 (TOCTOU) — largely closed: `AppendBlockId` is now relocated by
+// content at write time (`apply_ops` re-fetches via get_note and calls
+// `locate_unique_task_line`), so a structural edit since the planning snapshot
+// can no longer shift the stamp onto an unrelated line — it aborts if the task
+// is gone or ambiguous, and the write text is derived from the FRESH line. The
+// only irreducible remainder is the micro-window between that fresh get_note and
+// the replace within `apply_ops` itself (two consecutive awaits); MCP exposes no
+// compare-and-swap, so this cannot be fully eliminated in-app. It is far
+// narrower than the prior snapshot-to-write window and the write stays additive.
 // ---------------------------------------------------------------------------
 
 /// Gather every block ID already present in the vault (for collision-free gen).
@@ -316,9 +319,16 @@ fn existing_block_ids(store: &crate::parser::NoteStore) -> HashSet<String> {
 }
 
 /// Apply planned write ops via MCP. Content notes are only ever appended to
-/// (AppendBlockId -> replace the line with text+^id, an additive change).
-/// Backlog ops target the app-owned backlog note. Every op is logged, tagged
-/// with whether it mutates a user content note (append-only) or the backlog.
+/// (AppendBlockId -> relocate the line by content, then replace it with
+/// text+^id, an additive change). Backlog ops target the app-owned backlog note.
+/// Every op is logged, tagged with whether it mutates a user content note
+/// (append-only) or the backlog.
+///
+/// NOTE: not atomic — ops apply sequentially and a mid-sequence MCP failure
+/// leaves earlier ops applied. This is acceptable because every op is additive
+/// and idempotent on retry: a re-run re-plans against fresh content (the stamp
+/// is skipped once present; append/remove are re-derived), so a partial apply is
+/// recoverable rather than corrupting.
 async fn apply_ops(
     mcp: &McpState,
     backlog_note_title: &str,
@@ -333,19 +343,38 @@ async fn apply_ops(
         match op {
             WriteOp::AppendBlockId {
                 note_title,
-                line,
-                new_line_text,
+                expected_text,
                 block_id,
             } => {
+                // AUTHORITATIVE write-time gate: re-fetch the note NOW and locate
+                // the target line by content. The snapshot line number is never
+                // trusted — a structural edit since the snapshot could have
+                // shifted it onto an unrelated line (wrong-line clobber). Aborts
+                // (zero writes) if the task is gone or is ambiguous.
+                let fresh = tools::get_note(mcp, &note_title).await?;
+                let (loc_line, fresh_raw) =
+                    locate_unique_task_line(&fresh, &expected_text)?;
+                // Idempotent at write time too: never double-stamp a content note.
+                if let Some(existing) = crate::parser::clean_task_text(&fresh_raw).2 {
+                    log::info!(
+                        "backlog[{}]: \"{}\" line {} already stamped ^{}, skipping",
+                        scope,
+                        note_title,
+                        loc_line,
+                        existing
+                    );
+                    continue;
+                }
+                let new_line_text = format!("{} ^{}", fresh_raw.trim_end(), block_id);
                 log::info!(
                     "backlog[{}]: stamp ^{} on \"{}\" line {} -> {:?}",
                     scope,
                     block_id,
                     note_title,
-                    line,
+                    loc_line,
                     new_line_text
                 );
-                tools::replace_line(mcp, &note_title, line, &new_line_text).await?;
+                tools::replace_line(mcp, &note_title, loc_line, &new_line_text).await?;
             }
             WriteOp::InsertBacklogLine { line, text } => {
                 log::info!(

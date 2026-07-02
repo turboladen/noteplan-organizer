@@ -10,11 +10,14 @@ use std::sync::LazyLock;
 /// note. This encodes the data-safety invariant in the type system.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WriteOp {
-    /// Append ` ^block_id` to an existing task line in a CONTENT note.
+    /// Append ` ^block_id` to a task line in a CONTENT note. The line is NOT
+    /// pinned by number: the executor relocates it by `expected_text` against
+    /// freshly-fetched content at write time (a structural edit since the
+    /// snapshot must not shift the stamp onto an unrelated line), so this stays
+    /// strictly additive to the intended task.
     AppendBlockId {
         note_title: String,
-        line: usize,
-        new_line_text: String,
+        expected_text: String,
         block_id: String,
     },
     /// Insert a line into the BACKLOG note (app-owned).
@@ -106,16 +109,40 @@ pub fn plan_stamp_block_id(
         &format!("{}:{}:{}", note_title, line, expected_display_text),
         existing_ids,
     );
-    let new_line_text = format!("{} ^{}", raw.trim_end(), id);
+    // The op carries the expected text, not the snapshot line/text: the executor
+    // relocates by content against fresh note content at write time.
     Ok((
         id.clone(),
         vec![WriteOp::AppendBlockId {
             note_title: note_title.to_string(),
-            line,
-            new_line_text,
+            expected_text: expected_display_text.to_string(),
             block_id: id,
         }],
     ))
+}
+
+/// Locate the UNIQUE task line whose cleaned display text equals `expected`,
+/// returning its (1-based line number, raw line text). This is the authoritative
+/// write-time gate for content-note stamps: it re-derives the line from fresh
+/// content so a structural edit since the snapshot cannot shift the stamp onto
+/// an unrelated line.
+/// - Err on 0 matches (task gone — rescan).
+/// - Err on >1 matches (ambiguous identical tasks — refuse rather than risk the
+///   wrong line).
+pub fn locate_unique_task_line(content: &str, expected: &str) -> Result<(usize, String), String> {
+    let mut found: Option<(usize, String)> = None;
+    for (i, line) in content.lines().enumerate() {
+        if task_display_text(line).as_deref() == Some(expected) {
+            if found.is_some() {
+                return Err(format!(
+                    "Ambiguous: multiple task lines match \"{}\" — cannot safely stamp. Disambiguate and retry.",
+                    expected
+                ));
+            }
+            found = Some((i + 1, line.to_string()));
+        }
+    }
+    found.ok_or_else(|| format!("Task \"{}\" no longer found — rescan and retry.", expected))
 }
 
 /// The trailing `^blockId` already on a line, if any. Delegates to the SAME
@@ -191,25 +218,23 @@ pub fn plan_reorder(
     let (_hl, items) = section_item_lines(content, context)?;
     let lines: Vec<&str> = content.lines().collect();
 
-    // Per-id FIFO queue of the section's original, verbatim line texts. A queue
-    // (not a plain map) so duplicate ids never collapse — each original line is
-    // consumed exactly once, so no entry's text can be lost.
+    // Only `[[…^id]]` entries participate. Hand-written bullets without a block
+    // id are left untouched (skipped, not an error). We reposition among the
+    // id-bearing lines' own positions, so non-id lines keep their place.
+    // Per-id FIFO queue of verbatim line texts so duplicate ids never collapse —
+    // each original line is consumed exactly once (no entry text can be lost).
+    let mut id_lines: Vec<usize> = Vec::new();
     let mut by_id: std::collections::HashMap<String, std::collections::VecDeque<&str>> =
         std::collections::HashMap::new();
     let mut current_ids: Vec<String> = Vec::new();
     for &line in &items {
         let text = lines[line - 1];
-        let id = ITEM_ID_RE
-            .captures(text)
-            .map(|c| c[1].to_string())
-            .ok_or_else(|| {
-                format!(
-                    "Backlog entry on line {} has no block id; refusing to reorder \"{}\".",
-                    line, context
-                )
-            })?;
-        current_ids.push(id.clone());
-        by_id.entry(id).or_default().push_back(text);
+        if let Some(c) = ITEM_ID_RE.captures(text) {
+            let id = c[1].to_string();
+            id_lines.push(line);
+            current_ids.push(id.clone());
+            by_id.entry(id).or_default().push_back(text);
+        }
     }
 
     // Membership guard: same multiset of ids, just reordered.
@@ -226,7 +251,7 @@ pub fn plan_reorder(
 
     // Write each existing line into its new position — order changes, text never.
     // Pop per id so duplicate ids keep their original relative order and text.
-    items
+    id_lines
         .iter()
         .zip(ordered_block_ids.iter())
         .map(|(&line, id)| {
@@ -287,14 +312,12 @@ mod tests {
         match &ops[0] {
             WriteOp::AppendBlockId {
                 note_title,
-                line,
-                new_line_text,
+                expected_text,
                 block_id,
             } => {
                 assert_eq!(note_title, "Janet");
-                assert_eq!(*line, 2);
+                assert_eq!(expected_text, "Ship v2 spec");
                 assert_eq!(block_id, &id);
-                assert_eq!(new_line_text, &format!("* Ship v2 spec !! ^{}", id));
             }
             other => panic!("expected AppendBlockId, got {:?}", other),
         }
@@ -393,6 +416,53 @@ mod tests {
     }
 
     #[test]
+    fn test_locate_unique_finds_shifted_line() {
+        // The task's snapshot line was 2, but a line was inserted above it, so it
+        // now lives on line 3. Relocate-by-content must find line 3, not line 2.
+        let content = "# Janet\n* A newly inserted task\n* Ship v2 spec !!\n";
+        let (line, raw) = locate_unique_task_line(content, "Ship v2 spec").unwrap();
+        assert_eq!(line, 3);
+        assert_eq!(raw, "* Ship v2 spec !!");
+    }
+
+    #[test]
+    fn test_locate_unique_aborts_on_zero_matches() {
+        let content = "# Janet\n* Something else\n";
+        assert!(locate_unique_task_line(content, "Ship v2 spec").is_err());
+    }
+
+    #[test]
+    fn test_locate_unique_aborts_on_multiple_matches() {
+        // Two lines with identical cleaned text — refuse rather than risk the
+        // wrong one (markers differ but clean to the same display text).
+        let content = "# Janet\n* Ship v2 spec !!\n* Ship v2 spec\n";
+        let err = locate_unique_task_line(content, "Ship v2 spec");
+        assert!(err.is_err(), "must abort on ambiguous identical tasks");
+    }
+
+    #[test]
+    fn test_reorder_skips_hand_written_non_id_bullet() {
+        // A hand-written bullet without a [[…^id]] must be left in place, and its
+        // presence must not fail the reorder of the id-bearing entries.
+        let bl = "# B #np-backlog\n## Work\n- [[Janet^a1b2c3]] Ship\n- a plain hand-written note\n- [[Ops^d4e5f6]] Review\n";
+        let ops = plan_reorder(bl, "Work", &["d4e5f6".to_string(), "a1b2c3".to_string()]).unwrap();
+        // Only the two id-bearing lines (3 and 5) are rewritten; line 4 untouched.
+        assert_eq!(
+            ops,
+            vec![
+                WriteOp::ReplaceBacklogLine {
+                    line: 3,
+                    text: "- [[Ops^d4e5f6]] Review".to_string()
+                },
+                WriteOp::ReplaceBacklogLine {
+                    line: 5,
+                    text: "- [[Janet^a1b2c3]] Ship".to_string()
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn test_reorder_duplicate_ids_preserve_both_texts() {
         // Two entries share an id but carry different text (e.g. from manual
         // editing). Reorder must preserve BOTH texts, never collapse them.
@@ -463,8 +533,7 @@ mod tests {
         // decide its classification here.
         assert!(WriteOp::AppendBlockId {
             note_title: "N".into(),
-            line: 1,
-            new_line_text: "x ^abcd".into(),
+            expected_text: "x".into(),
             block_id: "abcd".into(),
         }
         .touches_content_note());
