@@ -191,8 +191,11 @@ pub fn plan_reorder(
     let (_hl, items) = section_item_lines(content, context)?;
     let lines: Vec<&str> = content.lines().collect();
 
-    // Map each current entry's block id to its original, verbatim line text.
-    let mut by_id: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+    // Per-id FIFO queue of the section's original, verbatim line texts. A queue
+    // (not a plain map) so duplicate ids never collapse — each original line is
+    // consumed exactly once, so no entry's text can be lost.
+    let mut by_id: std::collections::HashMap<String, std::collections::VecDeque<&str>> =
+        std::collections::HashMap::new();
     let mut current_ids: Vec<String> = Vec::new();
     for &line in &items {
         let text = lines[line - 1];
@@ -206,7 +209,7 @@ pub fn plan_reorder(
                 )
             })?;
         current_ids.push(id.clone());
-        by_id.insert(id, text);
+        by_id.entry(id).or_default().push_back(text);
     }
 
     // Membership guard: same multiset of ids, just reordered.
@@ -222,14 +225,21 @@ pub fn plan_reorder(
     }
 
     // Write each existing line into its new position — order changes, text never.
-    Ok(items
+    // Pop per id so duplicate ids keep their original relative order and text.
+    items
         .iter()
         .zip(ordered_block_ids.iter())
-        .map(|(&line, id)| WriteOp::ReplaceBacklogLine {
-            line,
-            text: by_id[id].to_string(),
+        .map(|(&line, id)| {
+            let text = by_id
+                .get_mut(id)
+                .and_then(|q| q.pop_front())
+                .ok_or_else(|| format!("Internal reorder inconsistency for id {}.", id))?;
+            Ok(WriteOp::ReplaceBacklogLine {
+                line,
+                text: text.to_string(),
+            })
         })
-        .collect())
+        .collect()
 }
 
 pub fn plan_remove(content: &str, context: &str, block_id: &str) -> Result<Vec<WriteOp>, String> {
@@ -380,6 +390,28 @@ mod tests {
     fn test_reorder_membership_mismatch_errs() {
         // Same count, but a substituted id (concurrent edit / frontend bug) -> abort.
         assert!(plan_reorder(BL, "Work", &["a1b2c3".to_string(), "zzzzzz".to_string()]).is_err());
+    }
+
+    #[test]
+    fn test_reorder_duplicate_ids_preserve_both_texts() {
+        // Two entries share an id but carry different text (e.g. from manual
+        // editing). Reorder must preserve BOTH texts, never collapse them.
+        let bl = "# B #np-backlog\n## Work\n- [[N^abc123]] Buy milk\n- [[N^abc123]] Buy oat milk\n";
+        let ops = plan_reorder(bl, "Work", &["abc123".to_string(), "abc123".to_string()]).unwrap();
+        // FIFO: original relative order preserved; both texts retained.
+        assert_eq!(
+            ops,
+            vec![
+                WriteOp::ReplaceBacklogLine {
+                    line: 3,
+                    text: "- [[N^abc123]] Buy milk".to_string()
+                },
+                WriteOp::ReplaceBacklogLine {
+                    line: 4,
+                    text: "- [[N^abc123]] Buy oat milk".to_string()
+                },
+            ]
+        );
     }
 
     #[test]
