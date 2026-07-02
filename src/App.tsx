@@ -16,6 +16,7 @@ import {
   stopWatching,
   systemDump,
 } from "./api/commands";
+import { Backlog } from "./components/Backlog";
 import { FilingAssistant } from "./components/FilingAssistant";
 import { FindingsList } from "./components/FindingsList";
 import { ProjectBoard } from "./components/ProjectBoard";
@@ -95,6 +96,7 @@ function App() {
 
   // Tab state
   const [activeTab, setActiveTab] = useState<AppTab>("findings");
+  const [priorityView, setPriorityView] = useState<"board" | "backlog">("board");
 
   // Toast state for watcher updates
   const [toast, setToast] = useState<{ message: string; key: number } | null>(
@@ -573,7 +575,41 @@ function App() {
             )}
 
             {activeTab === "priorities" && (
-              <ProjectBoard basePath={report.noteplan_path} />
+              <>
+                <div className="inline-flex items-center bg-surface-hover rounded-[var(--radius-button)] p-0.5 mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setPriorityView("board")}
+                    className={`px-3 py-1 text-xs font-medium rounded-[8px] transition-all ${
+                      priorityView === "board"
+                        ? "bg-surface-raised text-text-primary shadow-sm"
+                        : "text-text-tertiary hover:text-text-secondary"
+                    }`}
+                  >
+                    Board
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPriorityView("backlog")}
+                    className={`px-3 py-1 text-xs font-medium rounded-[8px] transition-all ${
+                      priorityView === "backlog"
+                        ? "bg-surface-raised text-text-primary shadow-sm"
+                        : "text-text-tertiary hover:text-text-secondary"
+                    }`}
+                  >
+                    Backlog
+                  </button>
+                </div>
+                {priorityView === "board" ? (
+                  <ProjectBoard basePath={report.noteplan_path} />
+                ) : (
+                  <Backlog
+                    basePath={report.noteplan_path}
+                    mcpConnected={mcpConnected}
+                    onToast={showToast}
+                  />
+                )}
+              </>
             )}
 
             {activeTab === "filing" && (
