@@ -248,10 +248,10 @@ fn test_parser_states_dates_tags_mentions() {
 
     let design = note(&store, "12.01 - Design.md");
     // clean_task_text only strips `!`/`^id`, so `@done(...)` stays in the text.
-    assert!(matches!(
-        task(design, "Draft wireframes @done(2026-06-20)").state,
-        TaskState::Done
-    ));
+    let draft = task(design, "Draft wireframes @done(2026-06-20)");
+    assert!(matches!(draft.state, TaskState::Done));
+    // `@done` is suppressed from mentions (it's a completion marker, not a person).
+    assert!(draft.mentions.is_empty(), "@done must not be a mention");
     let review = task(design, "Review mockups >2026-07-10 @jane");
     assert_eq!(review.scheduled_to.as_deref(), Some("2026-07-10"));
     assert_eq!(review.mentions, vec!["jane".to_string()]);
@@ -286,10 +286,17 @@ fn test_parser_states_dates_tags_mentions() {
 #[test]
 fn test_duplicate_title_pair_present() {
     let store = load();
-    let shared = store
+    let dirs: Vec<PathBuf> = store
         .notes
         .iter()
         .filter(|n| n.title == "Shared Title")
-        .count();
-    assert_eq!(shared, 2, "duplicate-title pair in two folders");
+        .map(|n| {
+            std::path::Path::new(&n.relative_path)
+                .parent()
+                .expect("note has a parent dir")
+                .to_path_buf()
+        })
+        .collect();
+    assert_eq!(dirs.len(), 2, "duplicate-title pair");
+    assert_ne!(dirs[0], dirs[1], "the pair lives in two different folders");
 }
