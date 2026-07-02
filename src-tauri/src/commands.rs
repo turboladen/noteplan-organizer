@@ -369,44 +369,72 @@ fn existing_ids_from_cache(cache: &NoteStoreCache, path: &str) -> HashSet<String
     ids
 }
 
-/// After the app writes to notes, re-parse ONLY those files from disk and patch
-/// them into the cache, so the frontend's follow-up read reflects the write
-/// without a full rescan. Notes are located by title via the cache's index.
-fn refresh_cached_notes_by_title(cache: &NoteStoreCache, titles: &[&str]) {
-    // Snapshot the (file_path, relative_path, kind) of every cached note whose
-    // title matches — under a brief read lock, then drop it before doing I/O.
-    let targets: Vec<(String, String, NoteKind)> = {
+/// Marker-insensitive title comparison. The cache indexes a note by its raw
+/// heading (`extract_title`, e.g. "Backlog #np-backlog"), but the frontend hands
+/// back the marker-STRIPPED title ("Backlog"), so an exact index lookup would
+/// miss the control notes. Match either the raw title or the tag-stripped form.
+fn title_matches(note_title: &str, requested: &str) -> bool {
+    fn strip_tags(s: &str) -> String {
+        s.split_whitespace()
+            .filter(|tok| !tok.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+    note_title.eq_ignore_ascii_case(requested)
+        || strip_tags(note_title).eq_ignore_ascii_case(&strip_tags(requested))
+}
+
+/// After the app writes to notes, RE-FETCH those notes via MCP `get_note` (the
+/// authoritative post-write content — this avoids racing NotePlan's disk flush)
+/// and patch them into the cache, so the frontend's follow-up read is fresh
+/// without a full rescan. Best-effort: logs and continues on any miss. This is a
+/// READ cache refresh only — it is never consulted for write verification.
+async fn refresh_cache_after_write(mcp: &McpState, cache: &NoteStoreCache, titles: &[&str]) {
+    // Locate each title's cache entry (file_path/relative_path/kind) under a
+    // brief read lock; skip ambiguous duplicate-title matches (can't tell which
+    // one NotePlan wrote — the next rescan corrects it).
+    let targets: Vec<(String, String, String, NoteKind)> = {
         let guard = cache.0.read().unwrap_or_else(|p| p.into_inner());
         let Some(store) = guard.as_ref() else {
             return;
         };
         titles
             .iter()
-            .filter_map(|t| store.title_index.get(&t.to_lowercase()))
-            .flatten()
-            .map(|&i| {
-                let n = &store.notes[i];
-                (n.file_path.clone(), n.relative_path.clone(), n.kind.clone())
+            .filter_map(|&t| {
+                let m: Vec<_> = store
+                    .notes
+                    .iter()
+                    .filter(|n| title_matches(&n.title, t))
+                    .collect();
+                match m.as_slice() {
+                    [n] => Some((
+                        t.to_string(),
+                        n.file_path.clone(),
+                        n.relative_path.clone(),
+                        n.kind.clone(),
+                    )),
+                    [] => {
+                        log::warn!("cache refresh: no cached note matches title {t:?}");
+                        None
+                    }
+                    _ => {
+                        log::warn!("cache refresh: title {t:?} ambiguous — deferring to next scan");
+                        None
+                    }
+                }
             })
             .collect()
     };
-    if targets.is_empty() {
-        return;
-    }
-    let reparsed: Vec<_> = targets
-        .into_iter()
-        .filter_map(|(fp, rp, kind)| match std::fs::read_to_string(&fp) {
-            Ok(content) => Some(parse_note(&fp, &rp, &content, kind)),
-            Err(e) => {
-                log::warn!("cache refresh: failed to re-read {fp}: {e}");
-                None
+    for (title, file_path, rel, kind) in targets {
+        match tools::get_note(mcp, &title).await {
+            Ok(content) => {
+                let note = parse_note(&file_path, &rel, &content, kind);
+                let mut guard = cache.0.write().unwrap_or_else(|p| p.into_inner());
+                if let Some(store) = guard.as_mut() {
+                    store.update_note(note);
+                }
             }
-        })
-        .collect();
-    let mut guard = cache.0.write().unwrap_or_else(|p| p.into_inner());
-    if let Some(store) = guard.as_mut() {
-        for note in reparsed {
-            store.update_note(note);
+            Err(e) => log::warn!("cache refresh: get_note({title:?}) failed: {e}"),
         }
     }
 }
@@ -543,18 +571,23 @@ pub async fn backlog_rank_task(
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
     let write_result = apply_ops(&mcp_state, &backlog_note_title, ops).await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
-    write_result?;
     let t_write = t2.elapsed();
 
-    // Phase 4: patch only the two touched notes into the cache.
+    // Phase 4: patch the two touched notes into the cache. Run even on a partial
+    // write failure so the cache reflects whatever did land on disk.
     let t3 = Instant::now();
-    refresh_cached_notes_by_title(&cache, &[&source_note_title, &backlog_note_title]);
+    refresh_cache_after_write(
+        &mcp_state,
+        &cache,
+        &[&source_note_title, &backlog_note_title],
+    )
+    .await;
     log::info!(
         "rank timing: ids {t_ids:?}, mcp+plan {t_plan:?}, writes {t_write:?}, refresh {:?}, total {:?}",
         t3.elapsed(),
         t0.elapsed()
     );
-    Ok(())
+    write_result
 }
 
 /// Reorder a backlog context: `ordered_block_ids` is the section's current
@@ -576,10 +609,9 @@ pub async fn backlog_reorder(
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
     let write_result = apply_ops(&mcp_state, &backlog_note_title, ops).await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
-    write_result?;
-    refresh_cached_notes_by_title(&cache, &[&backlog_note_title]);
+    refresh_cache_after_write(&mcp_state, &cache, &[&backlog_note_title]).await;
     log::info!("reorder total {:?}", t0.elapsed());
-    Ok(())
+    write_result
 }
 
 /// Remove a task from the backlog (backlog note only; source task untouched).
@@ -598,8 +630,25 @@ pub async fn backlog_remove(
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
     let write_result = apply_ops(&mcp_state, &backlog_note_title, ops).await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
-    write_result?;
-    refresh_cached_notes_by_title(&cache, &[&backlog_note_title]);
+    refresh_cache_after_write(&mcp_state, &cache, &[&backlog_note_title]).await;
     log::info!("remove total {:?}", t0.elapsed());
-    Ok(())
+    write_result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::title_matches;
+
+    #[test]
+    fn test_title_matches_marker_insensitive() {
+        // The control-note cache title keeps the marker tag; the frontend sends
+        // the stripped title. Both must match.
+        assert!(title_matches("Backlog #np-backlog", "Backlog"));
+        assert!(title_matches("Project Priorities #np-projects", "Project Priorities"));
+        // Exact (untagged) source-note titles still match, case-insensitively.
+        assert!(title_matches("Design", "design"));
+        // Different notes must NOT match.
+        assert!(!title_matches("Beta Project", "Alpha Project"));
+        assert!(!title_matches("Backlog #np-backlog", "Backlogs"));
+    }
 }

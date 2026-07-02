@@ -72,8 +72,9 @@ pub fn start_watching(
 
                     // Skip the full rescan if the app itself just wrote these
                     // files (rank/reorder/remove) — otherwise our own writes
-                    // trigger the whole analyzer pipeline. A concurrent real user
-                    // edit inside this short window is picked up on the next event.
+                    // trigger the whole analyzer pipeline. Trade-off: a real user
+                    // edit coalesced into this short window is not re-analyzed
+                    // until the NEXT file event or a manual rescan (accepted v1).
                     if app.state::<WriteSuppression>().is_suppressed() {
                         log::info!("File change during app-write window — skipping rescan");
                         return;
