@@ -1,4 +1,5 @@
 pub mod analyzer;
+mod backlog_write;
 mod commands;
 pub mod config;
 pub mod dump;
