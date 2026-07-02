@@ -8,10 +8,17 @@ cargo tauri dev      # Launch app in dev mode with hot-reload
 cargo tauri build    # Build production .app bundle
 # Build output: src-tauri/target/release/bundle/dmg/
 # Bundle targets set to ["dmg"] (macOS only) in tauri.conf.json
-cargo test --manifest-path src-tauri/Cargo.toml  # Run Rust unit tests
+cargo test --manifest-path src-tauri/Cargo.toml  # Run Rust unit tests + integration tests
 cargo check --manifest-path src-tauri/Cargo.toml # Type-check Rust without building
 bunx tsc --noEmit    # Type-check TypeScript
 ```
+
+`cargo test` also runs the integration tests in `src-tauri/tests/fixture_vault.rs`,
+which exercise the whole read pipeline (`scan_noteplan_dir` → `build_project_board`
+/ `build_backlog` + parser edges) against the committed fixture vault at
+`src-tauri/tests/fixture-vault/`. See that dir's `README.md` for the layout and how
+to extend it. The lib target is `app_lib` (`[lib]` in `Cargo.toml`), so integration
+tests import it as `use app_lib::…`.
 
 ## Icons
 
