@@ -5,7 +5,7 @@
 
 use app_lib::models::{Note, NoteKind, Task, TaskState};
 use app_lib::parser::{build_backlog, build_project_board, scan_noteplan_dir, NoteStore};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixture-vault")
@@ -21,7 +21,7 @@ fn note<'a>(store: &'a NoteStore, suffix: &str) -> &'a Note {
     store
         .notes
         .iter()
-        .find(|n| n.relative_path.ends_with(suffix))
+        .find(|n| Path::new(&n.relative_path).ends_with(suffix))
         .unwrap_or_else(|| panic!("no note with path ending in {suffix:?}"))
 }
 
