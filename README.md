@@ -1,11 +1,17 @@
 # NotePlan Organizer
 
-A read-only desktop analysis tool for [NotePlan](https://noteplan.co/) that scans your notes and
-surfaces structural issues, broken links, stale tasks, and organizational gaps. Built with Tauri v2,
+A desktop companion for [NotePlan](https://noteplan.co/) that scans your notes and surfaces
+structural issues, broken links, stale tasks, and organizational gaps — and adds a prioritized
+project Board and a drag-to-rank task Backlog on top of your existing notes. Built with Tauri v2,
 Rust, and React.
 
-**Key principle: this app never writes to your NotePlan files.** It reads, analyzes, and presents
-findings. You decide what to fix and do it yourself in NotePlan.
+**Key principle: this app never writes to your NotePlan files directly.** All analysis is
+read-only. The only write features (the Backlog's rank/reorder) go exclusively through NotePlan's
+own MCP server, are **append-only for your content notes** (the sole mutation is adding a native
+`^blockId` anchor to a task line), verify the target line still matches before every write, and
+refuse to act on anything ambiguous. Structural edits are confined to the app's own control notes
+in `_NotePlan Organizer/`. See `docs/superpowers/specs/2026-07-01-project-priority-board-design.md`
+§ Data Safety.
 
 ## Why
 
