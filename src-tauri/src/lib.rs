@@ -1,4 +1,5 @@
 pub mod analyzer;
+mod backlog_write;
 mod commands;
 pub mod config;
 pub mod dump;
@@ -43,6 +44,10 @@ pub fn run() {
             commands::get_filing_targets,
             commands::get_filing_suggestions,
             commands::get_project_board,
+            commands::get_backlog,
+            commands::backlog_rank_task,
+            commands::backlog_reorder,
+            commands::backlog_remove,
             commands::search_tasks,
             watcher::start_watching,
             watcher::stop_watching,

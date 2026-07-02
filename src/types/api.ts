@@ -110,6 +110,38 @@ export interface ProjectBoard {
   warnings: string[];
 }
 
+export interface RankedTask {
+  rank: number;
+  block_id: string;
+  text: string;
+  priority: number;
+  source_note_title: string;
+  source_relative_path: string;
+  line_number: number;
+  resolved: boolean;
+}
+
+export interface PoolTask {
+  text: string;
+  priority: number;
+  source_note_title: string;
+  source_relative_path: string;
+  line_number: number;
+  block_id: string | null;
+}
+
+export interface BacklogContext {
+  name: string;
+  ranked: RankedTask[];
+  pool: PoolTask[];
+}
+
+export interface Backlog {
+  contexts: BacklogContext[];
+  control_note_title: string | null;
+  warnings: string[];
+}
+
 export interface WikiLink {
   target: string;
   line_number: number;

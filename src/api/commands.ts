@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  Backlog,
   ContentBlock,
   DailyNoteInfo,
   FilingSuggestion,
@@ -91,6 +92,54 @@ export async function getFilingSuggestions(
 
 export async function getProjectBoard(path: string): Promise<ProjectBoard> {
   return invoke<ProjectBoard>("get_project_board", { path });
+}
+
+// ---------------------------------------------------------------------------
+// Backlog (read-only read; writes require MCP connected)
+// ---------------------------------------------------------------------------
+
+export async function getBacklog(path: string): Promise<Backlog> {
+  return invoke<Backlog>("get_backlog", { path });
+}
+
+export async function backlogRankTask(args: {
+  path: string;
+  sourceNoteTitle: string;
+  expectedText: string;
+  context: string;
+  backlogNoteTitle: string;
+}): Promise<void> {
+  return invoke<void>("backlog_rank_task", {
+    path: args.path,
+    source_note_title: args.sourceNoteTitle,
+    expected_text: args.expectedText,
+    context: args.context,
+    backlog_note_title: args.backlogNoteTitle,
+  });
+}
+
+export async function backlogReorder(
+  context: string,
+  orderedBlockIds: string[],
+  backlogNoteTitle: string,
+): Promise<void> {
+  return invoke<void>("backlog_reorder", {
+    context,
+    ordered_block_ids: orderedBlockIds,
+    backlog_note_title: backlogNoteTitle,
+  });
+}
+
+export async function backlogRemove(
+  context: string,
+  blockId: string,
+  backlogNoteTitle: string,
+): Promise<void> {
+  return invoke<void>("backlog_remove", {
+    context,
+    block_id: blockId,
+    backlog_note_title: backlogNoteTitle,
+  });
 }
 
 // ---------------------------------------------------------------------------

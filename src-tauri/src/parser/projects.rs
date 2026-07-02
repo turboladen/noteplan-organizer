@@ -130,6 +130,22 @@ fn resolve_folder(store: &NoteStore, reference: &str) -> Option<String> {
     None
 }
 
+/// Public: map each control-note context to its resolved project folders.
+/// Reused by the backlog reader for pool bucketing.
+pub fn context_folders(store: &NoteStore) -> Vec<(String, Vec<String>)> {
+    let Some(control) = parse_project_control(store) else {
+        return vec![];
+    };
+    control
+        .contexts
+        .iter()
+        .map(|(name, refs)| {
+            let folders = refs.iter().filter_map(|r| resolve_folder(store, r)).collect();
+            (name.clone(), folders)
+        })
+        .collect()
+}
+
 /// Roll up open/scheduled tasks under a folder into a ranked BoardProject.
 fn build_project(store: &NoteStore, rank: u32, title: &str, folder: &str) -> BoardProject {
     let prefix = format!("{}/", folder);

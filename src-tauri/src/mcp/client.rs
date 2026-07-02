@@ -114,8 +114,20 @@ impl McpState {
         // Use the builder pattern since CallToolRequestParams is non-exhaustive.
         let params = CallToolRequestParams::new(name.to_string()).with_arguments(args);
 
-        svc.call_tool(params)
+        let result = svc
+            .call_tool(params)
             .await
-            .map_err(|e| format!("MCP tool call failed: {e}"))
+            .map_err(|e| format!("MCP tool call failed: {e}"))?;
+
+        // Data-safety: surface a tool-level error (isError) as an Err at this
+        // single chokepoint, so no wrapper can mistake a failed write for success
+        // regardless of its response body shape.
+        if result.is_error == Some(true) {
+            return Err(format!(
+                "MCP tool '{name}' returned an error: {}",
+                super::tools::extract_text(&result)
+            ));
+        }
+        Ok(result)
     }
 }
