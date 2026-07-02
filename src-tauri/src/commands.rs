@@ -283,16 +283,13 @@ pub fn get_filing_suggestions(
 // stamping a trailing `^blockId`); all delete/replace ops target the app-owned
 // backlog note. Every op is verified-before-write and logged.
 //
-// RESIDUAL RISK 1 (get_note line offset): `tools::get_note` returns the note
-// text via `extract_text` on the MCP result. If that text's line base differs
-// from the on-disk file the parser scanned (e.g. it drops frontmatter or a
-// title), the `line` the frontend supplies (from an on-disk scan) may not
-// address the same line in `get_note`'s content. Contained — not eliminated —
-// by verify-before-write: `plan_stamp_block_id` aborts unless the target line's
-// cleaned text still equals `expected_text`. The one unguarded case is two
-// DISTINCT lines sharing identical cleaned text: an offset could then stamp the
-// wrong (but identical-looking) task. Must be confirmed against a scratch note
-// (Task 11 manual step) before trusting writes at scale.
+// RESIDUAL RISK 1 (get_note line offset) — RESOLVED: `tools::get_note` now parses
+// the `noteplan_get_notes` envelope and returns the raw note body, whose line
+// base is confirmed (MCP Inspector) to be 1 and to match the on-disk file. It
+// also aborts on truncated (`hasMore`) content, so the write path never operates
+// on a partial note. The only remaining wrong-line vector — two DISTINCT lines
+// sharing identical cleaned text — is guarded by `locate_unique_task_line`, which
+// aborts on >1 match at write time rather than risk the wrong task.
 //
 // RESIDUAL RISK 2 (TOCTOU) — largely closed: `AppendBlockId` is now relocated by
 // content at write time (`apply_ops` re-fetches via get_note and calls
