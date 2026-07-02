@@ -410,7 +410,9 @@ async fn apply_ops(
 /// Rank a task: stamp a block ID (verify-before-write) and append it to the
 /// backlog note's context section. `expected_text` is the cleaned display text
 /// the frontend last saw (used to confirm the line hasn't changed).
-#[tauri::command]
+// rename_all = "snake_case": Tauri v2 exposes command args to JS as camelCase by
+// default; our commands.ts convention sends snake_case keys.
+#[tauri::command(rename_all = "snake_case")]
 pub async fn backlog_rank_task(
     mcp_state: State<'_, McpState>,
     path: String,
@@ -438,7 +440,7 @@ pub async fn backlog_rank_task(
 /// entries in their new order. The planner repositions the existing lines
 /// verbatim (never rewrites entry text) and aborts unless the ids are an exact
 /// permutation of the section's current entries.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn backlog_reorder(
     mcp_state: State<'_, McpState>,
     context: String,
@@ -451,7 +453,7 @@ pub async fn backlog_reorder(
 }
 
 /// Remove a task from the backlog (backlog note only; source task untouched).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn backlog_remove(
     mcp_state: State<'_, McpState>,
     context: String,
