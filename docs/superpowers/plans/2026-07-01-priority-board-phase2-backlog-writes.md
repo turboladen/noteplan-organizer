@@ -1,6 +1,8 @@
 # Priority Board — Phase 2: Backlog + Drag-to-Reorder Write Path — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **Depends on Phase 1 being merged** (`Task.priority`, `Task.block_id`, `clean_task_text`, `is_excluded_relative`, board types, `parse_project_control`/`resolve_folder`).
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. **Depends on Phase 1 + Phase 2a being merged** (`Task.priority`, `Task.block_id`, `clean_task_text`, `is_excluded_relative`, board types, `parse_project_control`/`resolve_folder`, and the shared **`parse_task_line`/`task_display_text`** tokenizer from Phase 2a).
+>
+> **Phase 2a update:** the parser consolidation (bead `czu`, PR #3) already added `task_display_text` and the shared `parse_task_line` tokenizer to `parser/task.rs`. **Task 3 below is therefore already satisfied — skip its implementation and just verify the function exists.** The write planner (Task 6) reuses this existing `task_display_text` for verify-before-write.
 
 **Goal:** Add a per-context, manually-ranked **Backlog** view: a `#np-backlog` control note whose block-ID-anchored list is the rank order, an "Unranked pool" of the context's remaining open tasks, and drag-to-reorder that writes the new order back to NotePlan — under strict data-safety invariants.
 
@@ -150,7 +152,12 @@ git commit -m "feat(models): add Backlog/BacklogContext/RankedTask/PoolTask type
 
 ---
 
-### Task 3: `task_display_text` helper (write-verification support)
+### Task 3: `task_display_text` helper (write-verification support) — ✅ DONE in Phase 2a (skip)
+
+> **Already implemented** by the parser consolidation (PR #3): `parser/task.rs` exposes
+> `pub fn task_display_text(line: &str) -> Option<String>` (delegating to `parse_task_line`),
+> re-exported from `parser/mod.rs`. Just confirm it exists and move to Task 4. The original
+> task body below is retained for reference only — do not re-implement.
 
 **Files:**
 - Modify: `src-tauri/src/parser/task.rs` (add public helper)
