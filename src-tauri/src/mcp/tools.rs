@@ -71,13 +71,20 @@ fn response_error(v: &Value) -> String {
 // noteplan_get_notes
 // ---------------------------------------------------------------------------
 
-/// Get a note's raw body by title. Requests the full note (no 500-line
-/// truncation) and returns the parsed `.content` string — not the JSON envelope.
+/// Max lines `noteplan_get_notes` will return: the server silently clamps
+/// `limit` to 1000 (verified live via MCP Inspector, 2026-07-02). We request
+/// exactly that. A note longer than 1000 lines comes back with `hasMore: true`,
+/// which `parse_get_notes_content` rejects — so rank/reorder on such a note
+/// fails *safe* (aborts with no write) rather than operating on partial content.
+const GET_NOTES_MAX_LINES: u64 = 1000;
+
+/// Get a note's raw body by title. Returns the parsed `.content` string — not
+/// the JSON envelope — and refuses truncated (`hasMore`) responses.
 pub async fn get_note(state: &McpState, title: &str) -> McpResult<String> {
     let result = state
         .call_tool(
             "noteplan_get_notes",
-            json!({ "title": title, "includeContent": true, "limit": 1_000_000 }),
+            json!({ "title": title, "includeContent": true, "limit": GET_NOTES_MAX_LINES }),
         )
         .await?;
     parse_get_notes_content(&extract_text(&result))
