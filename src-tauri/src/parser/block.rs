@@ -10,12 +10,6 @@ static MENTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@([\w/\-]+)")
 
 static WIKI_LINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\[([^\]]+)\]\]").unwrap());
 
-static TASK_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[\t ]*[*]\s+(?:\[([x\->  ])\]\s+)?(.+)$").unwrap());
-
-static CHECKBOX_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[\t ]*[-]\s+\[([x\->  ])\]\s+(.+)$").unwrap());
-
 static FRONTMATTER_END_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^---\s*$").unwrap());
 
 /// Extract discrete content blocks from a daily note's content.
@@ -89,9 +83,9 @@ pub fn extract_content_blocks(content: &str) -> Vec<ContentBlock> {
         }
 
         // Check for task line
-        if is_task_line(trimmed) {
+        if crate::parser::is_task_line(trimmed) {
             let start = i;
-            while i < lines.len() && is_task_line(lines[i].trim()) {
+            while i < lines.len() && crate::parser::is_task_line(lines[i].trim()) {
                 i += 1;
             }
 
@@ -116,7 +110,7 @@ pub fn extract_content_blocks(content: &str) -> Vec<ContentBlock> {
         let start = i;
         while i < lines.len() {
             let t = lines[i].trim();
-            if t.is_empty() || HEADING_RE.is_match(t) || is_task_line(t) {
+            if t.is_empty() || HEADING_RE.is_match(t) || crate::parser::is_task_line(t) {
                 break;
             }
             i += 1;
@@ -141,11 +135,6 @@ pub fn extract_content_blocks(content: &str) -> Vec<ContentBlock> {
     }
 
     blocks
-}
-
-/// Returns true if a trimmed line is a task (NotePlan `* text` or `- [x] text`).
-fn is_task_line(trimmed: &str) -> bool {
-    TASK_RE.is_match(trimmed) || CHECKBOX_RE.is_match(trimmed)
 }
 
 /// Skip past YAML frontmatter (--- ... ---) and return the first content line index.
