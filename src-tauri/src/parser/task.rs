@@ -63,17 +63,26 @@ pub struct ParsedTaskLine {
     pub mentions: Vec<String>,
 }
 
-/// Parse one line into a task, or None if it is not a task line.
-/// Single source of truth for "what is a task" — used by parse_tasks,
-/// task_display_text, block grouping, and the Phase 2 write-verification path.
-pub fn parse_task_line(line: &str) -> Option<ParsedTaskLine> {
+/// Match a task line, returning its captures only if it is a task (a bare `-`
+/// list item with no checkbox is rejected). The single predicate shared by the
+/// full `parse_task_line` tokenizer and the cheap `is_task_line` detector, so
+/// both classify identically.
+fn task_captures(line: &str) -> Option<regex::Captures<'_>> {
     let caps = TASK_RE.captures(line)?;
     let state_char = caps.get(1).map(|m| m.as_str());
-
     // A `-` leader without a checkbox is a plain list item, not a task.
     if line.trim().starts_with('-') && state_char.is_none() {
         return None;
     }
+    Some(caps)
+}
+
+/// Parse one line into a task, or None if it is not a task line.
+/// Single source of truth for "what is a task" — used by parse_tasks,
+/// task_display_text, block grouping, and the Phase 2 write-verification path.
+pub fn parse_task_line(line: &str) -> Option<ParsedTaskLine> {
+    let caps = task_captures(line)?;
+    let state_char = caps.get(1).map(|m| m.as_str());
 
     let state = match state_char {
         Some("x") => TaskState::Done,
@@ -107,9 +116,13 @@ pub fn parse_task_line(line: &str) -> Option<ParsedTaskLine> {
     })
 }
 
-/// True if a line is a NotePlan task (`* ...`, `* [x] ...`, or `- [x] ...`).
+/// True if a line is a NotePlan task: `* ...` / `* [x] ...` (asterisk leader,
+/// optional checkbox of any state — `[x]`/`[-]`/`[>]`/`[ ]`) or `- [ ] ...` /
+/// `- [x] ...` / `- [>] ...` (hyphen leader WITH a checkbox). A bare `- ...`
+/// list item (no checkbox) is not a task. Cheap detector — skips the full
+/// tokenization that `parse_task_line` performs.
 pub fn is_task_line(line: &str) -> bool {
-    parse_task_line(line).is_some()
+    task_captures(line).is_some()
 }
 
 /// The cleaned display text of a task line, or None if the line is not a task.
