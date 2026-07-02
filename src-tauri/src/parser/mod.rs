@@ -15,7 +15,9 @@ pub use link::extract_wiki_links;
 pub use markdown::parse_note;
 pub use matcher::match_blocks_to_targets;
 pub use projects::{build_project_board, parse_project_control, ProjectControl};
-pub use task::parse_tasks;
+pub use task::{
+    clean_task_text, is_task_line, parse_task_line, parse_tasks, task_display_text, ParsedTaskLine,
+};
 
 /// Folders whose notes are excluded from analysis and task rollups:
 /// NotePlan system folders plus the app's own control-note folder.
