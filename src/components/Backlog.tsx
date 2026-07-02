@@ -80,7 +80,6 @@ export function Backlog({
       await backlogRankTask({
         path: basePath,
         sourceNoteTitle: t.source_note_title,
-        line: t.line_number,
         expectedText: t.text,
         context: ctx.name,
         backlogNoteTitle: backlogTitle,

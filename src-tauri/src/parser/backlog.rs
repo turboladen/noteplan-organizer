@@ -4,12 +4,22 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-const BACKLOG_TAG: &str = "np-backlog";
+/// Marker tag identifying the app-owned backlog control note. Shared with the
+/// write planners (`backlog_write`) so reader and writer agree on ownership.
+pub(crate) const BACKLOG_TAG: &str = "np-backlog";
 
 static HEADING_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^##\s+(.+?)\s*$").unwrap());
-// A backlog entry references a task by block id: [[Title^id]].
-static ENTRY_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[\[[^\]^]*\^([A-Za-z0-9]{4,})\]\]").unwrap());
+// A backlog entry is a LIST ITEM (same leader grammar as backlog_write's
+// ITEM_RE: `^\s*(?:\d+\.|[-*+])\s+`) that references a task by block id
+// `[[Title^id]]`. Anchoring to the list-item leader keeps the reader's ranked
+// set in lock-step with the writer, which only repositions list items — a prose
+// line merely mentioning `[[Note^id]]` must NOT count as a ranked entry.
+// The gap is LAZY (`.*?`) so we capture the FIRST `[[…^id]]` after the leader —
+// matching the writer's leftmost `ITEM_ID_RE`. A greedy `.*` would capture the
+// LAST ref, diverging from the writer when an entry's text embeds a second link.
+static ENTRY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*(?:\d+\.|[-*+])\s+.*?\[\[[^\]^]*\^([A-Za-z0-9]{4,})\]\]").unwrap()
+});
 
 /// Parsed `#np-backlog`: ordered block IDs per context heading.
 struct BacklogControl {
@@ -251,5 +261,38 @@ mod tests {
         let st = store(vec![projects_note()]);
         let b = build_backlog(&st);
         assert_eq!(b.control_note_title, None);
+    }
+
+    #[test]
+    fn test_prose_block_ref_is_not_a_ranked_entry() {
+        // A prose line that merely mentions [[Note^id]] must NOT be counted as a
+        // ranked entry — only list items are (matching the writer's grammar).
+        let backlog_note = parse_note(
+            "/b.md",
+            "Notes/_NotePlan Organizer/Backlog.md",
+            "# Backlog #np-backlog\n## Work\nsee [[Note^abc123]] for context\n- [[Janet^d4e5f6]] Ship\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note(), backlog_note]);
+        let b = build_backlog(&st);
+        let ranked = &b.contexts[0].ranked;
+        assert_eq!(ranked.len(), 1, "only the list item counts, not the prose");
+        assert_eq!(ranked[0].block_id, "d4e5f6");
+    }
+
+    #[test]
+    fn test_entry_id_is_first_ref_when_text_embeds_another() {
+        // The entry's anchor is the FIRST [[…^id]]; a second block-ref embedded in
+        // the entry text must not be mistaken for the id (must match the writer's
+        // leftmost capture, else reorder/remove would break).
+        let backlog_note = parse_note(
+            "/b.md",
+            "Notes/_NotePlan Organizer/Backlog.md",
+            "# Backlog #np-backlog\n## Work\n- [[Src^newid1]] Follow up on [[Meeting^ab12cd]] notes\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note(), backlog_note]);
+        let b = build_backlog(&st);
+        assert_eq!(b.contexts[0].ranked[0].block_id, "newid1");
     }
 }

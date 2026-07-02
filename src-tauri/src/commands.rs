@@ -417,7 +417,6 @@ pub async fn backlog_rank_task(
     mcp_state: State<'_, McpState>,
     path: String,
     source_note_title: String,
-    line: usize,
     expected_text: String,
     context: String,
     backlog_note_title: String,
@@ -427,7 +426,7 @@ pub async fn backlog_rank_task(
 
     let source_content = tools::get_note(&mcp_state, &source_note_title).await?;
     let (block_id, mut ops) =
-        plan_stamp_block_id(&source_content, &source_note_title, line, &expected_text, &existing)?;
+        plan_stamp_block_id(&source_content, &source_note_title, &expected_text, &existing)?;
 
     let entry = format!("- [[{}^{}]] {}", source_note_title, block_id, expected_text);
     let backlog_content = tools::get_note(&mcp_state, &backlog_note_title).await?;

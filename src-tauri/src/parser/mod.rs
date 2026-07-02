@@ -10,6 +10,7 @@ mod projects;
 mod task;
 
 pub use backlog::build_backlog;
+pub(crate) use backlog::BACKLOG_TAG;
 pub use block::extract_content_blocks;
 pub use filing::build_filing_targets;
 pub use folder::{parse_jd_id, parse_note_id};

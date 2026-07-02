@@ -1,4 +1,4 @@
-use crate::parser::{clean_task_text, task_display_text};
+use crate::parser::{clean_task_text, task_display_text, BACKLOG_TAG};
 use regex::Regex;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
@@ -68,45 +68,27 @@ pub fn generate_block_id(seed: &str, existing: &HashSet<String>) -> String {
     }
 }
 
-/// Verify the target line still matches the expected task, then plan the stamp.
-/// - Aborts (Err) if the line vanished or its cleaned text no longer matches.
-/// - Idempotent: if the line already carries a block ID, reuse it (no op).
+/// Locate the target task by CONTENT (not by a snapshot line number), then plan
+/// the stamp. Locating by unique cleaned-text match is the same authoritative
+/// gate the executor uses at write time, so the planner can't false-abort on a
+/// line-base/drift mismatch and can't be pointed at an ambiguous duplicate.
+/// - Aborts (Err) if the task is gone (0 matches) or ambiguous (>1 matches).
+/// - Idempotent: if the located line already carries a block ID, reuse it (no op).
 pub fn plan_stamp_block_id(
     note_content: &str,
     note_title: &str,
-    line: usize, // 1-based
     expected_display_text: &str,
     existing_ids: &HashSet<String>,
 ) -> Result<(String, Vec<WriteOp>), String> {
-    // `line` is 1-based and arrives over IPC; guard against 0 so `line - 1`
-    // can never underflow (debug panic / release wrap-around).
-    let idx = line
-        .checked_sub(1)
-        .ok_or_else(|| format!("Invalid line 0 for \"{}\".", note_title))?;
-    let raw = note_content.lines().nth(idx).ok_or_else(|| {
-        format!(
-            "Line {} no longer exists in \"{}\" — rescan and retry.",
-            line, note_title
-        )
-    })?;
-
-    match task_display_text(raw) {
-        Some(display) if display == expected_display_text => {}
-        _ => {
-            return Err(format!(
-                "Note \"{}\" changed since last scan (line {} no longer matches). Rescan and retry.",
-                note_title, line
-            ));
-        }
-    }
+    let (_line, raw) = locate_unique_task_line(note_content, expected_display_text)?;
 
     // Already stamped? (trailing ^id) — reuse, no write.
-    if let Some(id) = existing_trailing_id(raw) {
+    if let Some(id) = existing_trailing_id(&raw) {
         return Ok((id, vec![]));
     }
 
     let id = generate_block_id(
-        &format!("{}:{}:{}", note_title, line, expected_display_text),
+        &format!("{}:{}", note_title, expected_display_text),
         existing_ids,
     );
     // The op carries the expected text, not the snapshot line/text: the executor
@@ -158,6 +140,22 @@ static ITEM_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(?:\d+\.|[-*+])\s+.+$").unwrap());
 static ITEM_ID_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[\[[^\]^]*\^([A-Za-z0-9]{4,})\]\]").unwrap());
+// Same `#tag` grammar the note parser uses, to match ownership like the reader.
+static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#([\w/\-]+)").unwrap());
+
+/// Data-safety ownership gate: refuse to plan any mutation unless the note we
+/// were handed actually carries the `#np-backlog` marker tag. The write commands
+/// take `backlog_note_title` from the frontend; without this check a wrong title
+/// would let the planners match a real CONTENT note (any note with a `## <ctx>`
+/// heading + `[[…^id]]` lines) and delete/replace its lines. Uses the same tag
+/// token semantics and shared `BACKLOG_TAG` constant as the reader.
+fn ensure_backlog_note(content: &str) -> Result<(), String> {
+    if TAG_RE.captures_iter(content).any(|c| &c[1] == BACKLOG_TAG) {
+        Ok(())
+    } else {
+        Err("not the #np-backlog control note — refusing to modify".to_string())
+    }
+}
 
 /// 1-based line numbers of the list items in a named `## context` section.
 /// Returns (heading_line, item_lines). Item lines are contiguous under the
@@ -195,6 +193,7 @@ pub fn plan_append_entry(
     context: &str,
     entry_text: &str,
 ) -> Result<Vec<WriteOp>, String> {
+    ensure_backlog_note(content)?;
     let (heading_line, items) = section_item_lines(content, context)?;
     let insert_at = items.last().map(|l| l + 1).unwrap_or(heading_line + 1);
     Ok(vec![WriteOp::InsertBacklogLine {
@@ -215,6 +214,7 @@ pub fn plan_reorder(
     context: &str,
     ordered_block_ids: &[String],
 ) -> Result<Vec<WriteOp>, String> {
+    ensure_backlog_note(content)?;
     let (_hl, items) = section_item_lines(content, context)?;
     let lines: Vec<&str> = content.lines().collect();
 
@@ -268,6 +268,7 @@ pub fn plan_reorder(
 }
 
 pub fn plan_remove(content: &str, context: &str, block_id: &str) -> Result<Vec<WriteOp>, String> {
+    ensure_backlog_note(content)?;
     let (_hl, items) = section_item_lines(content, context)?;
     let lines: Vec<&str> = content.lines().collect();
     for &line in &items {
@@ -306,8 +307,7 @@ mod tests {
     #[test]
     fn test_stamp_plans_append_only() {
         let content = "# Janet\n* Ship v2 spec !!\n";
-        let (id, ops) =
-            plan_stamp_block_id(content, "Janet", 2, "Ship v2 spec", &empty()).unwrap();
+        let (id, ops) = plan_stamp_block_id(content, "Janet", "Ship v2 spec", &empty()).unwrap();
         assert_eq!(ops.len(), 1);
         match &ops[0] {
             WriteOp::AppendBlockId {
@@ -328,23 +328,31 @@ mod tests {
     }
 
     #[test]
-    fn test_stamp_aborts_on_mismatch() {
+    fn test_stamp_aborts_when_task_absent() {
+        // No line matches the expected cleaned text -> locate returns 0 -> abort.
         let content = "# Janet\n* A totally different task\n";
-        let err = plan_stamp_block_id(content, "Janet", 2, "Ship v2 spec", &empty());
-        assert!(err.is_err(), "must abort when the line no longer matches");
+        let err = plan_stamp_block_id(content, "Janet", "Ship v2 spec", &empty());
+        assert!(err.is_err(), "must abort when the task is not found");
     }
 
     #[test]
-    fn test_stamp_aborts_when_line_missing() {
+    fn test_stamp_aborts_when_note_empty() {
         let content = "# Janet\n";
-        assert!(plan_stamp_block_id(content, "Janet", 5, "x", &empty()).is_err());
+        assert!(plan_stamp_block_id(content, "Janet", "x", &empty()).is_err());
+    }
+
+    #[test]
+    fn test_stamp_aborts_when_ambiguous() {
+        // Two lines clean to the same text -> locate returns >1 -> abort (never
+        // guess which identical task to stamp).
+        let content = "# Janet\n* Ship v2 spec !!\n* Ship v2 spec\n";
+        assert!(plan_stamp_block_id(content, "Janet", "Ship v2 spec", &empty()).is_err());
     }
 
     #[test]
     fn test_stamp_idempotent_when_already_stamped() {
         let content = "# Janet\n* Ship v2 spec !! ^a1b2c3\n";
-        let (id, ops) =
-            plan_stamp_block_id(content, "Janet", 2, "Ship v2 spec", &empty()).unwrap();
+        let (id, ops) = plan_stamp_block_id(content, "Janet", "Ship v2 spec", &empty()).unwrap();
         assert_eq!(id, "a1b2c3");
         assert!(ops.is_empty(), "no write when already stamped");
     }
@@ -520,10 +528,30 @@ mod tests {
 
     #[test]
     fn test_stamp_aborts_on_non_task_line() {
-        // A bare `-` list item is not a task; verify-before-write must refuse to
-        // stamp it (defends against stamping an arbitrary content line).
+        // A bare `-` list item is not a task; locate finds no matching task line,
+        // so the stamp is refused (defends against stamping arbitrary content).
         let content = "# Janet\n- just a plain list item\n";
-        assert!(plan_stamp_block_id(content, "Janet", 2, "just a plain list item", &empty()).is_err());
+        assert!(
+            plan_stamp_block_id(content, "Janet", "just a plain list item", &empty()).is_err()
+        );
+    }
+
+    #[test]
+    fn test_planners_reject_non_backlog_note() {
+        // Ownership gate: a note WITHOUT the #np-backlog marker must never be
+        // mutated, even if it structurally has a `## Work` heading + entries.
+        let not_backlog = "# Real Content Note\n## Work\n- [[Janet^a1b2c3]] Ship v2 spec\n";
+        assert!(plan_append_entry(not_backlog, "Work", "- [[New^zzz111]] x").is_err());
+        assert!(plan_reorder(not_backlog, "Work", &["a1b2c3".to_string()]).is_err());
+        assert!(plan_remove(not_backlog, "Work", "a1b2c3").is_err());
+    }
+
+    #[test]
+    fn test_planners_accept_note_with_marker() {
+        // Same structure but WITH the marker tag -> planners proceed.
+        assert!(plan_append_entry(BL, "Work", "- [[New^zzz111]] x").is_ok());
+        assert!(plan_reorder(BL, "Work", &["a1b2c3".to_string(), "d4e5f6".to_string()]).is_ok());
+        assert!(plan_remove(BL, "Work", "a1b2c3").is_ok());
     }
 
     #[test]

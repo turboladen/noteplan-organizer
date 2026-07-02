@@ -105,7 +105,6 @@ export async function getBacklog(path: string): Promise<Backlog> {
 export async function backlogRankTask(args: {
   path: string;
   sourceNoteTitle: string;
-  line: number;
   expectedText: string;
   context: string;
   backlogNoteTitle: string;
@@ -113,7 +112,6 @@ export async function backlogRankTask(args: {
   return invoke<void>("backlog_rank_task", {
     path: args.path,
     source_note_title: args.sourceNoteTitle,
-    line: args.line,
     expected_text: args.expectedText,
     context: args.context,
     backlog_note_title: args.backlogNoteTitle,
