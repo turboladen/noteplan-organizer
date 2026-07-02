@@ -43,6 +43,7 @@ pub fn run() {
             commands::get_filing_targets,
             commands::get_filing_suggestions,
             commands::get_project_board,
+            commands::get_backlog,
             commands::search_tasks,
             watcher::start_watching,
             watcher::stop_watching,

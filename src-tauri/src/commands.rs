@@ -6,8 +6,8 @@ use crate::mcp::McpState;
 use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report};
 use crate::parser::matcher::FilingSuggestion;
 use crate::parser::{
-    build_filing_targets, build_project_board, extract_content_blocks, match_blocks_to_targets,
-    scan_noteplan_dir,
+    build_backlog, build_filing_targets, build_project_board, extract_content_blocks,
+    match_blocks_to_targets, scan_noteplan_dir,
 };
 use std::path::PathBuf;
 use tauri::State;
@@ -226,6 +226,17 @@ pub fn get_project_board(path: String) -> Result<crate::models::ProjectBoard, St
     }
     let store = scan_noteplan_dir(&path);
     Ok(build_project_board(&store))
+}
+
+/// Build the read-only backlog (ranked + pool) from #np-backlog + #np-projects.
+/// Pure file read — no MCP, no writes.
+#[tauri::command]
+pub fn get_backlog(path: String) -> Result<crate::models::Backlog, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    let store = scan_noteplan_dir(&path);
+    Ok(build_backlog(&store))
 }
 
 /// Search for tasks via MCP's noteplan_paragraphs tool.
