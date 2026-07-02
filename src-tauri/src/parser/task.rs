@@ -19,6 +19,36 @@ static DONE_DATE_RE: LazyLock<Regex> =
 static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"#([\w/\-]+)").unwrap());
 static MENTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@([\w/\-]+)").unwrap());
 
+// Block ID: a trailing `^` + alphanumeric token at end of line.
+static BLOCK_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s+\^([A-Za-z0-9]{4,})\s*$").unwrap());
+
+/// Strip NotePlan block-ID and `!` priority markers from a task's text.
+/// Returns (display_text, priority 0-3, block_id). Shared with the Phase 2
+/// write path so verification compares like-for-like cleaned text.
+///
+/// Priority is a whitespace-bounded run of one or more `!` (clamped to 3); a `!`
+/// glued to a word (e.g. `it!`) is NOT a priority marker. We scan tokens rather
+/// than using a boundary regex because Rust's `regex` crate has no lookahead,
+/// and token scanning also handles multiple/adjacent markers correctly.
+pub fn clean_task_text(text: &str) -> (String, u8, Option<String>) {
+    let block_id = BLOCK_ID_RE.captures(text).map(|c| c[1].to_string());
+    let no_id = BLOCK_ID_RE.replace(text, "");
+
+    let mut priority = 0u8;
+    let mut kept: Vec<&str> = Vec::new();
+    for token in no_id.split_whitespace() {
+        if token.bytes().all(|b| b == b'!') {
+            priority = priority.max(token.len().min(3) as u8);
+        } else {
+            kept.push(token);
+        }
+    }
+    // `join` collapses the whitespace left behind by stripped markers.
+    let display = kept.join(" ");
+    (display, priority, block_id)
+}
+
 /// Parse all tasks from note content.
 pub fn parse_tasks(content: &str) -> Vec<Task> {
     let mut tasks = Vec::new();
@@ -26,7 +56,8 @@ pub fn parse_tasks(content: &str) -> Vec<Task> {
     for (line_num, line) in content.lines().enumerate() {
         if let Some(caps) = TASK_RE.captures(line) {
             let state_char = caps.get(1).map(|m| m.as_str());
-            let text = caps[2].to_string();
+            let raw_text = caps[2].to_string();
+            let (text, priority, block_id) = clean_task_text(&raw_text);
 
             let state = match state_char {
                 Some("x") => TaskState::Done,
@@ -35,12 +66,10 @@ pub fn parse_tasks(content: &str) -> Vec<Task> {
                 _ => TaskState::Open,
             };
 
-            // Skip lines that are just plain list items (not tasks) - they start with -
-            // but don't have a checkbox. We only want actual tasks.
-            // In NotePlan, * without checkbox = open task, - without checkbox = plain list item
+            // Skip plain list items: `-` leader without a checkbox is not a task.
             let trimmed = line.trim();
             if trimmed.starts_with('-') && state_char.is_none() {
-                continue; // Plain list item, not a task
+                continue;
             }
 
             let scheduled_to = SCHEDULED_TO_RE.captures(&text).map(|c| c[1].to_string());
@@ -66,6 +95,8 @@ pub fn parse_tasks(content: &str) -> Vec<Task> {
                 scheduled_to,
                 tags,
                 mentions,
+                priority,
+                block_id,
             });
         }
     }
@@ -118,5 +149,40 @@ mod tests {
         let tasks = parse_tasks("- [ ] This is a task with checkbox");
         assert_eq!(tasks.len(), 1);
         assert!(matches!(tasks[0].state, TaskState::Open));
+    }
+
+    #[test]
+    fn test_priority_levels() {
+        assert_eq!(parse_tasks("* Ship it !")[0].priority, 1);
+        assert_eq!(parse_tasks("* Ship it !!")[0].priority, 2);
+        assert_eq!(parse_tasks("* Ship it !!!")[0].priority, 3);
+        assert_eq!(parse_tasks("* Ship it")[0].priority, 0);
+    }
+
+    #[test]
+    fn test_priority_clamped_and_stripped() {
+        let t = &parse_tasks("* !!!! Big deal")[0];
+        assert_eq!(t.priority, 3, "4+ bangs clamp to 3");
+        assert_eq!(t.text, "Big deal", "priority marker stripped from display text");
+    }
+
+    #[test]
+    fn test_priority_ignores_word_attached_bang() {
+        let t = &parse_tasks("* Ship it! today")[0];
+        assert_eq!(t.priority, 0, "a bang glued to a word is not a priority marker");
+        assert_eq!(t.text, "Ship it! today");
+    }
+
+    #[test]
+    fn test_block_id_parsed_and_stripped() {
+        let t = &parse_tasks("* Ship v2 spec !! ^a1b2c3")[0];
+        assert_eq!(t.block_id.as_deref(), Some("a1b2c3"));
+        assert_eq!(t.priority, 2);
+        assert_eq!(t.text, "Ship v2 spec", "both markers stripped from display text");
+    }
+
+    #[test]
+    fn test_no_block_id() {
+        assert_eq!(parse_tasks("* Plain task")[0].block_id, None);
     }
 }

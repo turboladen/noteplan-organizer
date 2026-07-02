@@ -5,6 +5,7 @@ pub mod hierarchy;
 mod link;
 mod markdown;
 pub mod matcher;
+mod projects;
 mod task;
 
 pub use block::extract_content_blocks;
@@ -13,7 +14,18 @@ pub use folder::{parse_jd_id, parse_note_id};
 pub use link::extract_wiki_links;
 pub use markdown::parse_note;
 pub use matcher::match_blocks_to_targets;
+pub use projects::{build_project_board, parse_project_control, ProjectControl};
 pub use task::parse_tasks;
+
+/// Folders whose notes are excluded from analysis and task rollups:
+/// NotePlan system folders plus the app's own control-note folder.
+pub fn is_excluded_relative(relative_path: &str) -> bool {
+    relative_path.contains("@Trash")
+        || relative_path.contains("@Archive")
+        || relative_path.contains("@Templates")
+        || relative_path.contains("_attachments")
+        || relative_path.contains("_NotePlan Organizer")
+}
 
 use crate::models::{Note, NoteKind};
 use std::collections::HashMap;
@@ -125,4 +137,19 @@ fn parse_note_file(path: &Path, base: &Path, default_kind: NoteKind) -> Option<N
     };
 
     Some(parse_note(&file_path, &relative, &content, kind))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_excluded_relative() {
+        assert!(is_excluded_relative("Notes/@Trash/x.md"));
+        assert!(is_excluded_relative("Notes/@Archive/x.md"));
+        assert!(is_excluded_relative("Notes/@Templates/x.md"));
+        assert!(is_excluded_relative("Notes/_attachments/x.png"));
+        assert!(is_excluded_relative("Notes/_NotePlan Organizer/Backlog.md"));
+        assert!(!is_excluded_relative("Notes/32 - Product Ownership/32.01 - Janet.md"));
+    }
 }

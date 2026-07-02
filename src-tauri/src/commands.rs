@@ -6,7 +6,8 @@ use crate::mcp::McpState;
 use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report};
 use crate::parser::matcher::FilingSuggestion;
 use crate::parser::{
-    build_filing_targets, extract_content_blocks, match_blocks_to_targets, scan_noteplan_dir,
+    build_filing_targets, build_project_board, extract_content_blocks, match_blocks_to_targets,
+    scan_noteplan_dir,
 };
 use std::path::PathBuf;
 use tauri::State;
@@ -214,6 +215,17 @@ pub fn get_filing_targets(path: String) -> Result<Vec<FilingTarget>, String> {
     }
     let store = scan_noteplan_dir(&path);
     Ok(build_filing_targets(&store))
+}
+
+/// Build the read-only project priority board from the `#np-projects` control note.
+/// Pure file read — no MCP, no writes.
+#[tauri::command]
+pub fn get_project_board(path: String) -> Result<crate::models::ProjectBoard, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    let store = scan_noteplan_dir(&path);
+    Ok(build_project_board(&store))
 }
 
 /// Search for tasks via MCP's noteplan_paragraphs tool.

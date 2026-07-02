@@ -18,12 +18,13 @@ import {
 } from "./api/commands";
 import { FilingAssistant } from "./components/FilingAssistant";
 import { FindingsList } from "./components/FindingsList";
+import { ProjectBoard } from "./components/ProjectBoard";
 import { TaskTriage } from "./components/TaskTriage";
 import { SCAN_UPDATE_EVENT, SYSTEM_ASSESSMENT_CATEGORIES } from "./types/api";
 import type { Finding, FindingCategory, Report, ReportStats, Severity } from "./types/api";
 import { getFindingId } from "./utils/findingId";
 
-type AppTab = "findings" | "assessment" | "filing" | "tasks";
+type AppTab = "findings" | "assessment" | "priorities" | "filing" | "tasks";
 
 const DISMISSED_KEY = "noteplan-organizer:dismissed";
 
@@ -492,6 +493,17 @@ function App() {
               </button>
               <button
                 type="button"
+                onClick={() => setActiveTab("priorities")}
+                className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
+                  activeTab === "priorities"
+                    ? "bg-surface-raised text-text-primary shadow-sm"
+                    : "text-text-tertiary hover:text-text-secondary"
+                }`}
+              >
+                Priorities
+              </button>
+              <button
+                type="button"
                 onClick={() => setActiveTab("filing")}
                 className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
                   activeTab === "filing"
@@ -558,6 +570,10 @@ function App() {
                   onFixFinding={handleFixFinding}
                 />
               </>
+            )}
+
+            {activeTab === "priorities" && (
+              <ProjectBoard basePath={report.noteplan_path} />
             )}
 
             {activeTab === "filing" && (
