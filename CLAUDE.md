@@ -119,6 +119,13 @@ the `Analyzer` trait, and register it in `run_all_analyzers()` in `analyzer/mod.
 **IPC type sync**: Rust `Finding`/`Report` structs serialize to JSON via serde. The matching
 TypeScript types in `types/api.ts` must be kept in sync manually — there's no codegen step.
 
+**IPC arg naming (Tauri v2 camelCase footgun)**: Tauri v2 exposes command *arguments* to JS as
+camelCase by default, but this codebase's `api/commands.ts` sends snake_case keys. Any command
+with a multi-word argument MUST be annotated `#[tauri::command(rename_all = "snake_case")]` or
+the invoke fails at runtime with "missing required key someArgName" (checking that TS keys match
+the Rust parameter names is NOT sufficient). Single-word args are unaffected. See
+`backlog_rank_task` in commands.rs for the pattern; audit bead: noteplan-organizer-cvb.
+
 **React filter keying**: The findings list uses `key={selectedCategory::selectedSeverity}` on the
 parent div to force React to re-mount when filters change. Removing this causes stale list
 rendering.
