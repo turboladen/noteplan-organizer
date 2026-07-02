@@ -1,7 +1,9 @@
 use crate::parser::task_display_text;
+use regex::Regex;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::sync::LazyLock;
 
 /// A planned mutation. By construction, content notes can ONLY be appended to
 /// (AppendBlockId); all delete/replace variants target the app-owned backlog
@@ -122,6 +124,94 @@ fn existing_trailing_id(line: &str) -> Option<String> {
     }
 }
 
+static H2_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^##\s+(.+?)\s*$").unwrap());
+static ITEM_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?:\d+\.|[-*+])\s+.+$").unwrap());
+static ITEM_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[\[[^\]^]*\^([A-Za-z0-9]{4,})\]\]").unwrap());
+
+/// 1-based line numbers of the list items in a named `## context` section.
+/// Returns (heading_line, item_lines). Item lines are contiguous under the
+/// heading until the next `##` heading. Err if the context is not found.
+fn section_item_lines(content: &str, context: &str) -> Result<(usize, Vec<usize>), String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut heading_line = None;
+    for (i, l) in lines.iter().enumerate() {
+        if let Some(c) = H2_RE.captures(l) {
+            if heading_line.is_some() {
+                break; // reached the next section
+            }
+            if c[1].trim() == context {
+                heading_line = Some(i + 1);
+            }
+        }
+    }
+    let hl = heading_line
+        .ok_or_else(|| format!("Context \"{}\" not found in backlog note.", context))?;
+
+    let mut items = Vec::new();
+    for (i, l) in lines.iter().enumerate().skip(hl) {
+        if H2_RE.is_match(l) {
+            break;
+        }
+        if ITEM_RE.is_match(l) {
+            items.push(i + 1);
+        }
+    }
+    Ok((hl, items))
+}
+
+pub fn plan_append_entry(
+    content: &str,
+    context: &str,
+    entry_text: &str,
+) -> Result<Vec<WriteOp>, String> {
+    let (heading_line, items) = section_item_lines(content, context)?;
+    let insert_at = items.last().map(|l| l + 1).unwrap_or(heading_line + 1);
+    Ok(vec![WriteOp::InsertBacklogLine {
+        line: insert_at,
+        text: entry_text.to_string(),
+    }])
+}
+
+pub fn plan_reorder(
+    content: &str,
+    context: &str,
+    ordered_lines: &[String],
+) -> Result<Vec<WriteOp>, String> {
+    let (_hl, items) = section_item_lines(content, context)?;
+    if items.len() != ordered_lines.len() {
+        return Err(format!(
+            "Reorder mismatch: backlog section \"{}\" has {} items but {} were provided. Rescan and retry.",
+            context, items.len(), ordered_lines.len()
+        ));
+    }
+    Ok(items
+        .iter()
+        .zip(ordered_lines.iter())
+        .map(|(&line, text)| WriteOp::ReplaceBacklogLine {
+            line,
+            text: text.clone(),
+        })
+        .collect())
+}
+
+pub fn plan_remove(content: &str, context: &str, block_id: &str) -> Result<Vec<WriteOp>, String> {
+    let (_hl, items) = section_item_lines(content, context)?;
+    let lines: Vec<&str> = content.lines().collect();
+    for &line in &items {
+        if let Some(c) = ITEM_ID_RE.captures(lines[line - 1]) {
+            if &c[1] == block_id {
+                return Ok(vec![WriteOp::DeleteBacklogLine { line }]);
+            }
+        }
+    }
+    Err(format!(
+        "Block ID {} not found in backlog context \"{}\".",
+        block_id, context
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,5 +278,118 @@ mod tests {
             plan_stamp_block_id(content, "Janet", 2, "Ship v2 spec", &empty()).unwrap();
         assert_eq!(id, "a1b2c3");
         assert!(ops.is_empty(), "no write when already stamped");
+    }
+
+    const BL: &str = "# Backlog #np-backlog\n## Work\n- [[Janet^a1b2c3]] Ship v2 spec\n- [[Ops^d4e5f6]] Review tix\n## Home\n- [[Reno^g7h8i9]] Call contractor\n";
+
+    #[test]
+    fn test_append_entry_after_last_item_in_section() {
+        let ops = plan_append_entry(BL, "Work", "- [[New^zzz111]] New task").unwrap();
+        assert_eq!(ops.len(), 1);
+        // Work section items are lines 3 and 4 (1-based); append after line 4.
+        assert_eq!(
+            ops[0],
+            WriteOp::InsertBacklogLine {
+                line: 5,
+                text: "- [[New^zzz111]] New task".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_append_to_empty_section_after_heading() {
+        let content = "# B #np-backlog\n## Work\n## Home\n- [[Reno^g7h8i9]] x\n";
+        let ops = plan_append_entry(content, "Work", "- [[New^zzz111]] task").unwrap();
+        // Work heading is line 2, no items -> insert at line 3.
+        assert_eq!(
+            ops[0],
+            WriteOp::InsertBacklogLine {
+                line: 3,
+                text: "- [[New^zzz111]] task".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_append_unknown_context_errs() {
+        assert!(plan_append_entry(BL, "Nope", "x").is_err());
+    }
+
+    #[test]
+    fn test_reorder_replaces_section_lines() {
+        // New order: Ops before Janet.
+        let ops = plan_reorder(
+            BL,
+            "Work",
+            &[
+                "- [[Ops^d4e5f6]] Review tix".to_string(),
+                "- [[Janet^a1b2c3]] Ship v2 spec".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            ops,
+            vec![
+                WriteOp::ReplaceBacklogLine {
+                    line: 3,
+                    text: "- [[Ops^d4e5f6]] Review tix".to_string()
+                },
+                WriteOp::ReplaceBacklogLine {
+                    line: 4,
+                    text: "- [[Janet^a1b2c3]] Ship v2 spec".to_string()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_reorder_count_mismatch_errs() {
+        assert!(plan_reorder(BL, "Work", &["only one".to_string()]).is_err());
+    }
+
+    #[test]
+    fn test_remove_deletes_matching_line() {
+        let ops = plan_remove(BL, "Work", "d4e5f6").unwrap();
+        assert_eq!(ops, vec![WriteOp::DeleteBacklogLine { line: 4 }]);
+    }
+
+    #[test]
+    fn test_remove_missing_block_id_errs() {
+        assert!(plan_remove(BL, "Work", "nomatch0").is_err());
+    }
+
+    // --- Added safety-gap tests (beyond the plan) ---
+
+    #[test]
+    fn test_stamp_aborts_on_non_task_line() {
+        // A bare `-` list item is not a task; verify-before-write must refuse to
+        // stamp it (defends against stamping an arbitrary content line).
+        let content = "# Janet\n- just a plain list item\n";
+        assert!(plan_stamp_block_id(content, "Janet", 2, "just a plain list item", &empty()).is_err());
+    }
+
+    #[test]
+    fn test_only_append_touches_content_note() {
+        // Locks the core data-safety invariant: AppendBlockId is the ONLY variant
+        // that mutates a user content note. Any future variant must consciously
+        // decide its classification here.
+        assert!(WriteOp::AppendBlockId {
+            note_title: "N".into(),
+            line: 1,
+            new_line_text: "x ^abcd".into(),
+            block_id: "abcd".into(),
+        }
+        .touches_content_note());
+        assert!(!WriteOp::InsertBacklogLine {
+            line: 1,
+            text: "x".into()
+        }
+        .touches_content_note());
+        assert!(!WriteOp::ReplaceBacklogLine {
+            line: 1,
+            text: "x".into()
+        }
+        .touches_content_note());
+        assert!(!WriteOp::DeleteBacklogLine { line: 1 }.touches_content_note());
     }
 }
