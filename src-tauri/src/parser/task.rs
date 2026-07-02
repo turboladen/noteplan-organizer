@@ -49,59 +49,106 @@ pub fn clean_task_text(text: &str) -> (String, u8, Option<String>) {
     (display, priority, block_id)
 }
 
+/// All tokens parsed from a single NotePlan task line.
+#[derive(Debug, Clone)]
+pub struct ParsedTaskLine {
+    pub state: TaskState,
+    /// Display text with `!`/`^blockId` markers stripped, whitespace collapsed.
+    pub text: String,
+    pub priority: u8,
+    pub block_id: Option<String>,
+    pub scheduled_to: Option<String>,
+    pub rescheduled_from: Option<String>,
+    pub tags: Vec<String>,
+    pub mentions: Vec<String>,
+}
+
+/// Match a task line, returning its captures only if it is a task (a bare `-`
+/// list item with no checkbox is rejected). The single predicate shared by the
+/// full `parse_task_line` tokenizer and the cheap `is_task_line` detector, so
+/// both classify identically.
+fn task_captures(line: &str) -> Option<regex::Captures<'_>> {
+    let caps = TASK_RE.captures(line)?;
+    let state_char = caps.get(1).map(|m| m.as_str());
+    // A `-` leader without a checkbox is a plain list item, not a task.
+    if line.trim().starts_with('-') && state_char.is_none() {
+        return None;
+    }
+    Some(caps)
+}
+
+/// Parse one line into a task, or None if it is not a task line.
+/// Single source of truth for "what is a task" — used by parse_tasks,
+/// task_display_text, block grouping, and the Phase 2 write-verification path.
+pub fn parse_task_line(line: &str) -> Option<ParsedTaskLine> {
+    let caps = task_captures(line)?;
+    let state_char = caps.get(1).map(|m| m.as_str());
+
+    let state = match state_char {
+        Some("x") => TaskState::Done,
+        Some("-") => TaskState::Cancelled,
+        Some(">") => TaskState::Scheduled,
+        _ => TaskState::Open,
+    };
+
+    let (text, priority, block_id) = clean_task_text(&caps[2]);
+    let scheduled_to = SCHEDULED_TO_RE.captures(&text).map(|c| c[1].to_string());
+    let rescheduled_from = RESCHEDULED_FROM_RE.captures(&text).map(|c| c[1].to_string());
+    let tags: Vec<String> = TAG_RE
+        .captures_iter(&text)
+        .map(|c| c[1].to_string())
+        .collect();
+    let mentions: Vec<String> = MENTION_RE
+        .captures_iter(&text)
+        .filter(|c| c[1].as_bytes() != b"done" && !c[1].starts_with("done("))
+        .map(|c| c[1].to_string())
+        .collect();
+
+    Some(ParsedTaskLine {
+        state,
+        text,
+        priority,
+        block_id,
+        scheduled_to,
+        rescheduled_from,
+        tags,
+        mentions,
+    })
+}
+
+/// True if a line is a NotePlan task: `* ...` / `* [x] ...` (asterisk leader,
+/// optional checkbox of any state — `[x]`/`[-]`/`[>]`/`[ ]`) or `- [ ] ...` /
+/// `- [x] ...` / `- [>] ...` (hyphen leader WITH a checkbox). A bare `- ...`
+/// list item (no checkbox) is not a task. Cheap detector — skips the full
+/// tokenization that `parse_task_line` performs.
+pub fn is_task_line(line: &str) -> bool {
+    task_captures(line).is_some()
+}
+
+/// The cleaned display text of a task line, or None if the line is not a task.
+pub fn task_display_text(line: &str) -> Option<String> {
+    parse_task_line(line).map(|p| p.text)
+}
+
 /// Parse all tasks from note content.
 pub fn parse_tasks(content: &str) -> Vec<Task> {
-    let mut tasks = Vec::new();
-
-    for (line_num, line) in content.lines().enumerate() {
-        if let Some(caps) = TASK_RE.captures(line) {
-            let state_char = caps.get(1).map(|m| m.as_str());
-            let raw_text = caps[2].to_string();
-            let (text, priority, block_id) = clean_task_text(&raw_text);
-
-            let state = match state_char {
-                Some("x") => TaskState::Done,
-                Some("-") => TaskState::Cancelled,
-                Some(">") => TaskState::Scheduled,
-                _ => TaskState::Open,
-            };
-
-            // Skip plain list items: `-` leader without a checkbox is not a task.
-            let trimmed = line.trim();
-            if trimmed.starts_with('-') && state_char.is_none() {
-                continue;
-            }
-
-            let scheduled_to = SCHEDULED_TO_RE.captures(&text).map(|c| c[1].to_string());
-            let rescheduled_from = RESCHEDULED_FROM_RE
-                .captures(&text)
-                .map(|c| c[1].to_string());
-
-            let tags: Vec<String> = TAG_RE
-                .captures_iter(&text)
-                .map(|c| c[1].to_string())
-                .collect();
-            let mentions: Vec<String> = MENTION_RE
-                .captures_iter(&text)
-                .filter(|c| c[1].as_bytes() != b"done" && !c[1].starts_with("done("))
-                .map(|c| c[1].to_string())
-                .collect();
-
-            tasks.push(Task {
-                text,
-                state,
+    content
+        .lines()
+        .enumerate()
+        .filter_map(|(line_num, line)| {
+            parse_task_line(line).map(|p| Task {
+                text: p.text,
+                state: p.state,
                 line_number: line_num + 1,
-                rescheduled_from,
-                scheduled_to,
-                tags,
-                mentions,
-                priority,
-                block_id,
-            });
-        }
-    }
-
-    tasks
+                rescheduled_from: p.rescheduled_from,
+                scheduled_to: p.scheduled_to,
+                tags: p.tags,
+                mentions: p.mentions,
+                priority: p.priority,
+                block_id: p.block_id,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -184,5 +231,28 @@ mod tests {
     #[test]
     fn test_no_block_id() {
         assert_eq!(parse_tasks("* Plain task")[0].block_id, None);
+    }
+
+    #[test]
+    fn test_parse_task_line_fields() {
+        // Block id `^a1b2c3` at end of line (NotePlan appends synced-line ids there).
+        let p = parse_task_line("  * Ship v2 spec !! >2026-08-01 #work @alice ^a1b2c3").unwrap();
+        assert!(matches!(p.state, TaskState::Open));
+        assert_eq!(p.text, "Ship v2 spec >2026-08-01 #work @alice");
+        assert_eq!(p.priority, 2);
+        assert_eq!(p.block_id.as_deref(), Some("a1b2c3"));
+        assert_eq!(p.scheduled_to.as_deref(), Some("2026-08-01"));
+        assert_eq!(p.tags, vec!["work"]);
+        assert_eq!(p.mentions, vec!["alice"]);
+    }
+
+    #[test]
+    fn test_is_task_line_classification() {
+        assert!(is_task_line("* a task"));
+        assert!(is_task_line("* [x] done"));
+        assert!(is_task_line("- [ ] checkbox task"));
+        assert!(!is_task_line("- plain list item"));
+        assert!(!is_task_line("Just prose"));
+        assert!(!is_task_line("* ")); // empty content is not a task
     }
 }
