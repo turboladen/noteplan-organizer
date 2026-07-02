@@ -1,3 +1,4 @@
+mod backlog;
 pub mod block;
 pub mod filing;
 mod folder;
@@ -8,13 +9,14 @@ pub mod matcher;
 mod projects;
 mod task;
 
+pub use backlog::build_backlog;
 pub use block::extract_content_blocks;
 pub use filing::build_filing_targets;
 pub use folder::{parse_jd_id, parse_note_id};
 pub use link::extract_wiki_links;
 pub use markdown::parse_note;
 pub use matcher::match_blocks_to_targets;
-pub use projects::{build_project_board, parse_project_control, ProjectControl};
+pub use projects::{build_project_board, context_folders, parse_project_control, ProjectControl};
 pub use task::{
     clean_task_text, is_task_line, parse_task_line, parse_tasks, task_display_text, ParsedTaskLine,
 };
