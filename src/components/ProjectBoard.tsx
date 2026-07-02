@@ -23,6 +23,9 @@ export function ProjectBoard({ basePath }: { basePath: string }) {
         setBoard(b);
         setError(null);
         setActiveContext(0);
+        // Reset per-project disclosure state so expanded rows can't leak
+        // across a vault switch (esp. if two contexts share a heading name).
+        setExpanded(new Set());
       })
       .catch((e) => {
         if (cancelled) return;
@@ -93,7 +96,7 @@ export function ProjectBoard({ basePath }: { basePath: string }) {
       <div className="inline-flex items-center bg-surface-hover rounded-[var(--radius-button)] p-0.5 mb-4">
         {board.contexts.map((ctx, i) => (
           <button
-            key={ctx.name}
+            key={i}
             type="button"
             onClick={() => setActiveContext(i)}
             className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
@@ -110,7 +113,9 @@ export function ProjectBoard({ basePath }: { basePath: string }) {
       {context && (
         <div className="space-y-2">
           {context.projects.map((proj) => {
-            const key = `${context.name}:${proj.rank}`;
+            // Key by the active-context index (not the user-authored name) so
+            // duplicate `##` heading names can't collide in the expanded Set.
+            const key = `${activeContext}:${proj.rank}`;
             const isOpen = expanded.has(key);
             return (
               <div
@@ -142,21 +147,23 @@ export function ProjectBoard({ basePath }: { basePath: string }) {
                 {isOpen && (
                   <ul className="border-t border-border-light divide-y divide-border-light">
                     {proj.tasks.map((t, i) => (
-                      <li
-                        key={i}
-                        className="flex items-center gap-3 px-4 py-2 text-sm hover:bg-surface-hover cursor-pointer"
-                        onClick={() => openTask(t)}
-                        title="Open in NotePlan"
-                      >
-                        <span className="w-8 font-mono text-xs text-red-600">
-                          {PRIORITY_LABEL[t.priority]}
-                        </span>
-                        <span className="flex-1 truncate text-text-secondary">
-                          {t.text}
-                        </span>
-                        <span className="text-xs text-text-muted truncate max-w-[12rem]">
-                          {t.source_note_title}
-                        </span>
+                      <li key={i}>
+                        <button
+                          type="button"
+                          onClick={() => openTask(t)}
+                          title="Open in NotePlan"
+                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-left hover:bg-surface-hover cursor-pointer"
+                        >
+                          <span className="w-8 font-mono text-xs text-red-600">
+                            {PRIORITY_LABEL[t.priority]}
+                          </span>
+                          <span className="flex-1 truncate text-text-secondary">
+                            {t.text}
+                          </span>
+                          <span className="text-xs text-text-muted truncate max-w-[12rem]">
+                            {t.source_note_title}
+                          </span>
+                        </button>
                       </li>
                     ))}
                     {proj.tasks.length === 0 && (
