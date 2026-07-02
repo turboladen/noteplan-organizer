@@ -11,10 +11,6 @@ import { buildNotePlanUrl } from "../utils/noteplanUrl";
 
 const PRIORITY_LABEL = ["", "!", "!!", "!!!"] as const;
 
-function entryLine(t: RankedTask): string {
-  return `- [[${t.source_note_title}^${t.block_id}]] ${t.text}`;
-}
-
 export function Backlog({
   basePath,
   mcpConnected,
@@ -39,14 +35,19 @@ export function Backlog({
     reload();
   }, [reload]);
 
-  const ctx = data?.contexts[activeCtx];
+  // Clamp so a reload with fewer contexts can't leave activeCtx out of range
+  // (blank panel with no highlighted tab).
+  const safeCtx = data && activeCtx >= data.contexts.length ? 0 : activeCtx;
+  const ctx = data?.contexts[safeCtx];
   const backlogTitle = data?.control_note_title ?? "";
 
   const commitReorder = async (ranked: RankedTask[]) => {
     if (!ctx) return;
     setBusy(true);
     try {
-      await backlogReorder(ctx.name, ranked.map(entryLine), backlogTitle);
+      // Reorder by block id: the backend repositions existing backlog lines
+      // verbatim, so entry text (incl. stale entries) is never rewritten.
+      await backlogReorder(ctx.name, ranked.map((t) => t.block_id), backlogTitle);
       onToast("Backlog reordered");
       reload();
     } catch (e) {
@@ -65,7 +66,7 @@ export function Backlog({
     setData((d) => {
       if (!d) return d;
       const contexts = [...d.contexts];
-      contexts[activeCtx] = { ...contexts[activeCtx], ranked: next };
+      contexts[safeCtx] = { ...contexts[safeCtx], ranked: next };
       return { ...d, contexts };
     });
     setDragIndex(null);
@@ -122,6 +123,11 @@ export function Backlog({
 
   return (
     <div>
+      {data.warnings.length > 0 && (
+        <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-[var(--radius-card)] px-3 py-2">
+          {data.warnings.join(" ")}
+        </div>
+      )}
       {!mcpConnected && (
         <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-[var(--radius-card)] px-3 py-2">
           Connect NotePlan (MCP) to reorder — the backlog is read-only while disconnected.
@@ -135,7 +141,7 @@ export function Backlog({
             type="button"
             onClick={() => setActiveCtx(i)}
             className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
-              i === activeCtx ? "bg-surface-raised text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary"
+              i === safeCtx ? "bg-surface-raised text-text-primary shadow-sm" : "text-text-tertiary hover:text-text-secondary"
             }`}
           >
             {c.name}

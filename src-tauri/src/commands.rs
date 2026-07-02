@@ -282,15 +282,24 @@ pub fn get_filing_suggestions(
 // stamping a trailing `^blockId`); all delete/replace ops target the app-owned
 // backlog note. Every op is verified-before-write and logged.
 //
-// RESIDUAL RISK (get_note line offset): `tools::get_note` returns the note text
-// via `extract_text` on the MCP result. If that text's line base differs from
-// the on-disk file the parser scanned (e.g. it drops frontmatter or a title),
-// the `line` the frontend supplies (from an on-disk scan) may not address the
-// same line in `get_note`'s content. This is contained — not eliminated — by
-// verify-before-write: `plan_stamp_block_id` aborts unless the target line's
-// cleaned text still equals `expected_text`, so a mis-addressed line aborts
-// rather than mutating the wrong task. Must be confirmed against a scratch note
+// RESIDUAL RISK 1 (get_note line offset): `tools::get_note` returns the note
+// text via `extract_text` on the MCP result. If that text's line base differs
+// from the on-disk file the parser scanned (e.g. it drops frontmatter or a
+// title), the `line` the frontend supplies (from an on-disk scan) may not
+// address the same line in `get_note`'s content. Contained — not eliminated —
+// by verify-before-write: `plan_stamp_block_id` aborts unless the target line's
+// cleaned text still equals `expected_text`. The one unguarded case is two
+// DISTINCT lines sharing identical cleaned text: an offset could then stamp the
+// wrong (but identical-looking) task. Must be confirmed against a scratch note
 // (Task 11 manual step) before trusting writes at scale.
+//
+// RESIDUAL RISK 2 (TOCTOU): `AppendBlockId` is executed as an MCP `replace` by
+// line number, whose text is `raw + " ^id"` captured from the single get_note
+// snapshot. If the user edits that line between get_note and the replace, the
+// replace overwrites the edit with the pre-edit text. The MCP API exposes no
+// compare-and-swap, so this window cannot be closed here; it is narrow (two
+// sequential awaits) and the append stays additive w.r.t. the snapshot. Flagged
+// for the reviewer; not code-fixable without a conditional-write MCP primitive.
 // ---------------------------------------------------------------------------
 
 /// Gather every block ID already present in the vault (for collision-free gen).
@@ -399,17 +408,19 @@ pub async fn backlog_rank_task(
     apply_ops(&mcp_state, &backlog_note_title, ops).await
 }
 
-/// Reorder a backlog context: `ordered_lines` is the full new set of entry
-/// lines (same membership, new order).
+/// Reorder a backlog context: `ordered_block_ids` is the section's current
+/// entries in their new order. The planner repositions the existing lines
+/// verbatim (never rewrites entry text) and aborts unless the ids are an exact
+/// permutation of the section's current entries.
 #[tauri::command]
 pub async fn backlog_reorder(
     mcp_state: State<'_, McpState>,
     context: String,
-    ordered_lines: Vec<String>,
+    ordered_block_ids: Vec<String>,
     backlog_note_title: String,
 ) -> Result<(), String> {
     let backlog_content = tools::get_note(&mcp_state, &backlog_note_title).await?;
-    let ops = plan_reorder(&backlog_content, &context, &ordered_lines)?;
+    let ops = plan_reorder(&backlog_content, &context, &ordered_block_ids)?;
     apply_ops(&mcp_state, &backlog_note_title, ops).await
 }
 

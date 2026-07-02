@@ -122,12 +122,12 @@ export async function backlogRankTask(args: {
 
 export async function backlogReorder(
   context: string,
-  orderedLines: string[],
+  orderedBlockIds: string[],
   backlogNoteTitle: string,
 ): Promise<void> {
   return invoke<void>("backlog_reorder", {
     context,
-    ordered_lines: orderedLines,
+    ordered_block_ids: orderedBlockIds,
     backlog_note_title: backlogNoteTitle,
   });
 }

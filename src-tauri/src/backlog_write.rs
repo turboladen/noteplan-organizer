@@ -1,4 +1,4 @@
-use crate::parser::task_display_text;
+use crate::parser::{clean_task_text, task_display_text};
 use regex::Regex;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
@@ -75,7 +75,12 @@ pub fn plan_stamp_block_id(
     expected_display_text: &str,
     existing_ids: &HashSet<String>,
 ) -> Result<(String, Vec<WriteOp>), String> {
-    let raw = note_content.lines().nth(line - 1).ok_or_else(|| {
+    // `line` is 1-based and arrives over IPC; guard against 0 so `line - 1`
+    // can never underflow (debug panic / release wrap-around).
+    let idx = line
+        .checked_sub(1)
+        .ok_or_else(|| format!("Invalid line 0 for \"{}\".", note_title))?;
+    let raw = note_content.lines().nth(idx).ok_or_else(|| {
         format!(
             "Line {} no longer exists in \"{}\" — rescan and retry.",
             line, note_title
@@ -113,15 +118,12 @@ pub fn plan_stamp_block_id(
     ))
 }
 
+/// The trailing `^blockId` already on a line, if any. Delegates to the SAME
+/// `clean_task_text` used by verify-before-write, so idempotency detection can
+/// never disagree with verification (e.g. a tab-separated `^id`, which a naive
+/// space-split would miss and then double-stamp).
 fn existing_trailing_id(line: &str) -> Option<String> {
-    let trimmed = line.trim_end();
-    let token = trimmed.rsplit(' ').next()?;
-    let id = token.strip_prefix('^')?;
-    if id.len() >= 4 && id.chars().all(|c| c.is_ascii_alphanumeric()) {
-        Some(id.to_string())
-    } else {
-        None
-    }
+    clean_task_text(line).2
 }
 
 static H2_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^##\s+(.+?)\s*$").unwrap());
@@ -174,24 +176,58 @@ pub fn plan_append_entry(
     }])
 }
 
+/// Reorder a backlog section by block-ID order. Data-safety: reorder must ONLY
+/// change line order, never entry text. We therefore reposition the section's
+/// EXISTING lines verbatim rather than rewriting them from caller-supplied text
+/// (which could drop a stale entry's original content or overwrite hand edits).
+/// `ordered_block_ids` must be an exact permutation of the section's current
+/// entry ids — otherwise abort (guards against a lost/added/substituted entry
+/// from a concurrent edit or a frontend bug).
 pub fn plan_reorder(
     content: &str,
     context: &str,
-    ordered_lines: &[String],
+    ordered_block_ids: &[String],
 ) -> Result<Vec<WriteOp>, String> {
     let (_hl, items) = section_item_lines(content, context)?;
-    if items.len() != ordered_lines.len() {
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Map each current entry's block id to its original, verbatim line text.
+    let mut by_id: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+    let mut current_ids: Vec<String> = Vec::new();
+    for &line in &items {
+        let text = lines[line - 1];
+        let id = ITEM_ID_RE
+            .captures(text)
+            .map(|c| c[1].to_string())
+            .ok_or_else(|| {
+                format!(
+                    "Backlog entry on line {} has no block id; refusing to reorder \"{}\".",
+                    line, context
+                )
+            })?;
+        current_ids.push(id.clone());
+        by_id.insert(id, text);
+    }
+
+    // Membership guard: same multiset of ids, just reordered.
+    let mut want = ordered_block_ids.to_vec();
+    let mut have = current_ids;
+    want.sort();
+    have.sort();
+    if want != have {
         return Err(format!(
-            "Reorder mismatch: backlog section \"{}\" has {} items but {} were provided. Rescan and retry.",
-            context, items.len(), ordered_lines.len()
+            "Reorder mismatch for \"{}\": provided ids do not match the section's current entries. Rescan and retry.",
+            context
         ));
     }
+
+    // Write each existing line into its new position — order changes, text never.
     Ok(items
         .iter()
-        .zip(ordered_lines.iter())
-        .map(|(&line, text)| WriteOp::ReplaceBacklogLine {
+        .zip(ordered_block_ids.iter())
+        .map(|(&line, id)| WriteOp::ReplaceBacklogLine {
             line,
-            text: text.clone(),
+            text: by_id[id].to_string(),
         })
         .collect())
 }
@@ -316,17 +352,10 @@ mod tests {
     }
 
     #[test]
-    fn test_reorder_replaces_section_lines() {
-        // New order: Ops before Janet.
-        let ops = plan_reorder(
-            BL,
-            "Work",
-            &[
-                "- [[Ops^d4e5f6]] Review tix".to_string(),
-                "- [[Janet^a1b2c3]] Ship v2 spec".to_string(),
-            ],
-        )
-        .unwrap();
+    fn test_reorder_repositions_existing_lines_by_id() {
+        // New order: Ops (d4e5f6) before Janet (a1b2c3). Each line's ORIGINAL text
+        // is repositioned verbatim — reorder never rewrites entry text.
+        let ops = plan_reorder(BL, "Work", &["d4e5f6".to_string(), "a1b2c3".to_string()]).unwrap();
         assert_eq!(
             ops,
             vec![
@@ -344,7 +373,34 @@ mod tests {
 
     #[test]
     fn test_reorder_count_mismatch_errs() {
-        assert!(plan_reorder(BL, "Work", &["only one".to_string()]).is_err());
+        assert!(plan_reorder(BL, "Work", &["a1b2c3".to_string()]).is_err());
+    }
+
+    #[test]
+    fn test_reorder_membership_mismatch_errs() {
+        // Same count, but a substituted id (concurrent edit / frontend bug) -> abort.
+        assert!(plan_reorder(BL, "Work", &["a1b2c3".to_string(), "zzzzzz".to_string()]).is_err());
+    }
+
+    #[test]
+    fn test_reorder_preserves_stale_entry_text() {
+        // A stale (unresolved) entry keeps a real block id in the backlog line; a
+        // reorder must preserve its ORIGINAL text, not blank it out.
+        let bl = "# B #np-backlog\n## Work\n- [[Gone^deadid1]] original stale text\n- [[Janet^a1b2c3]] Ship\n";
+        let ops = plan_reorder(bl, "Work", &["a1b2c3".to_string(), "deadid1".to_string()]).unwrap();
+        assert_eq!(
+            ops,
+            vec![
+                WriteOp::ReplaceBacklogLine {
+                    line: 3,
+                    text: "- [[Janet^a1b2c3]] Ship".to_string()
+                },
+                WriteOp::ReplaceBacklogLine {
+                    line: 4,
+                    text: "- [[Gone^deadid1]] original stale text".to_string()
+                },
+            ]
+        );
     }
 
     #[test]
