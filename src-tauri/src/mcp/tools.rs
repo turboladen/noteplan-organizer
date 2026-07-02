@@ -42,14 +42,15 @@ pub(crate) fn parse_get_notes_content(json_text: &str) -> McpResult<String> {
         .ok_or_else(|| "get_notes response missing `content`.".to_string())
 }
 
-/// Parse a `noteplan_edit_content` response; Err if the write did not succeed.
-/// Data-safety: `apply_ops` must learn about a failed write, never infer success
-/// from a non-empty string.
+/// Parse a `noteplan_edit_content` response; Err unless the write EXPLICITLY
+/// succeeded. Data-safety: `apply_ops` must learn about a failed write, never
+/// infer success from a non-empty string or from a merely-absent error — so we
+/// require `success: true`, not just the absence of `success: false`.
 pub(crate) fn parse_edit_response(json_text: &str) -> McpResult<String> {
     let v: Value = serde_json::from_str(json_text)
         .map_err(|e| format!("edit_content: response was not JSON ({e}): {json_text}"))?;
-    if v.get("success").and_then(Value::as_bool) == Some(false) {
-        return Err(format!("edit failed: {}", response_error(&v)));
+    if v.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(format!("edit did not report success: {}", response_error(&v)));
     }
     Ok(v.get("message")
         .and_then(Value::as_str)
@@ -370,5 +371,13 @@ mod tests {
     fn test_parse_edit_response_non_json_errs() {
         // A bare non-JSON string must NOT be treated as success (data-safety).
         assert!(parse_edit_response("ok").is_err());
+    }
+
+    #[test]
+    fn test_parse_edit_response_requires_explicit_success() {
+        // A JSON error body that omits `success:false` must still be a failure —
+        // absence of success:true is not success.
+        assert!(parse_edit_response(r#"{"error":"boom"}"#).is_err());
+        assert!(parse_edit_response(r#"{"message":"did a thing"}"#).is_err());
     }
 }
