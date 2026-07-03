@@ -121,7 +121,11 @@ impl McpState {
             .call_tool(params)
             .await
             .map_err(|e| format!("MCP tool call failed: {e}"))?;
-        log::info!("mcp call '{name}' took {:?}", started.elapsed());
+        log::info!(
+            "mcp call '{name}' took {:?} (backends: {})",
+            started.elapsed(),
+            super::tools::backends_label(&super::tools::extract_text(&result))
+        );
 
         // Data-safety: surface a tool-level error (isError) as an Err at this
         // single chokepoint, so no wrapper can mistake a failed write for success

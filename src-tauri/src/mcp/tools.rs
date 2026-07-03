@@ -95,6 +95,50 @@ fn response_error(v: &Value) -> String {
         .to_string()
 }
 
+/// DATA-SAFETY: assert an MCP response was applied by the running NotePlan app
+/// (the "bridge" backend). Every noteplan-mcp response carries a `backends`
+/// array; "bridge" means NotePlan itself performed the op, so its live index
+/// reflects the change. Any other backend (e.g. direct file manipulation) means
+/// NotePlan's index wouldn't know about the change — the historic data-loss mode.
+/// Ok only if `backends` is present, non-empty, and EVERY entry == "bridge".
+pub(crate) fn assert_bridge_backend(envelope_json: &str, op_desc: &str) -> Result<(), String> {
+    let v: Value = serde_json::from_str(envelope_json)
+        .map_err(|e| format!("{op_desc}: response was not JSON ({e}); aborting"))?;
+    let backends = v.get("backends").and_then(Value::as_array).ok_or_else(|| {
+        format!("{op_desc}: response has no `backends` — cannot confirm NotePlan applied it; aborting")
+    })?;
+    if backends.is_empty() {
+        return Err(format!(
+            "{op_desc}: empty `backends` — cannot confirm NotePlan applied it; aborting"
+        ));
+    }
+    for b in backends {
+        if b.as_str() != Some("bridge") {
+            return Err(format!(
+                "{op_desc}: not applied through NotePlan (backend: {}) — ensure NotePlan is running; aborting",
+                b.as_str().unwrap_or("<non-string>")
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A short "bridge" / "files,bridge" / "?" label of a response's backends, for
+/// per-call logging.
+pub(crate) fn backends_label(envelope_json: &str) -> String {
+    serde_json::from_str::<Value>(envelope_json)
+        .ok()
+        .and_then(|v| {
+            v.get("backends").and_then(Value::as_array).map(|a| {
+                a.iter()
+                    .map(|x| x.as_str().unwrap_or("?"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+        })
+        .unwrap_or_else(|| "?".to_string())
+}
+
 // ---------------------------------------------------------------------------
 // noteplan_get_notes
 // ---------------------------------------------------------------------------
@@ -112,7 +156,11 @@ pub async fn get_note(state: &McpState, addr: &NoteAddr) -> McpResult<String> {
     let mut args = json!({ "includeContent": true, "limit": GET_NOTES_MAX_LINES });
     addr.inject(args.as_object_mut().expect("json object"));
     let result = state.call_tool("noteplan_get_notes", args).await?;
-    parse_get_notes_content(&extract_text(&result))
+    let envelope = extract_text(&result);
+    // Write-path fetch: content must come from NotePlan's live buffer (bridge),
+    // else a subsequent locate could run on stale content — abort before any write.
+    assert_bridge_backend(&envelope, "get_note")?;
+    parse_get_notes_content(&envelope)
 }
 
 /// List all notes, optionally filtered by folder.
@@ -192,7 +240,9 @@ pub async fn insert_in_note(
     });
     addr.inject(args.as_object_mut().expect("json object"));
     let result = state.call_tool("noteplan_edit_content", args).await?;
-    parse_edit_response(&extract_text(&result))
+    let envelope = extract_text(&result);
+    assert_bridge_backend(&envelope, "insert")?;
+    parse_edit_response(&envelope)
 }
 
 /// Replace a single 1-based line in a note (`edit_line`).
@@ -209,7 +259,9 @@ pub async fn replace_line(
     });
     addr.inject(args.as_object_mut().expect("json object"));
     let result = state.call_tool("noteplan_edit_content", args).await?;
-    parse_edit_response(&extract_text(&result))
+    let envelope = extract_text(&result);
+    assert_bridge_backend(&envelope, "edit_line")?;
+    parse_edit_response(&envelope)
 }
 
 /// Delete a single 1-based line from a note (`delete_lines`, one-line range).
@@ -221,7 +273,9 @@ pub async fn delete_line(state: &McpState, addr: &NoteAddr, line: usize) -> McpR
     });
     addr.inject(args.as_object_mut().expect("json object"));
     let result = state.call_tool("noteplan_edit_content", args).await?;
-    parse_edit_response(&extract_text(&result))
+    let envelope = extract_text(&result);
+    assert_bridge_backend(&envelope, "delete_lines")?;
+    parse_edit_response(&envelope)
 }
 
 // ---------------------------------------------------------------------------
@@ -341,7 +395,7 @@ pub async fn get_events(state: &McpState, start_date: &str, end_date: &str) -> M
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_edit_response, parse_get_notes_content};
+    use super::{assert_bridge_backend, parse_edit_response, parse_get_notes_content};
 
     #[test]
     fn test_parse_get_notes_content_ok() {
@@ -399,5 +453,40 @@ mod tests {
         // absence of success:true is not success.
         assert!(parse_edit_response(r#"{"error":"boom"}"#).is_err());
         assert!(parse_edit_response(r#"{"message":"did a thing"}"#).is_err());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_ok() {
+        assert!(assert_bridge_backend(r#"{"success":true,"backends":["bridge"]}"#, "edit_line").is_ok());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_rejects_non_bridge() {
+        // A different backend means NotePlan didn't apply it -> refuse.
+        assert!(assert_bridge_backend(r#"{"backends":["files"]}"#, "edit_line").is_err());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_rejects_mixed() {
+        // Every entry must be "bridge".
+        assert!(assert_bridge_backend(r#"{"backends":["bridge","files"]}"#, "edit_line").is_err());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_rejects_missing_and_empty() {
+        assert!(assert_bridge_backend(r#"{"success":true}"#, "edit_line").is_err());
+        assert!(assert_bridge_backend(r#"{"backends":[]}"#, "edit_line").is_err());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_rejects_non_json() {
+        assert!(assert_bridge_backend("Line 3 updated", "edit_line").is_err());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_error_names_backend_and_op() {
+        let err = assert_bridge_backend(r#"{"backends":["files"]}"#, "get_note").unwrap_err();
+        assert!(err.contains("get_note"), "names the op: {err}");
+        assert!(err.contains("files"), "names the backend: {err}");
     }
 }
