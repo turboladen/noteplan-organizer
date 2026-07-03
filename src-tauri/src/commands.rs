@@ -326,15 +326,19 @@ pub fn get_filing_suggestions(
 // sharing identical cleaned text — is guarded by `locate_unique_task_line`, which
 // aborts on >1 match at write time rather than risk the wrong task.
 //
-// RESIDUAL RISK 2 (TOCTOU) — largely closed: `AppendBlockId` is now relocated by
-// content at write time (`apply_ops` re-fetches via get_note and calls
-// `locate_unique_task_line`), so a structural edit since the planning snapshot
-// can no longer shift the stamp onto an unrelated line — it aborts if the task
-// is gone or ambiguous, and the write text is derived from the FRESH line. The
-// only irreducible remainder is the micro-window between that fresh get_note and
-// the replace within `apply_ops` itself (two consecutive awaits); MCP exposes no
-// compare-and-swap, so this cannot be fully eliminated in-app. It is far
-// narrower than the prior snapshot-to-write window and the write stays additive.
+// RESIDUAL RISK 2 (TOCTOU) — SINGLE-FETCH model (perf: MCP calls cost 2-6s each):
+// `plan_stamp_block_id` locates the target task by unique cleaned-text match on
+// the ONE freshly-fetched source content and emits `AppendBlockId{line,
+// new_line_text}` where new_line_text is that exact located line + " ^id". The
+// executor writes that line directly — NO per-op re-fetch/relocate. Safety rests
+// on: (a) locate aborts on 0/>1 matches, (b) idempotency reuses an existing ^id
+// (both on the fetched content), (c) the source note is fetched immediately
+// before its write, so the locate→write window is one in-memory planning step
+// (no MCP call between). A concurrent structural user edit in that narrow window
+// could still shift the line; MCP has no compare-and-swap, and re-fetching to
+// re-locate costs another 2-6s round-trip that we deliberately dropped. The
+// write stays strictly additive to the located line. Do NOT weaken the plan-time
+// locate — it is now the sole wrong-line guard.
 // ---------------------------------------------------------------------------
 
 /// Gather every block ID already present in the vault (for collision-free gen).
@@ -416,6 +420,28 @@ fn resolve_note(cache: &NoteStoreCache, title: &str) -> ResolvedNote {
     }
 }
 
+/// Fetch a note, preferring the resolved (filename) addressing but falling back
+/// to TITLE if the filename call errors — the server's `filename` format is not
+/// yet runtime-verified, so this keeps the feature working (title, slower) rather
+/// than breaking every write if the guess is wrong. Returns the content AND the
+/// addr that worked, so the subsequent writes use the same known-good addressing.
+async fn fetch_note_resilient(
+    mcp: &McpState,
+    resolved: &ResolvedNote,
+    title: &str,
+) -> Result<(String, NoteAddr), String> {
+    match tools::get_note(mcp, &resolved.addr).await {
+        Ok(content) => Ok((content, resolved.addr.clone())),
+        Err(e) if matches!(resolved.addr, NoteAddr::Filename(_)) => {
+            log::warn!("filename addressing failed for {title:?} ({e}); retrying by title");
+            let addr = NoteAddr::Title(title.to_string());
+            let content = tools::get_note(mcp, &addr).await?;
+            Ok((content, addr))
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Apply the line-level `ops` to `content` in memory, returning the post-write
 /// text. Used to patch the read cache locally (no MCP). Ops targeting one note
 /// are homogeneous per command (rank source = 1 replace; rank backlog = 1
@@ -440,6 +466,11 @@ fn content_after_ops(content: &str, ops: &[WriteOp]) -> String {
                 }
             }
             WriteOp::InsertBacklogLine { line, text } => {
+                // Assumes NotePlan's insert `position:"at-line"` makes the new text
+                // BECOME 1-based `line` (insert-before). This only affects where the
+                // entry shows in the cached display until the next scan reconciles;
+                // it never affects disk. Confirm the server's at-line base in the
+                // manual smoke test.
                 lines.insert((line.saturating_sub(1)).min(lines.len()), text.clone());
             }
             WriteOp::DeleteBacklogLine { line } => {
@@ -478,8 +509,11 @@ fn patch_cache_after_ops(cache: &NoteStoreCache, resolved: &ResolvedNote, pre_co
 }
 
 /// Window during which the file watcher skips its rescan after the app writes.
-/// Covers the writes plus the watcher's 2s debounce, with margin.
-const WRITE_SUPPRESS_WINDOW: Duration = Duration::from_secs(4);
+/// Must exceed a single MCP write's latency (2-6s) plus the watcher's 2s debounce
+/// so the window can't lapse before the debounced rescan fires. Re-armed before
+/// AND after every write op (see `apply_ops`), so the effective coverage is
+/// continuous from the first write to WINDOW after the last.
+const WRITE_SUPPRESS_WINDOW: Duration = Duration::from_secs(10);
 
 /// Apply planned write ops via MCP. Content notes are only ever appended to
 /// (AppendBlockId -> relocate the line by content, then replace it with
@@ -511,6 +545,7 @@ async fn apply_ops(
         } else {
             "backlog-note"
         };
+        // Re-arm before the (2-6s) write so the window can't lapse mid-flight.
         suppress.suppress(WRITE_SUPPRESS_WINDOW);
         match op {
             WriteOp::AppendBlockId {
@@ -558,6 +593,9 @@ async fn apply_ops(
                 tools::delete_line(mcp, backlog_addr, line).await?;
             }
         }
+        // Re-arm from write COMPLETION so the trailing 2s debounce is covered even
+        // if this write ran longer than the window.
+        suppress.suppress(WRITE_SUPPRESS_WINDOW);
     }
     Ok(())
 }
@@ -589,8 +627,10 @@ pub async fn backlog_rank_task(
     // Phase 2: fetch backlog then source; plan on those SINGLE fresh contents
     // (verify-before-write: locate on the same content we write against).
     let t1 = Instant::now();
-    let backlog_content = tools::get_note(&mcp_state, &backlog.addr).await?;
-    let source_content = tools::get_note(&mcp_state, &source.addr).await?;
+    let (backlog_content, backlog_addr) =
+        fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
+    let (source_content, source_addr) =
+        fetch_note_resilient(&mcp_state, &source, &source_note_title).await?;
     let (block_id, source_ops) =
         plan_stamp_block_id(&source_content, &source_note_title, &expected_text, &existing)?;
     let entry = format!("- [[{}^{}]] {}", source_note_title, block_id, expected_text);
@@ -599,11 +639,12 @@ pub async fn backlog_rank_task(
 
     // Phase 3: apply — source stamp (if any) first (right after its fetch), then
     // the backlog insert. apply_ops extends the suppression window per write.
+    // Writes use the addr that worked for the read (known-good addressing).
     let t2 = Instant::now();
     let mut all_ops = source_ops.clone();
     all_ops.extend(backlog_ops.clone());
     let write_result =
-        apply_ops(&mcp_state, &suppress, &source.addr, &backlog.addr, all_ops).await;
+        apply_ops(&mcp_state, &suppress, &source_addr, &backlog_addr, all_ops).await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW); // cover the trailing debounce
     let t_write = t2.elapsed();
 
@@ -618,8 +659,8 @@ pub async fn backlog_rank_task(
         "rank timing: ids {t_ids:?}, mcp+plan {t_plan:?}, writes {t_write:?}, patch {:?}, total {:?} (source via {}, backlog via {})",
         t3.elapsed(),
         t0.elapsed(),
-        source.addr.mode(),
-        backlog.addr.mode()
+        source_addr.mode(),
+        backlog_addr.mode()
     );
     write_result
 }
@@ -639,15 +680,16 @@ pub async fn backlog_reorder(
 ) -> Result<(), String> {
     let t0 = Instant::now();
     let backlog = resolve_note(&cache, &backlog_note_title);
-    let backlog_content = tools::get_note(&mcp_state, &backlog.addr).await?;
+    let (backlog_content, backlog_addr) =
+        fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
     let ops = plan_reorder(&backlog_content, &context, &ordered_block_ids)?;
     let write_result =
-        apply_ops(&mcp_state, &suppress, &backlog.addr, &backlog.addr, ops.clone()).await;
+        apply_ops(&mcp_state, &suppress, &backlog_addr, &backlog_addr, ops.clone()).await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
     if write_result.is_ok() {
         patch_cache_after_ops(&cache, &backlog, &backlog_content, &ops);
     }
-    log::info!("reorder total {:?} (backlog via {})", t0.elapsed(), backlog.addr.mode());
+    log::info!("reorder total {:?} (backlog via {})", t0.elapsed(), backlog_addr.mode());
     write_result
 }
 
@@ -663,15 +705,16 @@ pub async fn backlog_remove(
 ) -> Result<(), String> {
     let t0 = Instant::now();
     let backlog = resolve_note(&cache, &backlog_note_title);
-    let backlog_content = tools::get_note(&mcp_state, &backlog.addr).await?;
+    let (backlog_content, backlog_addr) =
+        fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
     let ops = plan_remove(&backlog_content, &context, &block_id)?;
     let write_result =
-        apply_ops(&mcp_state, &suppress, &backlog.addr, &backlog.addr, ops.clone()).await;
+        apply_ops(&mcp_state, &suppress, &backlog_addr, &backlog_addr, ops.clone()).await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
     if write_result.is_ok() {
         patch_cache_after_ops(&cache, &backlog, &backlog_content, &ops);
     }
-    log::info!("remove total {:?} (backlog via {})", t0.elapsed(), backlog.addr.mode());
+    log::info!("remove total {:?} (backlog via {})", t0.elapsed(), backlog_addr.mode());
     write_result
 }
 
