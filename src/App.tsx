@@ -20,14 +20,20 @@ import { Backlog } from "./components/Backlog";
 import { FilingAssistant } from "./components/FilingAssistant";
 import { FindingsList } from "./components/FindingsList";
 import { ProjectBoard } from "./components/ProjectBoard";
+import { ALL_VIEWS, Sidebar } from "./components/Sidebar";
+import type { AppView, McpUiState } from "./components/Sidebar";
 import { TaskTriage } from "./components/TaskTriage";
 import { SCAN_UPDATE_EVENT, SYSTEM_ASSESSMENT_CATEGORIES } from "./types/api";
 import type { Finding, FindingCategory, Report, ReportStats, Severity } from "./types/api";
 import { getFindingId } from "./utils/findingId";
 
-type AppTab = "findings" | "assessment" | "priorities" | "filing" | "tasks";
-
 const DISMISSED_KEY = "noteplan-organizer:dismissed";
+const LAST_VIEW_KEY = "noteplan-companion:last-view";
+
+function loadInitialView(): AppView {
+  const raw = localStorage.getItem(LAST_VIEW_KEY);
+  return ALL_VIEWS.includes(raw as AppView) ? (raw as AppView) : "board";
+}
 
 function loadDismissed(): Set<string> {
   try {
@@ -73,10 +79,9 @@ function App() {
   const [watching, setWatching] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
-  const [mcpConnected, setMcpConnected] = useState(false);
-  const [mcpConnecting, setMcpConnecting] = useState(false);
+  const [mcpState, setMcpState] = useState<McpUiState>("connecting");
+  const mcpConnected = mcpState === "connected";
   const unlistenRef = useRef<UnlistenFn | null>(null);
-  const hasScannedRef = useRef(false);
 
   // Lifted filter state — FindingsList sidebar
   const [selectedCategory, setSelectedCategory] = useState<
@@ -94,9 +99,12 @@ function App() {
     "all",
   );
 
-  // Tab state
-  const [activeTab, setActiveTab] = useState<AppTab>("findings");
-  const [priorityView, setPriorityView] = useState<"board" | "backlog">("board");
+  // Persisted view routing
+  const [activeView, setActiveView] = useState<AppView>(loadInitialView);
+
+  useEffect(() => {
+    localStorage.setItem(LAST_VIEW_KEY, activeView);
+  }, [activeView]);
 
   // Toast state for watcher updates
   const [toast, setToast] = useState<{ message: string; key: number } | null>(
@@ -192,20 +200,17 @@ function App() {
   // Sync MCP connection state on mount
   useEffect(() => {
     mcpStatus()
-      .then((s) => setMcpConnected(s.connected))
-      .catch(() => {});
+      .then((s) => setMcpState(s.connected ? "connected" : "offline"))
+      .catch(() => setMcpState("offline"));
   }, []);
 
-  const handleScan = async () => {
+  const handleScan = useCallback(async () => {
     if (!notePlanPath) return;
     setScanning(true);
     setError(null);
     try {
       const result = await scanNotes(notePlanPath);
       setReport(result);
-      hasScannedRef.current = true;
-
-      // Auto-start watching after first successful scan
       if (!watching) {
         try {
           await startWatching(notePlanPath);
@@ -219,7 +224,7 @@ function App() {
     } finally {
       setScanning(false);
     }
-  };
+  }, [notePlanPath, watching]);
 
   const handleDump = async () => {
     if (!notePlanPath) return;
@@ -261,24 +266,26 @@ function App() {
     }
   };
 
-  const handleToggleMcp = async () => {
-    setMcpConnecting(true);
+  const handleMcpConnect = useCallback(async () => {
+    setMcpState("connecting");
     try {
-      if (mcpConnected) {
-        await mcpDisconnect();
-        setMcpConnected(false);
-        showToast("MCP server disconnected");
-      } else {
-        const msg = await mcpConnect();
-        setMcpConnected(true);
-        showToast(msg);
-      }
+      await mcpConnect();
+      setMcpState("connected");
+    } catch (e) {
+      console.warn("NotePlan MCP connect failed:", e);
+      setMcpState("offline");
+    }
+  }, []);
+
+  const handleMcpDisconnect = useCallback(async () => {
+    try {
+      await mcpDisconnect();
+      setMcpState("offline");
+      showToast("NotePlan connection closed");
     } catch (e) {
       setError(String(e));
-    } finally {
-      setMcpConnecting(false);
     }
-  };
+  }, [showToast]);
 
   const [fixingIds, setFixingIds] = useState<Set<string>>(new Set());
 
@@ -331,8 +338,8 @@ function App() {
   );
 
   return (
-    <div className="min-h-screen bg-surface flex flex-col">
-      {/* Toast notification */}
+    <div className="min-h-screen bg-surface">
+      {/* Toast notification — unchanged block from the old JSX */}
       {toast && (
         <div
           key={toast.key}
@@ -345,190 +352,97 @@ function App() {
         </div>
       )}
 
-      {/* Header — title + primary action only */}
-      <header className="sticky top-0 z-40 bg-surface-raised/80 backdrop-blur-sm border-b border-border-light px-6 py-3">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-text-primary">
-            NotePlan Organizer
-          </h1>
-          <button
-            onClick={handleScan}
-            disabled={scanning || !notePlanPath}
-            className="px-4 py-2 bg-accent text-white text-sm font-medium rounded-[var(--radius-button)] hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
-          >
-            {scanning
-              ? "Scanning..."
-              : hasScannedRef.current
-              ? "Rescan"
-              : "Scan Notes"}
-          </button>
-        </div>
-      </header>
-
-      {/* Status tray — secondary info & controls */}
-      {notePlanPath && (
-        <div className="flex items-center justify-between px-6 py-2 border-b border-border-light bg-surface text-xs">
-          <span className="text-text-muted truncate min-w-0">
-            {notePlanPath.split("/").slice(-3).join("/")}
-          </span>
-          <div className="flex items-center gap-3 flex-shrink-0 text-text-tertiary">
-            {report && (
-              <button
-                type="button"
-                onClick={handleToggleWatch}
-                className="hover:text-text-secondary transition-colors flex items-center gap-1.5"
-              >
-                {watching && <span className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />}
-                {watching ? "Watching" : "Watch"}
-              </button>
-            )}
-            {report && (
-              <button
-                type="button"
-                onClick={handleToggleMcp}
-                disabled={mcpConnecting}
-                className="hover:text-text-secondary transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                title={mcpConnected ? "Disconnect NotePlan MCP server" : "Connect to NotePlan MCP server for write actions"}
-              >
-                {mcpConnected && <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />}
-                {mcpConnecting ? "Connecting…" : "MCP"}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleDump}
-              className="hover:text-text-secondary transition-colors"
-            >
-              System Dump
-            </button>
-            {appVersion && (
-              <span className="border-l border-border-light pl-3 text-text-tertiary">
-                {appVersion}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Main content */}
-      <main className="flex-1 px-6 py-6">
-        {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-[var(--radius-card)] px-4 py-3 text-sm">
-            {error}
-          </div>
-        )}
-
-        {!report && !scanning && activeTab !== "tasks" && (
-          <div className="text-center py-24 animate-fade-in">
-            <h2 className="text-xl font-medium text-text-secondary mb-2">
-              Ready to analyze your notes
-            </h2>
-            <p className="text-text-tertiary mb-6 max-w-md mx-auto">
-              Click "Scan Notes" to parse your NotePlan files and check for structural issues, broken links, stale
-              tasks, and more.
+      {!notePlanPath ? (
+        <div className="text-center py-24 animate-fade-in">
+          <h2 className="text-xl font-medium text-text-secondary mb-2">
+            {error ? "NotePlan not found" : "Looking for NotePlan…"}
+          </h2>
+          {error && (
+            <p className="text-text-tertiary max-w-md mx-auto text-sm">
+              Could not auto-detect the NotePlan data directory. Make sure
+              NotePlan (App Store, Setapp, or iCloud) is installed, then relaunch
+              NotePlan Companion.
             </p>
-            {notePlanPath
-              ? (
-                <p className="text-xs text-text-muted">
-                  Found NotePlan at: {notePlanPath}
-                </p>
-              )
-              : (
-                <p className="text-xs text-amber-600">
-                  NotePlan data directory not found. Make sure NotePlan is installed.
-                </p>
+          )}
+        </div>
+      ) : (
+        <div className="flex">
+          <Sidebar
+            activeView={activeView}
+            onSelectView={setActiveView}
+            badges={
+              report
+                ? {
+                    findings: findingsFindings.length,
+                    assessment: assessmentFindings.length,
+                  }
+                : {}
+            }
+            scannedAt={report?.scanned_at ?? null}
+            scanning={scanning}
+            onRescan={handleScan}
+            mcpState={mcpState}
+            onMcpRetry={handleMcpConnect}
+            onMcpDisconnect={handleMcpDisconnect}
+            watching={watching}
+            onToggleWatch={handleToggleWatch}
+            version={appVersion}
+            notePlanPath={notePlanPath}
+            onSystemDump={handleDump}
+          />
+
+          <main className="flex-1 min-w-0 px-6 py-6">
+            {error && (
+              <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-[var(--radius-card)] px-4 py-3 text-sm">
+                {error}
+              </div>
+            )}
+
+            {activeView === "board" && <ProjectBoard basePath={notePlanPath} />}
+
+            {activeView === "backlog" && (
+              <Backlog
+                basePath={notePlanPath}
+                mcpConnected={mcpConnected}
+                onToast={showToast}
+                onReconnect={handleMcpConnect}
+              />
+            )}
+
+            {activeView === "tasks" && (
+              <TaskTriage
+                mcpConnected={mcpConnected}
+                onToast={showToast}
+                onReconnect={handleMcpConnect}
+              />
+            )}
+
+            {activeView === "filing" && (
+              <FilingAssistant
+                basePath={notePlanPath}
+                mcpConnected={mcpConnected}
+                onToast={showToast}
+                onReconnect={handleMcpConnect}
+              />
+            )}
+
+            {(activeView === "findings" || activeView === "assessment") &&
+              !report && (
+                <div className="text-center py-24">
+                  <div className="flex items-center justify-center gap-1 mb-4">
+                    <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:0ms]" />
+                    <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:150ms]" />
+                    <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:300ms]" />
+                  </div>
+                  <h2 className="text-lg text-text-tertiary">
+                    {scanning
+                      ? "Scanning your notes…"
+                      : "Waiting for the first scan"}
+                  </h2>
+                </div>
               )}
-            <button
-              type="button"
-              onClick={() => setActiveTab("tasks")}
-              className="mt-4 text-xs text-accent hover:underline"
-            >
-              Or jump to Task Triage (requires MCP)
-            </button>
-          </div>
-        )}
 
-        {scanning && (
-          <div className="text-center py-24">
-            <div className="flex items-center justify-center gap-1 mb-4">
-              <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:0ms]" />
-              <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:150ms]" />
-              <span className="w-2 h-2 bg-accent rounded-full animate-bounce [animation-delay:300ms]" />
-            </div>
-            <h2 className="text-lg text-text-tertiary">
-              Scanning your notes...
-            </h2>
-          </div>
-        )}
-
-        {report && (
-          <>
-            {/* Segmented control tabs */}
-            <div className="inline-flex items-center bg-surface-hover rounded-[var(--radius-button)] p-0.5 mb-5">
-              <button
-                type="button"
-                onClick={() => setActiveTab("findings")}
-                className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
-                  activeTab === "findings"
-                    ? "bg-surface-raised text-text-primary shadow-sm"
-                    : "text-text-tertiary hover:text-text-secondary"
-                }`}
-              >
-                Findings
-                <span className="ml-1.5 text-xs font-mono opacity-60">
-                  {findingsFindings.length}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("assessment")}
-                className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
-                  activeTab === "assessment"
-                    ? "bg-surface-raised text-text-primary shadow-sm"
-                    : "text-text-tertiary hover:text-text-secondary"
-                }`}
-              >
-                Assessment
-                <span className="ml-1.5 text-xs font-mono opacity-60">
-                  {assessmentFindings.length}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("priorities")}
-                className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
-                  activeTab === "priorities"
-                    ? "bg-surface-raised text-text-primary shadow-sm"
-                    : "text-text-tertiary hover:text-text-secondary"
-                }`}
-              >
-                Priorities
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("filing")}
-                className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
-                  activeTab === "filing"
-                    ? "bg-surface-raised text-text-primary shadow-sm"
-                    : "text-text-tertiary hover:text-text-secondary"
-                }`}
-              >
-                Filing
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("tasks")}
-                className={`px-4 py-1.5 text-sm font-medium rounded-[8px] transition-all ${
-                  activeTab === "tasks"
-                    ? "bg-surface-raised text-text-primary shadow-sm"
-                    : "text-text-tertiary hover:text-text-secondary"
-                }`}
-              >
-                Tasks
-              </button>
-            </div>
-
-            {activeTab === "findings" && (
+            {activeView === "findings" && report && (
               <FindingsList
                 findings={findingsFindings}
                 basePath={report.noteplan_path}
@@ -545,7 +459,7 @@ function App() {
               />
             )}
 
-            {activeTab === "assessment" && (
+            {activeView === "assessment" && report && (
               <>
                 <div className="flex items-center justify-end mb-3">
                   <button
@@ -554,7 +468,7 @@ function App() {
                     disabled={!notePlanPath || exporting}
                     className="px-3 py-1.5 text-xs font-medium rounded-[var(--radius-button)] border border-border-light bg-surface text-text-secondary hover:bg-surface-hover hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
-                    {exporting ? "Assembling\u2026" : "Export Context for Claude"}
+                    {exporting ? "Assembling…" : "Export Context for Claude"}
                   </button>
                 </div>
                 <FindingsList
@@ -573,79 +487,9 @@ function App() {
                 />
               </>
             )}
-
-            {activeTab === "priorities" && (
-              <>
-                <div className="inline-flex items-center bg-surface-hover rounded-[var(--radius-button)] p-0.5 mb-4">
-                  <button
-                    type="button"
-                    onClick={() => setPriorityView("board")}
-                    className={`px-3 py-1 text-xs font-medium rounded-[8px] transition-all ${
-                      priorityView === "board"
-                        ? "bg-surface-raised text-text-primary shadow-sm"
-                        : "text-text-tertiary hover:text-text-secondary"
-                    }`}
-                  >
-                    Board
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPriorityView("backlog")}
-                    className={`px-3 py-1 text-xs font-medium rounded-[8px] transition-all ${
-                      priorityView === "backlog"
-                        ? "bg-surface-raised text-text-primary shadow-sm"
-                        : "text-text-tertiary hover:text-text-secondary"
-                    }`}
-                  >
-                    Backlog
-                  </button>
-                </div>
-                {priorityView === "board" ? (
-                  <ProjectBoard basePath={report.noteplan_path} />
-                ) : (
-                  <Backlog
-                    basePath={report.noteplan_path}
-                    mcpConnected={mcpConnected}
-                    onToast={showToast}
-                  />
-                )}
-              </>
-            )}
-
-            {activeTab === "filing" && (
-              <FilingAssistant
-                basePath={report.noteplan_path}
-                mcpConnected={mcpConnected}
-                onToast={showToast}
-              />
-            )}
-
-          </>
-        )}
-
-        {activeTab === "tasks" && !report && (
-          <>
-            <button
-              type="button"
-              onClick={() => setActiveTab("findings")}
-              className="text-xs text-accent hover:underline mb-5"
-            >
-              &larr; Back to scan
-            </button>
-            <TaskTriage
-              mcpConnected={mcpConnected}
-              onToast={showToast}
-            />
-          </>
-        )}
-
-        {activeTab === "tasks" && report && (
-          <TaskTriage
-            mcpConnected={mcpConnected}
-            onToast={showToast}
-          />
-        )}
-      </main>
+          </main>
+        </div>
+      )}
     </div>
   );
 }
