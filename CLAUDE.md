@@ -13,6 +13,8 @@ cargo check --manifest-path src-tauri/Cargo.toml # Type-check Rust without build
 bunx tsc --noEmit    # Type-check TypeScript
 ```
 
+A `justfile` mirrors these: `just install / dev / build / test / check`.
+
 `cargo test` also runs the integration tests in `src-tauri/tests/fixture_vault.rs`,
 which exercise the whole read pipeline (`scan_noteplan_dir` → `build_project_board`
 / `build_backlog` + parser edges) against the committed fixture vault at
@@ -51,7 +53,17 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
   - `block.rs` — Extracts `ContentBlock`s (Heading/TaskGroup/Paragraph) from daily notes
   - `filing.rs` — Builds `FilingTarget` list from Regular notes in the hierarchy
   - `matcher.rs` — Scores block→target matches (wiki links, tag overlap, title keywords)
-- `analyzer/` — 8 modules implementing the `Analyzer` trait; `run_all_analyzers()` collects findings
+  Sub-modules for the Priorities board (spec: `docs/superpowers/specs/2026-07-01-project-priority-board-design.md`):
+  - `task.rs` — `parse_task_line`: THE single tokenizer for task lines (state, `!` priority,
+    `^blockId`, dates, tags); all task detection must go through it, never a new regex
+  - `projects.rs` — `#np-projects` control note → ranked project Board (`build_project_board`)
+  - `backlog.rs` — `#np-backlog` control note → ranked+pool Backlog (`build_backlog`)
+- `backlog_write.rs` — SAFETY CORE for all NotePlan writes: pure planners emit `WriteOp` (only
+  `AppendBlockId` can touch a content note, strictly additive); `locate_unique_task_line`
+  relocates by unique cleaned-text (abort on 0/>1). New write features MUST use this pattern.
+- `app_state.rs` — `NoteStoreCache` (READS-ONLY: display + block-id collision set, never write
+  verification) and `WriteSuppression` (watcher skips rescans of the app's own writes)
+- `analyzer/` — 16 modules implementing the `Analyzer` trait; `run_all_analyzers()` collects findings
 - `watcher.rs` — File watching via `notify` crate with 2s debounce; shares `perform_scan()` with
   manual scan
 - `build.rs` — Extends `tauri_build` to embed `GIT_SHORT_REV` env var at compile time via
@@ -75,6 +87,8 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
   data).
 - `components/NotePreview.tsx` — Inline sticky preview panel (w-80, not a fixed overlay);
   participates in FindingsList flex layout
+- `components/ProjectBoard.tsx` / `components/Backlog.tsx` — Priorities tab (Board = read-only
+  ranked projects; Backlog = drag-to-rank with MCP writes, disabled when MCP is off)
 - `utils/noteplanUrl.ts` — Builds `noteplan://` x-callback-url links
 
 ## Critical Gotchas
@@ -111,7 +125,25 @@ custom Rust commands for app metadata.
 
 **No custom file writes.** The app never writes to NotePlan files directly. Write operations are only
 permitted through NotePlan's own MCP server (`mcp/tools.rs`), which is a trusted, user-initiated
-channel. Custom file mutation code remains off-limits.
+channel. Custom file mutation code remains off-limits. All writes flow through the
+`backlog_write.rs` planners + `apply_ops` executor (see Architecture) and end with a HUMAN-run
+empirical gate (rank a throwaway task, inspect the file on disk) before merge — agents must
+never spawn the MCP server against the user's real vault (use the fixture vault for reads).
+
+**NotePlan MCP realities (verified live — see `docs/testing-with-mcp-inspector.md`):**
+- **Address notes by `filename` (relative path), never by `title`**: title resolution costs
+  2–6 s per call; filename is 3–17 ms (~400x). Title is fallback only.
+- The real tool schemas differ from intuition: `noteplan_get_notes` has NO `action` param,
+  needs `includeContent:true`, returns a JSON envelope (body in `.content`), and clamps
+  `limit` to 1000 (`hasMore:true` → we abort, never operate on partial content).
+  `noteplan_edit_content` actions are `edit_line`/`delete_lines`/`insert`/`append` with a
+  `content` field (not `replace`/`delete`/`text`). Verify schemas in MCP Inspector before
+  writing new wrappers.
+- **`dryRun`/`confirmationToken` are BROKEN upstream** (writes go through anyway;
+  NotePlan/noteplan-mcp#8) — never rely on them for safety.
+- Every write-path response must report `backends:["bridge"]` (= the running NotePlan app
+  applied it); `assert_bridge_backend` enforces this — non-bridge ops abort.
+- Parse `success:true` from every edit response; `call_tool` also rejects `isError` results.
 
 **MCP is optional**: The MCP client (`mcp/client.rs`) wraps `RunningService` in
 `Arc<Mutex<Option<...>>>`. All MCP tool calls check `is_some()` first and return clear errors if
@@ -186,7 +218,8 @@ cause stale revs because `.git/refs` is a directory, not a file).
 
 ## Excluded from Analysis
 
-Analyzers skip notes in `@Trash`, `@Archive`, and `_attachments` folders. Templates (in
+Analyzers skip notes in `@Trash`, `@Archive`, `_attachments`, and `_NotePlan Organizer`
+(the app's own control notes: `#np-projects`, `#np-backlog`) folders. Templates (in
 `@Templates`) are parsed but excluded from most checks (orphaned, stale tasks).
 
 
