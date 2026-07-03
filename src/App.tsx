@@ -200,8 +200,15 @@ function App() {
   // Sync MCP connection state on mount
   useEffect(() => {
     mcpStatus()
-      .then((s) => setMcpState(s.connected ? "connected" : "offline"))
-      .catch(() => setMcpState("offline"));
+      .then((s) => {
+        if (s.connected) {
+          setMcpState("connected");
+        } else {
+          handleMcpConnect();
+        }
+      })
+      .catch(() => handleMcpConnect());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once at launch
   }, []);
 
   const handleScan = useCallback(async () => {
@@ -225,6 +232,15 @@ function App() {
       setScanning(false);
     }
   }, [notePlanPath, watching]);
+
+  const autoScanFiredRef = useRef(false);
+
+  useEffect(() => {
+    if (notePlanPath && !autoScanFiredRef.current) {
+      autoScanFiredRef.current = true;
+      handleScan();
+    }
+  }, [notePlanPath, handleScan]);
 
   const handleDump = async () => {
     if (!notePlanPath) return;
