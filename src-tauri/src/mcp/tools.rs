@@ -19,6 +19,34 @@ pub(crate) fn extract_text(result: &rmcp::model::CallToolResult) -> String {
 /// Result type alias for MCP tool calls.
 pub type McpResult<T> = Result<T, String>;
 
+/// How to address a note to the NotePlan MCP server. Title resolution appears to
+/// be a server-side search (slow); `Filename` is the exact relative path (e.g.
+/// "Notes/…/x.md") and should skip that search. Callers prefer `Filename` when
+/// the cached store can supply the path, falling back to `Title`.
+#[derive(Debug, Clone)]
+pub enum NoteAddr {
+    Title(String),
+    Filename(String),
+}
+
+impl NoteAddr {
+    /// Inject the addressing key into an MCP argument object.
+    fn inject(&self, obj: &mut serde_json::Map<String, Value>) {
+        match self {
+            NoteAddr::Title(t) => obj.insert("title".into(), json!(t)),
+            NoteAddr::Filename(f) => obj.insert("filename".into(), json!(f)),
+        };
+    }
+
+    /// "title" | "filename" — for logging which addressing mode was used.
+    pub fn mode(&self) -> &'static str {
+        match self {
+            NoteAddr::Title(_) => "title",
+            NoteAddr::Filename(_) => "filename",
+        }
+    }
+}
+
 /// Parse a `noteplan_get_notes` (includeContent) envelope into the raw note
 /// body. The tool returns a JSON object like
 /// `{ "success": true, "content": "l1\nl2\n...", "hasMore": false, ... }`.
@@ -67,6 +95,50 @@ fn response_error(v: &Value) -> String {
         .to_string()
 }
 
+/// DATA-SAFETY: assert an MCP response was applied by the running NotePlan app
+/// (the "bridge" backend). Every noteplan-mcp response carries a `backends`
+/// array; "bridge" means NotePlan itself performed the op, so its live index
+/// reflects the change. Any other backend (e.g. direct file manipulation) means
+/// NotePlan's index wouldn't know about the change — the historic data-loss mode.
+/// Ok only if `backends` is present, non-empty, and EVERY entry == "bridge".
+pub(crate) fn assert_bridge_backend(envelope_json: &str, op_desc: &str) -> Result<(), String> {
+    let v: Value = serde_json::from_str(envelope_json)
+        .map_err(|e| format!("{op_desc}: response was not JSON ({e}); aborting"))?;
+    let backends = v.get("backends").and_then(Value::as_array).ok_or_else(|| {
+        format!("{op_desc}: response has no `backends` — cannot confirm NotePlan applied it; aborting")
+    })?;
+    if backends.is_empty() {
+        return Err(format!(
+            "{op_desc}: empty `backends` — cannot confirm NotePlan applied it; aborting"
+        ));
+    }
+    for b in backends {
+        if b.as_str() != Some("bridge") {
+            return Err(format!(
+                "{op_desc}: not applied through NotePlan (backend: {}) — ensure NotePlan is running; aborting",
+                b.as_str().unwrap_or("<non-string>")
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A short "bridge" / "files,bridge" / "?" label of a response's backends, for
+/// per-call logging.
+pub(crate) fn backends_label(envelope_json: &str) -> String {
+    serde_json::from_str::<Value>(envelope_json)
+        .ok()
+        .and_then(|v| {
+            v.get("backends").and_then(Value::as_array).map(|a| {
+                a.iter()
+                    .map(|x| x.as_str().unwrap_or("?"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+        })
+        .unwrap_or_else(|| "?".to_string())
+}
+
 // ---------------------------------------------------------------------------
 // noteplan_get_notes
 // ---------------------------------------------------------------------------
@@ -78,16 +150,17 @@ fn response_error(v: &Value) -> String {
 /// fails *safe* (aborts with no write) rather than operating on partial content.
 const GET_NOTES_MAX_LINES: u64 = 1000;
 
-/// Get a note's raw body by title. Returns the parsed `.content` string — not
-/// the JSON envelope — and refuses truncated (`hasMore`) responses.
-pub async fn get_note(state: &McpState, title: &str) -> McpResult<String> {
-    let result = state
-        .call_tool(
-            "noteplan_get_notes",
-            json!({ "title": title, "includeContent": true, "limit": GET_NOTES_MAX_LINES }),
-        )
-        .await?;
-    parse_get_notes_content(&extract_text(&result))
+/// Get a note's raw body by title or filename. Returns the parsed `.content`
+/// string — not the JSON envelope — and refuses truncated (`hasMore`) responses.
+pub async fn get_note(state: &McpState, addr: &NoteAddr) -> McpResult<String> {
+    let mut args = json!({ "includeContent": true, "limit": GET_NOTES_MAX_LINES });
+    addr.inject(args.as_object_mut().expect("json object"));
+    let result = state.call_tool("noteplan_get_notes", args).await?;
+    let envelope = extract_text(&result);
+    // Write-path fetch: content must come from NotePlan's live buffer (bridge),
+    // else a subsequent locate could run on stale content — abort before any write.
+    assert_bridge_backend(&envelope, "get_note")?;
+    parse_get_notes_content(&envelope)
 }
 
 /// List all notes, optionally filtered by folder.
@@ -155,60 +228,54 @@ pub async fn append_to_note(state: &McpState, title: &str, text: &str) -> McpRes
 /// Insert text at a specific 1-based line in a note.
 pub async fn insert_in_note(
     state: &McpState,
-    title: &str,
+    addr: &NoteAddr,
     text: &str,
     line: usize,
 ) -> McpResult<String> {
-    let result = state
-        .call_tool(
-            "noteplan_edit_content",
-            json!({
-                "action": "insert",
-                "title": title,
-                "content": text,
-                "position": "at-line",
-                "line": line,
-            }),
-        )
-        .await?;
-    parse_edit_response(&extract_text(&result))
+    let mut args = json!({
+        "action": "insert",
+        "content": text,
+        "position": "at-line",
+        "line": line,
+    });
+    addr.inject(args.as_object_mut().expect("json object"));
+    let result = state.call_tool("noteplan_edit_content", args).await?;
+    let envelope = extract_text(&result);
+    assert_bridge_backend(&envelope, "insert")?;
+    parse_edit_response(&envelope)
 }
 
 /// Replace a single 1-based line in a note (`edit_line`).
 pub async fn replace_line(
     state: &McpState,
-    title: &str,
+    addr: &NoteAddr,
     line: usize,
     text: &str,
 ) -> McpResult<String> {
-    let result = state
-        .call_tool(
-            "noteplan_edit_content",
-            json!({
-                "action": "edit_line",
-                "title": title,
-                "line": line,
-                "content": text,
-            }),
-        )
-        .await?;
-    parse_edit_response(&extract_text(&result))
+    let mut args = json!({
+        "action": "edit_line",
+        "line": line,
+        "content": text,
+    });
+    addr.inject(args.as_object_mut().expect("json object"));
+    let result = state.call_tool("noteplan_edit_content", args).await?;
+    let envelope = extract_text(&result);
+    assert_bridge_backend(&envelope, "edit_line")?;
+    parse_edit_response(&envelope)
 }
 
 /// Delete a single 1-based line from a note (`delete_lines`, one-line range).
-pub async fn delete_line(state: &McpState, title: &str, line: usize) -> McpResult<String> {
-    let result = state
-        .call_tool(
-            "noteplan_edit_content",
-            json!({
-                "action": "delete_lines",
-                "title": title,
-                "startLine": line,
-                "endLine": line,
-            }),
-        )
-        .await?;
-    parse_edit_response(&extract_text(&result))
+pub async fn delete_line(state: &McpState, addr: &NoteAddr, line: usize) -> McpResult<String> {
+    let mut args = json!({
+        "action": "delete_lines",
+        "startLine": line,
+        "endLine": line,
+    });
+    addr.inject(args.as_object_mut().expect("json object"));
+    let result = state.call_tool("noteplan_edit_content", args).await?;
+    let envelope = extract_text(&result);
+    assert_bridge_backend(&envelope, "delete_lines")?;
+    parse_edit_response(&envelope)
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +395,7 @@ pub async fn get_events(state: &McpState, start_date: &str, end_date: &str) -> M
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_edit_response, parse_get_notes_content};
+    use super::{assert_bridge_backend, parse_edit_response, parse_get_notes_content};
 
     #[test]
     fn test_parse_get_notes_content_ok() {
@@ -386,5 +453,40 @@ mod tests {
         // absence of success:true is not success.
         assert!(parse_edit_response(r#"{"error":"boom"}"#).is_err());
         assert!(parse_edit_response(r#"{"message":"did a thing"}"#).is_err());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_ok() {
+        assert!(assert_bridge_backend(r#"{"success":true,"backends":["bridge"]}"#, "edit_line").is_ok());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_rejects_non_bridge() {
+        // A different backend means NotePlan didn't apply it -> refuse.
+        assert!(assert_bridge_backend(r#"{"backends":["files"]}"#, "edit_line").is_err());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_rejects_mixed() {
+        // Every entry must be "bridge".
+        assert!(assert_bridge_backend(r#"{"backends":["bridge","files"]}"#, "edit_line").is_err());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_rejects_missing_and_empty() {
+        assert!(assert_bridge_backend(r#"{"success":true}"#, "edit_line").is_err());
+        assert!(assert_bridge_backend(r#"{"backends":[]}"#, "edit_line").is_err());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_rejects_non_json() {
+        assert!(assert_bridge_backend("Line 3 updated", "edit_line").is_err());
+    }
+
+    #[test]
+    fn test_assert_bridge_backend_error_names_backend_and_op() {
+        let err = assert_bridge_backend(r#"{"backends":["files"]}"#, "get_note").unwrap_err();
+        assert!(err.contains("get_note"), "names the op: {err}");
+        assert!(err.contains("files"), "names the backend: {err}");
     }
 }

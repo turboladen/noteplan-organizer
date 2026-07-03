@@ -10,14 +10,14 @@ use std::sync::LazyLock;
 /// note. This encodes the data-safety invariant in the type system.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WriteOp {
-    /// Append ` ^block_id` to a task line in a CONTENT note. The line is NOT
-    /// pinned by number: the executor relocates it by `expected_text` against
-    /// freshly-fetched content at write time (a structural edit since the
-    /// snapshot must not shift the stamp onto an unrelated line), so this stays
-    /// strictly additive to the intended task.
+    /// Append ` ^block_id` to a task line in a CONTENT note. `line`/`new_line_text`
+    /// are computed by `plan_stamp_block_id` from the SAME freshly-fetched content
+    /// the executor writes against (single-fetch model): the line was located by
+    /// unique cleaned-text match on that content and `new_line_text` is that exact
+    /// line + " ^id" (strictly additive). The executor writes this line directly.
     AppendBlockId {
-        note_title: String,
-        expected_text: String,
+        line: usize,
+        new_line_text: String,
         block_id: String,
     },
     /// Insert a line into the BACKLOG note (app-owned).
@@ -68,19 +68,20 @@ pub fn generate_block_id(seed: &str, existing: &HashSet<String>) -> String {
     }
 }
 
-/// Locate the target task by CONTENT (not by a snapshot line number), then plan
-/// the stamp. Locating by unique cleaned-text match is the same authoritative
-/// gate the executor uses at write time, so the planner can't false-abort on a
-/// line-base/drift mismatch and can't be pointed at an ambiguous duplicate.
+/// Locate the target task by unique cleaned-text match on `note_content` (the
+/// SINGLE freshly-fetched content the executor will also write against — the
+/// single-fetch model), then plan the stamp against that same content.
 /// - Aborts (Err) if the task is gone (0 matches) or ambiguous (>1 matches).
 /// - Idempotent: if the located line already carries a block ID, reuse it (no op).
+/// - Otherwise emits AppendBlockId with the located line + `line + " ^id"`
+///   (strictly additive to that exact line).
 pub fn plan_stamp_block_id(
     note_content: &str,
     note_title: &str,
     expected_display_text: &str,
     existing_ids: &HashSet<String>,
 ) -> Result<(String, Vec<WriteOp>), String> {
-    let (_line, raw) = locate_unique_task_line(note_content, expected_display_text)?;
+    let (line, raw) = locate_unique_task_line(note_content, expected_display_text)?;
 
     // Already stamped? (trailing ^id) — reuse, no write.
     if let Some(id) = existing_trailing_id(&raw) {
@@ -91,13 +92,12 @@ pub fn plan_stamp_block_id(
         &format!("{}:{}", note_title, expected_display_text),
         existing_ids,
     );
-    // The op carries the expected text, not the snapshot line/text: the executor
-    // relocates by content against fresh note content at write time.
+    let new_line_text = format!("{} ^{}", raw.trim_end(), id);
     Ok((
         id.clone(),
         vec![WriteOp::AppendBlockId {
-            note_title: note_title.to_string(),
-            expected_text: expected_display_text.to_string(),
+            line,
+            new_line_text,
             block_id: id,
         }],
     ))
@@ -311,13 +311,14 @@ mod tests {
         assert_eq!(ops.len(), 1);
         match &ops[0] {
             WriteOp::AppendBlockId {
-                note_title,
-                expected_text,
+                line,
+                new_line_text,
                 block_id,
             } => {
-                assert_eq!(note_title, "Janet");
-                assert_eq!(expected_text, "Ship v2 spec");
+                assert_eq!(*line, 2, "located line of the task");
                 assert_eq!(block_id, &id);
+                // Strictly additive: the exact source line + " ^id".
+                assert_eq!(new_line_text, &format!("* Ship v2 spec !! ^{}", id));
             }
             other => panic!("expected AppendBlockId, got {:?}", other),
         }
@@ -560,8 +561,8 @@ mod tests {
         // that mutates a user content note. Any future variant must consciously
         // decide its classification here.
         assert!(WriteOp::AppendBlockId {
-            note_title: "N".into(),
-            expected_text: "x".into(),
+            line: 1,
+            new_line_text: "x ^abcd".into(),
             block_id: "abcd".into(),
         }
         .touches_content_note());

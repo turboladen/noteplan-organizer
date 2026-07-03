@@ -76,6 +76,35 @@ impl NoteStore {
         let path = format!("Calendar/{}.md", compact);
         self.path_index.contains_key(&path)
     }
+
+    /// Replace the note at `note.relative_path` (or insert it if new), keeping
+    /// `title_index` and `path_index` consistent. Used for the scoped cache
+    /// refresh after the app writes to a note — re-parse that one file and swap
+    /// it in, instead of rescanning the whole vault.
+    pub fn update_note(&mut self, note: Note) {
+        if let Some(&i) = self.path_index.get(&note.relative_path) {
+            let old_title = self.notes[i].title.to_lowercase();
+            let new_title = note.title.to_lowercase();
+            if old_title != new_title {
+                if let Some(bucket) = self.title_index.get_mut(&old_title) {
+                    bucket.retain(|&x| x != i);
+                    if bucket.is_empty() {
+                        self.title_index.remove(&old_title);
+                    }
+                }
+                self.title_index.entry(new_title).or_default().push(i);
+            }
+            self.notes[i] = note;
+        } else {
+            let i = self.notes.len();
+            self.title_index
+                .entry(note.title.to_lowercase())
+                .or_default()
+                .push(i);
+            self.path_index.insert(note.relative_path.clone(), i);
+            self.notes.push(note);
+        }
+    }
 }
 
 /// Scan a NotePlan directory and parse all notes.
@@ -156,5 +185,50 @@ mod tests {
         assert!(is_excluded_relative("Notes/_attachments/x.png"));
         assert!(is_excluded_relative("Notes/_NotePlan Organizer/Backlog.md"));
         assert!(!is_excluded_relative("Notes/32 - Product Ownership/32.01 - Janet.md"));
+    }
+
+    fn note_fixture(rel: &str, content: &str) -> Note {
+        parse_note(&format!("/abs/{rel}"), rel, content, NoteKind::Regular)
+    }
+
+    #[test]
+    fn test_update_note_replaces_in_place_and_keeps_indexes() {
+        let mut store = NoteStore::new(vec![
+            note_fixture("Notes/a.md", "# A\n* one"),
+            note_fixture("Notes/b.md", "# B\n* two"),
+        ]);
+        // Re-parse a.md with new content (same title, same path).
+        store.update_note(note_fixture("Notes/a.md", "# A\n* one !!\n* extra ^abc123"));
+
+        assert_eq!(store.notes.len(), 2, "replaced, not appended");
+        let i = store.path_index["Notes/a.md"];
+        assert_eq!(store.notes[i].tasks.len(), 2);
+        assert!(store.notes[i]
+            .tasks
+            .iter()
+            .any(|t| t.block_id.as_deref() == Some("abc123")));
+        // b.md untouched and still indexed.
+        assert_eq!(store.notes[store.path_index["Notes/b.md"]].title, "B");
+        assert!(store.has_note_titled("A"));
+    }
+
+    #[test]
+    fn test_update_note_title_change_rewires_title_index() {
+        let mut store = NoteStore::new(vec![note_fixture("Notes/a.md", "# Old Title\n* x")]);
+        store.update_note(note_fixture("Notes/a.md", "# New Title\n* x"));
+
+        assert!(!store.has_note_titled("Old Title"), "old title dropped");
+        assert!(store.has_note_titled("New Title"), "new title indexed");
+        assert_eq!(store.title_index.get("old title"), None);
+    }
+
+    #[test]
+    fn test_update_note_inserts_new_file() {
+        let mut store = NoteStore::new(vec![note_fixture("Notes/a.md", "# A\n* x")]);
+        store.update_note(note_fixture("Notes/c.md", "# C\n* y"));
+
+        assert_eq!(store.notes.len(), 2, "new file appended");
+        assert!(store.has_note_titled("C"));
+        assert_eq!(store.notes[store.path_index["Notes/c.md"]].title, "C");
     }
 }

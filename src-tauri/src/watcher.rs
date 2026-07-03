@@ -4,8 +4,9 @@ use std::time::Duration;
 
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::app_state::{NoteStoreCache, WriteSuppression};
 use crate::commands::perform_scan;
 
 /// Event name emitted to the frontend on file-change rescans.
@@ -69,9 +70,20 @@ pub fn start_watching(
                         return;
                     }
 
+                    // Skip the full rescan if the app itself just wrote these
+                    // files (rank/reorder/remove) — otherwise our own writes
+                    // trigger the whole analyzer pipeline. Trade-off: a real user
+                    // edit coalesced into this short window is not re-analyzed
+                    // until the NEXT file event or a manual rescan (accepted v1).
+                    if app.state::<WriteSuppression>().is_suppressed() {
+                        log::info!("File change during app-write window — skipping rescan");
+                        return;
+                    }
+
                     log::info!("File change detected, rescanning...");
 
-                    match perform_scan(&scan_path) {
+                    let cache = app.state::<NoteStoreCache>();
+                    match perform_scan(&scan_path, cache.inner()) {
                         Ok(report) => {
                             if let Err(e) = app.emit(SCAN_UPDATE_EVENT, &report) {
                                 log::error!("Failed to emit {}: {}", SCAN_UPDATE_EVENT, e);
