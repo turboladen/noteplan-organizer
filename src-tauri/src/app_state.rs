@@ -17,8 +17,11 @@ use std::time::{Duration, Instant};
 pub struct NoteStoreCache(pub RwLock<Option<NoteStore>>);
 
 impl NoteStoreCache {
-    /// Recover from lock poisoning rather than propagating a panic — the cache
-    /// is advisory (a poisoned read just falls back to a scan).
+    /// Recover from lock poisoning by continuing with the inner value
+    /// (`into_inner`) rather than propagating the panic. This can observe a
+    /// cache left mid-update by a panicked writer, which is acceptable because
+    /// the cache is advisory and read-only: it backs display and the block-id
+    /// collision set, never write-path verification (see module note above).
     fn lock_write(&self) -> std::sync::RwLockWriteGuard<'_, Option<NoteStore>> {
         self.0.write().unwrap_or_else(|p| p.into_inner())
     }
