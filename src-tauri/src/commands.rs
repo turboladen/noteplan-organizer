@@ -1,13 +1,13 @@
 use crate::analyzer::run_all_analyzers;
 use crate::app_state::{NoteStoreCache, WriteSuppression};
 use crate::backlog_write::{
-    locate_unique_task_line, plan_append_entry, plan_remove, plan_reorder, plan_stamp_block_id,
-    WriteOp,
+    plan_append_entry, plan_remove, plan_reorder, plan_stamp_block_id, WriteOp,
 };
 use crate::config;
 use crate::dump;
 use crate::export;
 use crate::mcp::tools;
+use crate::mcp::tools::NoteAddr;
 use crate::mcp::McpState;
 use std::collections::HashSet;
 use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report};
@@ -384,58 +384,96 @@ fn title_matches(note_title: &str, requested: &str) -> bool {
         || strip_tags(note_title).eq_ignore_ascii_case(&strip_tags(requested))
 }
 
-/// After the app writes to notes, RE-FETCH those notes via MCP `get_note` (the
-/// authoritative post-write content — this avoids racing NotePlan's disk flush)
-/// and patch them into the cache, so the frontend's follow-up read is fresh
-/// without a full rescan. Best-effort: logs and continues on any miss. This is a
-/// READ cache refresh only — it is never consulted for write verification.
-async fn refresh_cache_after_write(mcp: &McpState, cache: &NoteStoreCache, titles: &[&str]) {
-    // Locate each title's cache entry (file_path/relative_path/kind) under a
-    // brief read lock; skip ambiguous duplicate-title matches (can't tell which
-    // one NotePlan wrote — the next rescan corrects it).
-    let targets: Vec<(String, String, String, NoteKind)> = {
-        let guard = cache.0.read().unwrap_or_else(|p| p.into_inner());
-        let Some(store) = guard.as_ref() else {
-            return;
-        };
-        titles
+/// A note resolved from the cache: how to address it to MCP (filename when the
+/// path is known, else title) plus the identity needed to patch the cache
+/// locally after a write (None when the note isn't uniquely in the cache).
+struct ResolvedNote {
+    addr: NoteAddr,
+    patch: Option<(String, String, NoteKind)>, // (file_path, relative_path, kind)
+}
+
+/// Resolve a note by its app-facing title. Prefers FILENAME addressing (the
+/// exact relative path from the cache) to skip the server's slow title search;
+/// falls back to TITLE when the cache can't uniquely supply the path.
+fn resolve_note(cache: &NoteStoreCache, title: &str) -> ResolvedNote {
+    let guard = cache.0.read().unwrap_or_else(|p| p.into_inner());
+    if let Some(store) = guard.as_ref() {
+        let m: Vec<_> = store
+            .notes
             .iter()
-            .filter_map(|&t| {
-                let m: Vec<_> = store
-                    .notes
-                    .iter()
-                    .filter(|n| title_matches(&n.title, t))
-                    .collect();
-                match m.as_slice() {
-                    [n] => Some((
-                        t.to_string(),
-                        n.file_path.clone(),
-                        n.relative_path.clone(),
-                        n.kind.clone(),
-                    )),
-                    [] => {
-                        log::warn!("cache refresh: no cached note matches title {t:?}");
-                        None
-                    }
-                    _ => {
-                        log::warn!("cache refresh: title {t:?} ambiguous — deferring to next scan");
-                        None
-                    }
-                }
-            })
-            .collect()
-    };
-    for (title, file_path, rel, kind) in targets {
-        match tools::get_note(mcp, &title).await {
-            Ok(content) => {
-                let note = parse_note(&file_path, &rel, &content, kind);
-                let mut guard = cache.0.write().unwrap_or_else(|p| p.into_inner());
-                if let Some(store) = guard.as_mut() {
-                    store.update_note(note);
+            .filter(|n| title_matches(&n.title, title))
+            .collect();
+        if let [n] = m.as_slice() {
+            return ResolvedNote {
+                addr: NoteAddr::Filename(n.relative_path.clone()),
+                patch: Some((n.file_path.clone(), n.relative_path.clone(), n.kind.clone())),
+            };
+        }
+    }
+    ResolvedNote {
+        addr: NoteAddr::Title(title.to_string()),
+        patch: None,
+    }
+}
+
+/// Apply the line-level `ops` to `content` in memory, returning the post-write
+/// text. Used to patch the read cache locally (no MCP). Ops targeting one note
+/// are homogeneous per command (rank source = 1 replace; rank backlog = 1
+/// insert; reorder = N replaces; remove = 1 delete), so sequential 1-based
+/// application has no index-shift hazard.
+fn content_after_ops(content: &str, ops: &[WriteOp]) -> String {
+    let mut lines: Vec<String> = content.lines().map(String::from).collect();
+    for op in ops {
+        match op {
+            WriteOp::AppendBlockId {
+                line,
+                new_line_text,
+                ..
+            } => {
+                if *line >= 1 && *line <= lines.len() {
+                    lines[*line - 1] = new_line_text.clone();
                 }
             }
-            Err(e) => log::warn!("cache refresh: get_note({title:?}) failed: {e}"),
+            WriteOp::ReplaceBacklogLine { line, text } => {
+                if *line >= 1 && *line <= lines.len() {
+                    lines[*line - 1] = text.clone();
+                }
+            }
+            WriteOp::InsertBacklogLine { line, text } => {
+                lines.insert((line.saturating_sub(1)).min(lines.len()), text.clone());
+            }
+            WriteOp::DeleteBacklogLine { line } => {
+                if *line >= 1 && *line <= lines.len() {
+                    lines.remove(*line - 1);
+                }
+            }
         }
+    }
+    let mut out = lines.join("\n");
+    if content.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+/// Patch the read cache for one note by computing its post-write content locally
+/// (pre-write content + the ops we applied) — ZERO MCP calls. Only called after
+/// a SUCCESSFUL write (else computed content wouldn't match a partial write).
+/// This is a READ cache patch only; a rare divergence (a concurrent user edit
+/// mid-write) just causes brief display staleness that the next real watcher
+/// event / manual scan corrects. Skips notes not uniquely in the cache.
+fn patch_cache_after_ops(cache: &NoteStoreCache, resolved: &ResolvedNote, pre_content: &str, ops: &[WriteOp]) {
+    let Some((file_path, rel, kind)) = &resolved.patch else {
+        return;
+    };
+    if ops.is_empty() {
+        return;
+    }
+    let post = content_after_ops(pre_content, ops);
+    let note = parse_note(file_path, rel, &post, kind.clone());
+    let mut guard = cache.0.write().unwrap_or_else(|p| p.into_inner());
+    if let Some(store) = guard.as_mut() {
+        store.update_note(note);
     }
 }
 
@@ -454,9 +492,17 @@ const WRITE_SUPPRESS_WINDOW: Duration = Duration::from_secs(4);
 /// and idempotent on retry: a re-run re-plans against fresh content (the stamp
 /// is skipped once present; append/remove are re-derived), so a partial apply is
 /// recoverable rather than corrupting.
+/// `content_addr` is the source content-note (target of AppendBlockId, the only
+/// content-note op); `backlog_addr` is the app-owned backlog note (all other
+/// ops). `AppendBlockId` writes its pre-computed line directly (the line + text
+/// were located by `plan_stamp_block_id` on the same fresh content, single-fetch
+/// model) — no per-op re-fetch. The suppression window is extended before EVERY
+/// write so a slow multi-write op can't let the watcher wake mid-flight.
 async fn apply_ops(
     mcp: &McpState,
-    backlog_note_title: &str,
+    suppress: &WriteSuppression,
+    content_addr: &NoteAddr,
+    backlog_addr: &NoteAddr,
     ops: Vec<WriteOp>,
 ) -> Result<(), String> {
     for op in ops {
@@ -465,70 +511,51 @@ async fn apply_ops(
         } else {
             "backlog-note"
         };
+        suppress.suppress(WRITE_SUPPRESS_WINDOW);
         match op {
             WriteOp::AppendBlockId {
-                note_title,
-                expected_text,
+                line,
+                new_line_text,
                 block_id,
             } => {
-                // AUTHORITATIVE write-time gate: re-fetch the note NOW and locate
-                // the target line by content. The snapshot line number is never
-                // trusted — a structural edit since the snapshot could have
-                // shifted it onto an unrelated line (wrong-line clobber). Aborts
-                // (zero writes) if the task is gone or is ambiguous.
-                let fresh = tools::get_note(mcp, &note_title).await?;
-                let (loc_line, fresh_raw) =
-                    locate_unique_task_line(&fresh, &expected_text)?;
-                // Idempotent at write time too: never double-stamp a content note.
-                if let Some(existing) = crate::parser::clean_task_text(&fresh_raw).2 {
-                    log::info!(
-                        "backlog[{}]: \"{}\" line {} already stamped ^{}, skipping",
-                        scope,
-                        note_title,
-                        loc_line,
-                        existing
-                    );
-                    continue;
-                }
-                let new_line_text = format!("{} ^{}", fresh_raw.trim_end(), block_id);
                 log::info!(
-                    "backlog[{}]: stamp ^{} on \"{}\" line {} -> {:?}",
+                    "backlog[{}] via {}: stamp ^{} at line {} -> {:?}",
                     scope,
+                    content_addr.mode(),
                     block_id,
-                    note_title,
-                    loc_line,
+                    line,
                     new_line_text
                 );
-                tools::replace_line(mcp, &note_title, loc_line, &new_line_text).await?;
+                tools::replace_line(mcp, content_addr, line, &new_line_text).await?;
             }
             WriteOp::InsertBacklogLine { line, text } => {
                 log::info!(
-                    "backlog[{}]: insert into \"{}\" line {}: {}",
+                    "backlog[{}] via {}: insert line {}: {}",
                     scope,
-                    backlog_note_title,
+                    backlog_addr.mode(),
                     line,
                     text
                 );
-                tools::insert_in_note(mcp, backlog_note_title, &text, line).await?;
+                tools::insert_in_note(mcp, backlog_addr, &text, line).await?;
             }
             WriteOp::ReplaceBacklogLine { line, text } => {
                 log::info!(
-                    "backlog[{}]: replace \"{}\" line {}: {}",
+                    "backlog[{}] via {}: replace line {}: {}",
                     scope,
-                    backlog_note_title,
+                    backlog_addr.mode(),
                     line,
                     text
                 );
-                tools::replace_line(mcp, backlog_note_title, line, &text).await?;
+                tools::replace_line(mcp, backlog_addr, line, &text).await?;
             }
             WriteOp::DeleteBacklogLine { line } => {
                 log::info!(
-                    "backlog[{}]: delete \"{}\" line {}",
+                    "backlog[{}] via {}: delete line {}",
                     scope,
-                    backlog_note_title,
+                    backlog_addr.mode(),
                     line
                 );
-                tools::delete_line(mcp, backlog_note_title, line).await?;
+                tools::delete_line(mcp, backlog_addr, line).await?;
             }
         }
     }
@@ -554,38 +581,45 @@ pub async fn backlog_rank_task(
     let t0 = Instant::now();
     // Phase 1: collision-id set from the warm cache (no full rescan).
     let existing = existing_ids_from_cache(&cache, &path);
+    // Resolve addressing + cache-patch identity (filename addressing when known).
+    let source = resolve_note(&cache, &source_note_title);
+    let backlog = resolve_note(&cache, &backlog_note_title);
     let t_ids = t0.elapsed();
 
-    // Phase 2: fetch FRESH content via MCP and plan (verify-before-write).
+    // Phase 2: fetch backlog then source; plan on those SINGLE fresh contents
+    // (verify-before-write: locate on the same content we write against).
     let t1 = Instant::now();
-    let source_content = tools::get_note(&mcp_state, &source_note_title).await?;
-    let (block_id, mut ops) =
+    let backlog_content = tools::get_note(&mcp_state, &backlog.addr).await?;
+    let source_content = tools::get_note(&mcp_state, &source.addr).await?;
+    let (block_id, source_ops) =
         plan_stamp_block_id(&source_content, &source_note_title, &expected_text, &existing)?;
     let entry = format!("- [[{}^{}]] {}", source_note_title, block_id, expected_text);
-    let backlog_content = tools::get_note(&mcp_state, &backlog_note_title).await?;
-    ops.extend(plan_append_entry(&backlog_content, &context, &entry)?);
+    let backlog_ops = plan_append_entry(&backlog_content, &context, &entry)?;
     let t_plan = t1.elapsed();
 
-    // Phase 3: apply, with the watcher suppressed around the writes.
+    // Phase 3: apply — source stamp (if any) first (right after its fetch), then
+    // the backlog insert. apply_ops extends the suppression window per write.
     let t2 = Instant::now();
-    suppress.suppress(WRITE_SUPPRESS_WINDOW);
-    let write_result = apply_ops(&mcp_state, &backlog_note_title, ops).await;
-    suppress.suppress(WRITE_SUPPRESS_WINDOW);
+    let mut all_ops = source_ops.clone();
+    all_ops.extend(backlog_ops.clone());
+    let write_result =
+        apply_ops(&mcp_state, &suppress, &source.addr, &backlog.addr, all_ops).await;
+    suppress.suppress(WRITE_SUPPRESS_WINDOW); // cover the trailing debounce
     let t_write = t2.elapsed();
 
-    // Phase 4: patch the two touched notes into the cache. Run even on a partial
-    // write failure so the cache reflects whatever did land on disk.
+    // Phase 4: patch the cache locally from computed post-write content (no MCP).
+    // Only on success — a partial failure's computed content wouldn't match disk.
     let t3 = Instant::now();
-    refresh_cache_after_write(
-        &mcp_state,
-        &cache,
-        &[&source_note_title, &backlog_note_title],
-    )
-    .await;
+    if write_result.is_ok() {
+        patch_cache_after_ops(&cache, &source, &source_content, &source_ops);
+        patch_cache_after_ops(&cache, &backlog, &backlog_content, &backlog_ops);
+    }
     log::info!(
-        "rank timing: ids {t_ids:?}, mcp+plan {t_plan:?}, writes {t_write:?}, refresh {:?}, total {:?}",
+        "rank timing: ids {t_ids:?}, mcp+plan {t_plan:?}, writes {t_write:?}, patch {:?}, total {:?} (source via {}, backlog via {})",
         t3.elapsed(),
-        t0.elapsed()
+        t0.elapsed(),
+        source.addr.mode(),
+        backlog.addr.mode()
     );
     write_result
 }
@@ -604,13 +638,16 @@ pub async fn backlog_reorder(
     backlog_note_title: String,
 ) -> Result<(), String> {
     let t0 = Instant::now();
-    let backlog_content = tools::get_note(&mcp_state, &backlog_note_title).await?;
+    let backlog = resolve_note(&cache, &backlog_note_title);
+    let backlog_content = tools::get_note(&mcp_state, &backlog.addr).await?;
     let ops = plan_reorder(&backlog_content, &context, &ordered_block_ids)?;
+    let write_result =
+        apply_ops(&mcp_state, &suppress, &backlog.addr, &backlog.addr, ops.clone()).await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
-    let write_result = apply_ops(&mcp_state, &backlog_note_title, ops).await;
-    suppress.suppress(WRITE_SUPPRESS_WINDOW);
-    refresh_cache_after_write(&mcp_state, &cache, &[&backlog_note_title]).await;
-    log::info!("reorder total {:?}", t0.elapsed());
+    if write_result.is_ok() {
+        patch_cache_after_ops(&cache, &backlog, &backlog_content, &ops);
+    }
+    log::info!("reorder total {:?} (backlog via {})", t0.elapsed(), backlog.addr.mode());
     write_result
 }
 
@@ -625,19 +662,72 @@ pub async fn backlog_remove(
     backlog_note_title: String,
 ) -> Result<(), String> {
     let t0 = Instant::now();
-    let backlog_content = tools::get_note(&mcp_state, &backlog_note_title).await?;
+    let backlog = resolve_note(&cache, &backlog_note_title);
+    let backlog_content = tools::get_note(&mcp_state, &backlog.addr).await?;
     let ops = plan_remove(&backlog_content, &context, &block_id)?;
+    let write_result =
+        apply_ops(&mcp_state, &suppress, &backlog.addr, &backlog.addr, ops.clone()).await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
-    let write_result = apply_ops(&mcp_state, &backlog_note_title, ops).await;
-    suppress.suppress(WRITE_SUPPRESS_WINDOW);
-    refresh_cache_after_write(&mcp_state, &cache, &[&backlog_note_title]).await;
-    log::info!("remove total {:?}", t0.elapsed());
+    if write_result.is_ok() {
+        patch_cache_after_ops(&cache, &backlog, &backlog_content, &ops);
+    }
+    log::info!("remove total {:?} (backlog via {})", t0.elapsed(), backlog.addr.mode());
     write_result
 }
 
 #[cfg(test)]
 mod tests {
-    use super::title_matches;
+    use super::{content_after_ops, title_matches};
+    use crate::backlog_write::WriteOp;
+
+    #[test]
+    fn test_content_after_ops_replace_insert_delete() {
+        // AppendBlockId = replace the located line with the additive text.
+        assert_eq!(
+            content_after_ops(
+                "# H\n* task\n* other\n",
+                &[WriteOp::AppendBlockId {
+                    line: 2,
+                    new_line_text: "* task ^abc123".into(),
+                    block_id: "abc123".into(),
+                }]
+            ),
+            "# H\n* task ^abc123\n* other\n"
+        );
+        // Insert at a 1-based line.
+        assert_eq!(
+            content_after_ops(
+                "a\nb\n",
+                &[WriteOp::InsertBacklogLine {
+                    line: 2,
+                    text: "X".into()
+                }]
+            ),
+            "a\nX\nb\n"
+        );
+        // Delete a line.
+        assert_eq!(
+            content_after_ops("a\nb\nc\n", &[WriteOp::DeleteBacklogLine { line: 2 }]),
+            "a\nc\n"
+        );
+        // Reorder = replaces in place (no shift).
+        assert_eq!(
+            content_after_ops(
+                "one\ntwo\n",
+                &[
+                    WriteOp::ReplaceBacklogLine {
+                        line: 1,
+                        text: "two".into()
+                    },
+                    WriteOp::ReplaceBacklogLine {
+                        line: 2,
+                        text: "one".into()
+                    },
+                ]
+            ),
+            "two\none\n"
+        );
+    }
 
     #[test]
     fn test_title_matches_marker_insensitive() {

@@ -114,10 +114,14 @@ impl McpState {
         // Use the builder pattern since CallToolRequestParams is non-exhaustive.
         let params = CallToolRequestParams::new(name.to_string()).with_arguments(args);
 
+        // Per-call timing so the next manual test can attribute latency per MCP
+        // round-trip (the NotePlan bridge runs 2-6s/call).
+        let started = std::time::Instant::now();
         let result = svc
             .call_tool(params)
             .await
             .map_err(|e| format!("MCP tool call failed: {e}"))?;
+        log::info!("mcp call '{name}' took {:?}", started.elapsed());
 
         // Data-safety: surface a tool-level error (isError) as an Err at this
         // single chokepoint, so no wrapper can mistake a failed write for success

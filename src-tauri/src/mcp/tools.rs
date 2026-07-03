@@ -19,6 +19,34 @@ pub(crate) fn extract_text(result: &rmcp::model::CallToolResult) -> String {
 /// Result type alias for MCP tool calls.
 pub type McpResult<T> = Result<T, String>;
 
+/// How to address a note to the NotePlan MCP server. Title resolution appears to
+/// be a server-side search (slow); `Filename` is the exact relative path (e.g.
+/// "Notes/…/x.md") and should skip that search. Callers prefer `Filename` when
+/// the cached store can supply the path, falling back to `Title`.
+#[derive(Debug, Clone)]
+pub enum NoteAddr {
+    Title(String),
+    Filename(String),
+}
+
+impl NoteAddr {
+    /// Inject the addressing key into an MCP argument object.
+    fn inject(&self, obj: &mut serde_json::Map<String, Value>) {
+        match self {
+            NoteAddr::Title(t) => obj.insert("title".into(), json!(t)),
+            NoteAddr::Filename(f) => obj.insert("filename".into(), json!(f)),
+        };
+    }
+
+    /// "title" | "filename" — for logging which addressing mode was used.
+    pub fn mode(&self) -> &'static str {
+        match self {
+            NoteAddr::Title(_) => "title",
+            NoteAddr::Filename(_) => "filename",
+        }
+    }
+}
+
 /// Parse a `noteplan_get_notes` (includeContent) envelope into the raw note
 /// body. The tool returns a JSON object like
 /// `{ "success": true, "content": "l1\nl2\n...", "hasMore": false, ... }`.
@@ -78,15 +106,12 @@ fn response_error(v: &Value) -> String {
 /// fails *safe* (aborts with no write) rather than operating on partial content.
 const GET_NOTES_MAX_LINES: u64 = 1000;
 
-/// Get a note's raw body by title. Returns the parsed `.content` string — not
-/// the JSON envelope — and refuses truncated (`hasMore`) responses.
-pub async fn get_note(state: &McpState, title: &str) -> McpResult<String> {
-    let result = state
-        .call_tool(
-            "noteplan_get_notes",
-            json!({ "title": title, "includeContent": true, "limit": GET_NOTES_MAX_LINES }),
-        )
-        .await?;
+/// Get a note's raw body by title or filename. Returns the parsed `.content`
+/// string — not the JSON envelope — and refuses truncated (`hasMore`) responses.
+pub async fn get_note(state: &McpState, addr: &NoteAddr) -> McpResult<String> {
+    let mut args = json!({ "includeContent": true, "limit": GET_NOTES_MAX_LINES });
+    addr.inject(args.as_object_mut().expect("json object"));
+    let result = state.call_tool("noteplan_get_notes", args).await?;
     parse_get_notes_content(&extract_text(&result))
 }
 
@@ -155,59 +180,47 @@ pub async fn append_to_note(state: &McpState, title: &str, text: &str) -> McpRes
 /// Insert text at a specific 1-based line in a note.
 pub async fn insert_in_note(
     state: &McpState,
-    title: &str,
+    addr: &NoteAddr,
     text: &str,
     line: usize,
 ) -> McpResult<String> {
-    let result = state
-        .call_tool(
-            "noteplan_edit_content",
-            json!({
-                "action": "insert",
-                "title": title,
-                "content": text,
-                "position": "at-line",
-                "line": line,
-            }),
-        )
-        .await?;
+    let mut args = json!({
+        "action": "insert",
+        "content": text,
+        "position": "at-line",
+        "line": line,
+    });
+    addr.inject(args.as_object_mut().expect("json object"));
+    let result = state.call_tool("noteplan_edit_content", args).await?;
     parse_edit_response(&extract_text(&result))
 }
 
 /// Replace a single 1-based line in a note (`edit_line`).
 pub async fn replace_line(
     state: &McpState,
-    title: &str,
+    addr: &NoteAddr,
     line: usize,
     text: &str,
 ) -> McpResult<String> {
-    let result = state
-        .call_tool(
-            "noteplan_edit_content",
-            json!({
-                "action": "edit_line",
-                "title": title,
-                "line": line,
-                "content": text,
-            }),
-        )
-        .await?;
+    let mut args = json!({
+        "action": "edit_line",
+        "line": line,
+        "content": text,
+    });
+    addr.inject(args.as_object_mut().expect("json object"));
+    let result = state.call_tool("noteplan_edit_content", args).await?;
     parse_edit_response(&extract_text(&result))
 }
 
 /// Delete a single 1-based line from a note (`delete_lines`, one-line range).
-pub async fn delete_line(state: &McpState, title: &str, line: usize) -> McpResult<String> {
-    let result = state
-        .call_tool(
-            "noteplan_edit_content",
-            json!({
-                "action": "delete_lines",
-                "title": title,
-                "startLine": line,
-                "endLine": line,
-            }),
-        )
-        .await?;
+pub async fn delete_line(state: &McpState, addr: &NoteAddr, line: usize) -> McpResult<String> {
+    let mut args = json!({
+        "action": "delete_lines",
+        "startLine": line,
+        "endLine": line,
+    });
+    addr.inject(args.as_object_mut().expect("json object"));
+    let result = state.call_tool("noteplan_edit_content", args).await?;
     parse_edit_response(&extract_text(&result))
 }
 
