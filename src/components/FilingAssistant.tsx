@@ -131,7 +131,7 @@ export function FilingAssistant({
   return (
     <div className="flex gap-5">
       {/* Daily note selector sidebar */}
-      <div className="w-44 flex-shrink-0 self-start sticky top-[89px] max-h-[calc(100vh-89px)] overflow-y-auto">
+      <div className="w-44 flex-shrink-0 self-start sticky top-6 max-h-[calc(100vh-3rem)] overflow-y-auto">
         <h3 className="text-xs font-medium text-text-tertiary uppercase tracking-wider mb-2">
           Daily Notes
         </h3>

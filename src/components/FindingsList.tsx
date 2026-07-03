@@ -148,7 +148,7 @@ export function FindingsList({
   return (
     <div className="flex gap-6">
       {/* Filters sidebar — glass panel */}
-      <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in sticky top-[89px] self-start max-h-[calc(100vh-89px)] overflow-y-auto">
+      <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in sticky top-6 self-start max-h-[calc(100vh-3rem)] overflow-y-auto">
         <div className="glass-sidebar rounded-[var(--radius-panel)] shadow-card p-4 space-y-4">
           {/* Stats summary */}
           <div className="pb-3 border-b border-border-light space-y-1 text-xs text-text-muted">

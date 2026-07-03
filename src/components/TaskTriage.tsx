@@ -174,7 +174,7 @@ export function TaskTriage({ mcpConnected, onToast }: TaskTriageProps) {
   return (
     <div className="flex gap-5">
       {/* Filter sidebar */}
-      <div className="w-56 flex-shrink-0 self-start sticky top-[89px] max-h-[calc(100vh-89px)] overflow-y-auto">
+      <div className="w-56 flex-shrink-0 self-start sticky top-6 max-h-[calc(100vh-3rem)] overflow-y-auto">
         <h3 className="text-xs font-medium text-text-tertiary uppercase tracking-wider mb-3">
           Filters
         </h3>
