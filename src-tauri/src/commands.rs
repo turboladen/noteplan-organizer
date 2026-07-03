@@ -134,7 +134,8 @@ pub fn system_dump(path: String) -> Result<String, String> {
 
 /// Assemble an assessment context bundle (guide + dump + flagged notes) for clipboard export.
 /// Returns the assembled text; the frontend copies it to clipboard.
-#[tauri::command]
+// rename_all: multi-word arg `guide_title` — TS sends snake_case (CLAUDE.md gotcha).
+#[tauri::command(rename_all = "snake_case")]
 pub fn export_assessment_context(
     path: String,
     guide_title: Option<String>,
@@ -210,7 +211,8 @@ pub fn get_daily_notes(path: String) -> Result<Vec<DailyNoteInfo>, String> {
 }
 
 /// Extract content blocks from a note for the filing assistant.
-#[tauri::command]
+// rename_all: multi-word arg `note_path` — TS sends snake_case (CLAUDE.md gotcha).
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_content_blocks(note_path: String) -> Result<Vec<ContentBlock>, String> {
     let canonical = validate_noteplan_path(&note_path)?;
     let content =
@@ -293,7 +295,8 @@ pub async fn search_tasks(
 
 /// Get filing suggestions for a specific note: extract its content blocks,
 /// scan the hierarchy for filing targets, and match them.
-#[tauri::command]
+// rename_all: multi-word args `base_path`/`note_path` — TS sends snake_case (CLAUDE.md gotcha).
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_filing_suggestions(
     base_path: String,
     note_path: String,

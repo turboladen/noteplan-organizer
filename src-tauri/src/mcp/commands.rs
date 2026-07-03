@@ -35,7 +35,8 @@ pub async fn mcp_status(state: State<'_, McpState>) -> Result<McpStatus, String>
 
 /// Generic MCP tool call — allows the frontend to invoke any tool by name.
 /// Arguments are passed as a JSON value.
-#[tauri::command]
+// rename_all: multi-word arg `tool_name` — TS sends snake_case (CLAUDE.md gotcha).
+#[tauri::command(rename_all = "snake_case")]
 pub async fn mcp_call_tool(
     state: State<'_, McpState>,
     tool_name: String,
