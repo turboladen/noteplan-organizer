@@ -197,20 +197,6 @@ function App() {
     checkIsWatching().then(setWatching).catch(() => {});
   }, []);
 
-  // Sync MCP connection state on mount
-  useEffect(() => {
-    mcpStatus()
-      .then((s) => {
-        if (s.connected) {
-          setMcpState("connected");
-        } else {
-          handleMcpConnect();
-        }
-      })
-      .catch(() => handleMcpConnect());
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once at launch
-  }, []);
-
   const handleScan = useCallback(async () => {
     if (!notePlanPath) return;
     setScanning(true);
@@ -302,6 +288,24 @@ function App() {
       setError(String(e));
     }
   }, [showToast]);
+
+  const mcpAutoConnectFiredRef = useRef(false);
+
+  // Sync MCP connection state on mount
+  useEffect(() => {
+    if (mcpAutoConnectFiredRef.current) return;
+    mcpAutoConnectFiredRef.current = true;
+    mcpStatus()
+      .then((s) => {
+        if (s.connected) {
+          setMcpState("connected");
+        } else {
+          handleMcpConnect();
+        }
+      })
+      .catch(() => handleMcpConnect());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once at launch
+  }, []);
 
   const [fixingIds, setFixingIds] = useState<Set<string>>(new Set());
 
