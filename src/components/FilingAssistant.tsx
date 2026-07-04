@@ -100,7 +100,7 @@ export function FilingAssistant({
   const handleFile = useCallback(
     async (block: ContentBlock, suggestion: FilingSuggestion) => {
       if (!mcpConnected) {
-        onToast("Connect MCP first to file content");
+        onToast("NotePlan connection is offline — reconnect to file content");
         return;
       }
       setFilingBlockIdx(suggestion.block_index);
@@ -322,7 +322,7 @@ export function FilingAssistant({
                               title={
                                 mcpConnected
                                   ? `Append to "${suggestion.target.title}"`
-                                  : "Connect MCP to enable filing"
+                                  : "Reconnect NotePlan to enable filing"
                               }
                             >
                               {isFiling ? "Filing\u2026" : "File"}
