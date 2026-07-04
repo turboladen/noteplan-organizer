@@ -196,24 +196,23 @@ export function Sidebar({
           )}
           {watching ? "Watching for changes" : "Not watching"}
         </button>
-        <div className="flex items-center justify-between text-text-muted">
+        <div className="relative flex items-center justify-between text-text-muted">
           <span>{version ?? ""}</span>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setMenuOpen((open) => !open)}
-              className="px-1 cursor-pointer hover:text-text-secondary select-none"
-              title="More options"
-            >
-              ···
-            </button>
-            {menuOpen && (
+          <button
+            type="button"
+            onClick={() => setMenuOpen((open) => !open)}
+            className="px-1.5 py-0.5 -my-0.5 rounded text-sm leading-none font-semibold text-text-tertiary cursor-pointer hover:text-text-primary hover:bg-surface-raised border border-transparent hover:border-border-light select-none transition-colors"
+            title="More options"
+          >
+            ···
+          </button>
+          {menuOpen && (
               <>
                 <div
                   className="fixed inset-0 z-40"
                   onClick={() => setMenuOpen(false)}
                 />
-                <div className="absolute bottom-5 right-0 z-50 w-56 bg-surface-raised border border-border-light rounded-[var(--radius-badge)] shadow-panel p-2 space-y-1 text-left">
+                <div className="absolute bottom-6 left-0 z-50 w-56 bg-surface-raised border border-border-light rounded-[var(--radius-badge)] shadow-panel p-2 space-y-1 text-left">
                   <p
                     className="text-[10px] text-text-muted break-all"
                     title={notePlanPath}
@@ -245,7 +244,6 @@ export function Sidebar({
                 </div>
               </>
             )}
-          </div>
         </div>
       </div>
     </aside>
