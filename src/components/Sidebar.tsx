@@ -207,7 +207,10 @@ export function Sidebar({
               </p>
               <button
                 type="button"
-                onClick={onSystemDump}
+                onClick={(e) => {
+                  e.currentTarget.closest("details")?.removeAttribute("open");
+                  onSystemDump();
+                }}
                 className="w-full text-left px-1 py-0.5 rounded hover:bg-surface-hover text-text-secondary"
               >
                 System Dump
@@ -215,7 +218,10 @@ export function Sidebar({
               {mcpState === "connected" && (
                 <button
                   type="button"
-                  onClick={onMcpDisconnect}
+                  onClick={(e) => {
+                    e.currentTarget.closest("details")?.removeAttribute("open");
+                    onMcpDisconnect();
+                  }}
                   className="w-full text-left px-1 py-0.5 rounded hover:bg-surface-hover text-text-secondary"
                 >
                   Disconnect NotePlan

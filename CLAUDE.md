@@ -88,8 +88,9 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
   data).
 - `components/NotePreview.tsx` — Inline sticky preview panel (w-80, not a fixed overlay);
   participates in FindingsList flex layout
-- `components/ProjectBoard.tsx` / `components/Backlog.tsx` — Priorities tab (Board = read-only
-  ranked projects; Backlog = drag-to-rank with MCP writes, disabled when MCP is off)
+- `components/ProjectBoard.tsx` / `components/Backlog.tsx` — Board (read-only ranked projects)
+  and Backlog (drag-to-rank, writes via NotePlan connection; read-only while disconnected) —
+  separate sidebar views under Plan
 - `utils/noteplanUrl.ts` — Builds `noteplan://` x-callback-url links
 
 ## Critical Gotchas
