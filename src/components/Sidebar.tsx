@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 export type AppView =
   | "board"
   | "backlog"
@@ -98,6 +100,8 @@ export function Sidebar({
   notePlanPath,
   onSystemDump,
 }: SidebarProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
   return (
     <aside className="w-52 flex-shrink-0 sticky top-0 h-screen flex flex-col bg-surface-hover border-r border-border-light px-2 pt-4 pb-3">
       <div className="px-3 pb-3">
@@ -194,41 +198,54 @@ export function Sidebar({
         </button>
         <div className="flex items-center justify-between text-text-muted">
           <span>{version ?? ""}</span>
-          <details className="relative">
-            <summary className="list-none cursor-pointer px-1 hover:text-text-secondary select-none">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((open) => !open)}
+              className="px-1 cursor-pointer hover:text-text-secondary select-none"
+              title="More options"
+            >
               ···
-            </summary>
-            <div className="absolute bottom-5 right-0 z-50 w-56 bg-surface-raised border border-border-light rounded-[var(--radius-badge)] shadow-panel p-2 space-y-1 text-left">
-              <p
-                className="text-[10px] text-text-muted break-all"
-                title={notePlanPath}
-              >
-                {notePlanPath}
-              </p>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.currentTarget.closest("details")?.removeAttribute("open");
-                  onSystemDump();
-                }}
-                className="w-full text-left px-1 py-0.5 rounded hover:bg-surface-hover text-text-secondary"
-              >
-                System Dump
-              </button>
-              {mcpState === "connected" && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.currentTarget.closest("details")?.removeAttribute("open");
-                    onMcpDisconnect();
-                  }}
-                  className="w-full text-left px-1 py-0.5 rounded hover:bg-surface-hover text-text-secondary"
-                >
-                  Disconnect NotePlan
-                </button>
-              )}
-            </div>
-          </details>
+            </button>
+            {menuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setMenuOpen(false)}
+                />
+                <div className="absolute bottom-5 right-0 z-50 w-56 bg-surface-raised border border-border-light rounded-[var(--radius-badge)] shadow-panel p-2 space-y-1 text-left">
+                  <p
+                    className="text-[10px] text-text-muted break-all"
+                    title={notePlanPath}
+                  >
+                    {notePlanPath}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onSystemDump();
+                    }}
+                    className="w-full text-left px-1 py-0.5 rounded hover:bg-surface-hover text-text-secondary"
+                  >
+                    System Dump
+                  </button>
+                  {mcpState === "connected" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onMcpDisconnect();
+                      }}
+                      className="w-full text-left px-1 py-0.5 rounded hover:bg-surface-hover text-text-secondary"
+                    >
+                      Disconnect NotePlan
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </aside>
