@@ -20,7 +20,7 @@ check:
 
 # Type-check TypeScript
 check-ts:
-    bunx tsc --noEmit
+    bunx tsc --noEmit -p tsconfig.app.json
 
 # Type-check both Rust and TypeScript
 check-all: check check-ts

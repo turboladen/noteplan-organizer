@@ -10,7 +10,7 @@ cargo tauri build    # Build production .app bundle
 # Bundle targets set to ["dmg"] (macOS only) in tauri.conf.json
 cargo test --manifest-path src-tauri/Cargo.toml  # Run Rust unit tests + integration tests
 cargo check --manifest-path src-tauri/Cargo.toml # Type-check Rust without building
-bunx tsc --noEmit    # Type-check TypeScript
+bunx tsc --noEmit -p tsconfig.app.json  # Type-check TypeScript (bare `bunx tsc --noEmit` is a no-op: solution-style root tsconfig checks 0 files)
 ```
 
 A `justfile` mirrors these: `just install / dev / build / test / check`.
@@ -79,6 +79,7 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
 
 **Frontend (React + TypeScript)**:
 
+- `components/Sidebar.tsx` — Grouped navigation (Plan/Organize/Health), Rescan row, status footer (NotePlan connection, watcher, version, overflow menu)
 - `api/commands.ts` — Typed wrappers around `invoke()` calls
 - `types/api.ts` — TypeScript types matching Rust models (manually kept in sync, no codegen)
 - `components/FindingsList.tsx` — Main findings UI with filtering, pagination, dismiss/resolve,
@@ -87,8 +88,9 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
   data).
 - `components/NotePreview.tsx` — Inline sticky preview panel (w-80, not a fixed overlay);
   participates in FindingsList flex layout
-- `components/ProjectBoard.tsx` / `components/Backlog.tsx` — Priorities tab (Board = read-only
-  ranked projects; Backlog = drag-to-rank with MCP writes, disabled when MCP is off)
+- `components/ProjectBoard.tsx` / `components/Backlog.tsx` — Board (read-only ranked projects)
+  and Backlog (drag-to-rank, writes via NotePlan connection; read-only while disconnected) —
+  separate sidebar views under Plan
 - `utils/noteplanUrl.ts` — Builds `noteplan://` x-callback-url links
 
 ## Critical Gotchas
@@ -151,6 +153,10 @@ not connected. The app fully functions without MCP — it's only needed for writ
 advanced queries. The MCP server is spawned as `npx -y @noteplanco/noteplan-mcp` (child process,
 stdio transport). `RunningService` derefs to `Peer<RoleClient>` so `call_tool`/`list_all_tools`
 methods are called directly on it.
+The app auto-connects at launch (`mcpStatus` probe, then `mcp_connect`).
+Failure is quiet: amber "NotePlan offline · retry" in the sidebar footer plus
+inline Reconnect affordances in write views. The string "MCP" must not appear
+in user-facing UI copy — say "NotePlan connection".
 
 **Analyzer pattern**: To add a new analyzer, create a module in `src-tauri/src/analyzer/`, implement
 the `Analyzer` trait, and register it in `run_all_analyzers()` in `analyzer/mod.rs`.
@@ -169,10 +175,11 @@ the Rust parameter names is NOT sufficient). Single-word args are unaffected. Se
 parent div to force React to re-mount when filters change. Removing this causes stale list
 rendering.
 
-**App header layout**: The `<header>` + status tray in App.tsx total ~89px tall (header
-`sticky top-0 z-40`). Sticky elements in the main content area use `top-[89px]` and
-`max-h-[calc(100vh-89px)]`. If header/tray height changes, update these offsets in FindingsList.tsx
-and NotePreview.tsx.
+**Shell layout**: There is no top header. `Sidebar.tsx` (w-52, `sticky top-0
+h-screen`) owns navigation + system status; main content has `px-6 py-6`.
+Sticky elements inside views use `top-6` and `max-h-[calc(100vh-3rem)]`
+(FindingsList, NotePreview, FilingAssistant, TaskTriage). If main padding
+changes, update those offsets.
 
 **`is_folder` on Finding**: Every `Finding` struct literal must set `is_folder`. Use `true` for
 system-assessment analyzers (folder-level findings), `false` for per-note analyzers. The frontend
@@ -186,10 +193,14 @@ as area names.
 chevron, Enter key handler, and expanded section all guard on these fields — set both to `None` in
 analyzers that don't need expandable detail.
 
-**Tab architecture**: App.tsx splits findings into Findings vs Assessment tabs using
-`SYSTEM_ASSESSMENT_CATEGORIES` set. Each tab has independent filter state (`selectedCategory`/
-`selectedSeverity` vs `assessCategory`/`assessSeverity`). Both tabs render `<FindingsList>` with
-`computeStats()` deriving per-tab `ReportStats`.
+**View architecture**: App.tsx routes a single `AppView` union
+(`board | backlog | tasks | filing | findings | assessment`) persisted to
+localStorage (`noteplan-companion:last-view`). Navigation items live in the
+`NAV_GROUPS` config array in `Sidebar.tsx` — a new view is one array entry.
+Findings vs Assessment still split on `SYSTEM_ASSESSMENT_CATEGORIES` with
+independent filter state. The scan report feeds ONLY Findings/Assessment and
+the sidebar badges; Board/Backlog/Filing/Tasks fetch their own data and take
+`basePath` from the detected `notePlanPath`, never from `report`.
 
 **Card UX convention**: File path click = open in NotePlan (primary action). Preview is a secondary
 hover-reveal `⌕` icon. Don't reassign file path click to preview — users want direct access to fix
@@ -201,7 +212,7 @@ truncates longer category labels like "Naming Inconsistency".
 **Sticky in flex**: Sticky children inside a flex container need `self-start` (Tailwind) to avoid
 stretching to full row height, which eliminates the sticky scroll range.
 
-**Version display**: The status tray shows `v{version} ({git_rev})` fetched on mount via Tauri's
+**Version display**: The sidebar footer shows `v{version} ({git_rev})` fetched on mount via Tauri's
 built-in `getVersion()` (from `@tauri-apps/api/app`) and a custom `get_git_rev` command. The git
 rev is embedded at compile time by `build.rs`. Do not add `cargo:rerun-if-changed` directives to
 `build.rs` — Cargo's default rebuild-on-any-file-change is correct here (explicit directives can

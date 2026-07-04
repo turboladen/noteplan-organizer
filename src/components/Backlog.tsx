@@ -14,11 +14,15 @@ const PRIORITY_LABEL = ["", "!", "!!", "!!!"] as const;
 export function Backlog({
   basePath,
   mcpConnected,
+  mcpConnecting,
   onToast,
+  onReconnect,
 }: {
   basePath: string;
   mcpConnected: boolean;
+  mcpConnecting: boolean;
   onToast: (m: string) => void;
+  onReconnect: () => void;
 }) {
   const [data, setData] = useState<BacklogData | null>(null);
   const [activeCtx, setActiveCtx] = useState(0);
@@ -127,9 +131,24 @@ export function Backlog({
           {data.warnings.join(" ")}
         </div>
       )}
-      {!mcpConnected && (
-        <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-[var(--radius-card)] px-3 py-2">
-          Connect NotePlan (MCP) to reorder — the backlog is read-only while disconnected.
+      {!mcpConnected && mcpConnecting && (
+        <div className="mb-3 text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded-[var(--radius-card)] px-3 py-2">
+          Connecting to NotePlan…
+        </div>
+      )}
+      {!mcpConnected && !mcpConnecting && (
+        <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-[var(--radius-card)] px-3 py-2 flex items-center justify-between gap-3">
+          <span>
+            Ranking is paused — the NotePlan connection is offline. The backlog is
+            read-only until it reconnects.
+          </span>
+          <button
+            type="button"
+            onClick={onReconnect}
+            className="flex-shrink-0 font-medium text-accent-700 hover:underline"
+          >
+            Reconnect
+          </button>
         </div>
       )}
 

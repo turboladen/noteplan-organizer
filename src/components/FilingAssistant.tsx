@@ -14,7 +14,9 @@ import type {
 interface FilingAssistantProps {
   basePath: string;
   mcpConnected: boolean;
+  mcpConnecting: boolean;
   onToast: (message: string) => void;
+  onReconnect: () => void;
 }
 
 const BLOCK_KIND_LABELS: Record<string, string> = {
@@ -32,7 +34,9 @@ const BLOCK_KIND_COLORS: Record<string, string> = {
 export function FilingAssistant({
   basePath,
   mcpConnected,
+  mcpConnecting,
   onToast,
+  onReconnect,
 }: FilingAssistantProps) {
   const [dailyNotes, setDailyNotes] = useState<DailyNoteInfo[]>([]);
   const [selectedNote, setSelectedNote] = useState<DailyNoteInfo | null>(null);
@@ -98,7 +102,7 @@ export function FilingAssistant({
   const handleFile = useCallback(
     async (block: ContentBlock, suggestion: FilingSuggestion) => {
       if (!mcpConnected) {
-        onToast("Connect MCP first to file content");
+        onToast("NotePlan connection is offline — reconnect to file content");
         return;
       }
       setFilingBlockIdx(suggestion.block_index);
@@ -129,9 +133,30 @@ export function FilingAssistant({
   );
 
   return (
-    <div className="flex gap-5">
+    <div>
+      {!mcpConnected && mcpConnecting && (
+        <div className="mb-3 text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded-[var(--radius-card)] px-3 py-2">
+          Connecting to NotePlan…
+        </div>
+      )}
+      {!mcpConnected && !mcpConnecting && (
+        <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-[var(--radius-card)] px-3 py-2 flex items-center justify-between gap-3">
+          <span>
+            Filing is paused — the NotePlan connection is offline. Suggestions still
+            load; the File action needs a live connection.
+          </span>
+          <button
+            type="button"
+            onClick={onReconnect}
+            className="flex-shrink-0 font-medium text-accent-700 hover:underline"
+          >
+            Reconnect
+          </button>
+        </div>
+      )}
+      <div className="flex gap-5">
       {/* Daily note selector sidebar */}
-      <div className="w-44 flex-shrink-0 self-start sticky top-[89px] max-h-[calc(100vh-89px)] overflow-y-auto">
+      <div className="w-44 flex-shrink-0 self-start sticky top-6 max-h-[calc(100vh-3rem)] overflow-y-auto">
         <h3 className="text-xs font-medium text-text-tertiary uppercase tracking-wider mb-2">
           Daily Notes
         </h3>
@@ -304,7 +329,7 @@ export function FilingAssistant({
                               title={
                                 mcpConnected
                                   ? `Append to "${suggestion.target.title}"`
-                                  : "Connect MCP to enable filing"
+                                  : "Reconnect NotePlan to enable filing"
                               }
                             >
                               {isFiling ? "Filing\u2026" : "File"}
@@ -326,6 +351,7 @@ export function FilingAssistant({
             })}
           </div>
         )}
+      </div>
       </div>
     </div>
   );

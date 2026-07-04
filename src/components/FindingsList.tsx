@@ -148,7 +148,7 @@ export function FindingsList({
   return (
     <div className="flex gap-6">
       {/* Filters sidebar — glass panel */}
-      <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in sticky top-[89px] self-start max-h-[calc(100vh-89px)] overflow-y-auto">
+      <div className="w-56 flex-shrink-0 space-y-4 animate-fade-in sticky top-6 self-start max-h-[calc(100vh-3rem)] overflow-y-auto">
         <div className="glass-sidebar rounded-[var(--radius-panel)] shadow-card p-4 space-y-4">
           {/* Stats summary */}
           <div className="pb-3 border-b border-border-light space-y-1 text-xs text-text-muted">
@@ -569,7 +569,7 @@ const FindingCard = forwardRef<
                 }}
                 disabled={!mcpConnected}
                 className="flex-shrink-0 px-2 py-0.5 text-[11px] font-medium rounded-[var(--radius-badge)] border border-border-light bg-surface text-text-secondary hover:bg-accent/10 hover:text-accent hover:border-accent/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors opacity-0 group-hover:opacity-100"
-                title={mcpConnected ? finding.fix_action.label : "Connect MCP to enable fixes"}
+                title={mcpConnected ? finding.fix_action.label : "Reconnect NotePlan to enable fixes"}
               >
                 {finding.fix_action.label}
               </button>

@@ -3,7 +3,9 @@ import { mcpCallTool, openNotePlanUrl, searchTasks } from "../api/commands";
 
 interface TaskTriageProps {
   mcpConnected: boolean;
+  mcpConnecting: boolean;
   onToast: (message: string) => void;
+  onReconnect: () => void;
 }
 
 /** A single parsed task from the MCP response. */
@@ -71,7 +73,12 @@ function parseTasks(raw: string): ParsedTask[] {
   return tasks;
 }
 
-export function TaskTriage({ mcpConnected, onToast }: TaskTriageProps) {
+export function TaskTriage({
+  mcpConnected,
+  mcpConnecting,
+  onToast,
+  onReconnect,
+}: TaskTriageProps) {
   const [rawResponse, setRawResponse] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -152,21 +159,38 @@ export function TaskTriage({ mcpConnected, onToast }: TaskTriageProps) {
     return groups;
   }, [tasks]);
 
-  // MCP not connected — show connect prompt
+  // NotePlan connection is still being established at launch
+  if (!mcpConnected && mcpConnecting) {
+    return (
+      <div className="text-center py-24 animate-fade-in">
+        <h2 className="text-xl font-medium text-text-secondary mb-2">
+          Connecting to NotePlan…
+        </h2>
+        <p className="text-text-tertiary max-w-md mx-auto text-sm">
+          Tasks load as soon as the connection is up.
+        </p>
+      </div>
+    );
+  }
+
+  // NotePlan not connected — show reconnect prompt
   if (!mcpConnected) {
     return (
       <div className="text-center py-24 animate-fade-in">
         <h2 className="text-xl font-medium text-text-secondary mb-2">
-          Connect MCP to view tasks
+          NotePlan connection is offline
         </h2>
         <p className="text-text-tertiary mb-4 max-w-md mx-auto text-sm">
-          The Tasks tab requires a connection to NotePlan&apos;s MCP server to
-          search and manage tasks across your vault.
+          Tasks are searched and updated through NotePlan, so this view needs a
+          live connection.
         </p>
-        <p className="text-xs text-text-muted">
-          Click the <span className="font-medium">MCP</span> button in the
-          status bar above to connect.
-        </p>
+        <button
+          type="button"
+          onClick={onReconnect}
+          className="px-4 py-2 bg-accent text-white text-sm font-medium rounded-[var(--radius-button)] hover:bg-accent-hover transition-colors"
+        >
+          Reconnect
+        </button>
       </div>
     );
   }
@@ -174,7 +198,7 @@ export function TaskTriage({ mcpConnected, onToast }: TaskTriageProps) {
   return (
     <div className="flex gap-5">
       {/* Filter sidebar */}
-      <div className="w-56 flex-shrink-0 self-start sticky top-[89px] max-h-[calc(100vh-89px)] overflow-y-auto">
+      <div className="w-56 flex-shrink-0 self-start sticky top-6 max-h-[calc(100vh-3rem)] overflow-y-auto">
         <h3 className="text-xs font-medium text-text-tertiary uppercase tracking-wider mb-3">
           Filters
         </h3>

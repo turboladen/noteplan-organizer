@@ -2238,7 +2238,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "noteplan-organizer"
+name = "noteplan-companion"
 version = "0.2.0"
 dependencies = [
  "chrono",
