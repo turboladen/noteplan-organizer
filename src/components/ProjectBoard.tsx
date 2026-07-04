@@ -5,11 +5,18 @@ import { buildNotePlanUrl } from "../utils/noteplanUrl";
 
 const PRIORITY_LABEL = ["", "!", "!!", "!!!"] as const;
 
+// Module-level so per-project disclosure state survives view switches (the
+// component unmounts when the user navigates away). Keyed by basePath so a
+// vault switch still starts collapsed instead of leaking another vault's keys.
+const expandedCache = new Map<string, Set<string>>();
+
 export function ProjectBoard({ basePath }: { basePath: string }) {
   const [board, setBoard] = useState<Board | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeContext, setActiveContext] = useState(0);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(
+    () => expandedCache.get(basePath) ?? new Set(),
+  );
 
   useEffect(() => {
     // `cancelled` drops the result of a superseded load so a slow prior fetch
@@ -23,9 +30,9 @@ export function ProjectBoard({ basePath }: { basePath: string }) {
         setBoard(b);
         setError(null);
         setActiveContext(0);
-        // Reset per-project disclosure state so expanded rows can't leak
-        // across a vault switch (esp. if two contexts share a heading name).
-        setExpanded(new Set());
+        // Restore this vault's disclosure state (empty for a fresh/other
+        // vault, so expanded rows still can't leak across a vault switch).
+        setExpanded(expandedCache.get(basePath) ?? new Set());
       })
       .catch((e) => {
         if (cancelled) return;
@@ -47,6 +54,7 @@ export function ProjectBoard({ basePath }: { basePath: string }) {
       } else {
         next.add(key);
       }
+      expandedCache.set(basePath, next);
       return next;
     });
 
