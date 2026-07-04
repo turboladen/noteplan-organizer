@@ -31,8 +31,21 @@ const DISMISSED_KEY = "noteplan-organizer:dismissed";
 const LAST_VIEW_KEY = "noteplan-companion:last-view";
 
 function loadInitialView(): AppView {
-  const raw = localStorage.getItem(LAST_VIEW_KEY);
-  return ALL_VIEWS.includes(raw as AppView) ? (raw as AppView) : "board";
+  try {
+    const raw = localStorage.getItem(LAST_VIEW_KEY);
+    if (ALL_VIEWS.includes(raw as AppView)) return raw as AppView;
+  } catch {
+    // storage unavailable — fall back to default view
+  }
+  return "board";
+}
+
+function saveLastView(view: AppView) {
+  try {
+    localStorage.setItem(LAST_VIEW_KEY, view);
+  } catch {
+    // storage unavailable — navigation still works, just not persisted
+  }
 }
 
 function loadDismissed(): Set<string> {
@@ -46,7 +59,11 @@ function loadDismissed(): Set<string> {
 }
 
 function saveDismissed(dismissed: Set<string>) {
-  localStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissed]));
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissed]));
+  } catch {
+    // storage unavailable — dismissals stay in-memory for this session
+  }
 }
 
 /** Derive ReportStats from a filtered subset of findings, keeping note counts from the original. */
@@ -103,7 +120,7 @@ function App() {
   const [activeView, setActiveView] = useState<AppView>(loadInitialView);
 
   useEffect(() => {
-    localStorage.setItem(LAST_VIEW_KEY, activeView);
+    saveLastView(activeView);
   }, [activeView]);
 
   // Toast state for watcher updates
