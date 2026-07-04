@@ -14,6 +14,7 @@ import type {
 interface FilingAssistantProps {
   basePath: string;
   mcpConnected: boolean;
+  mcpConnecting: boolean;
   onToast: (message: string) => void;
   onReconnect: () => void;
 }
@@ -33,6 +34,7 @@ const BLOCK_KIND_COLORS: Record<string, string> = {
 export function FilingAssistant({
   basePath,
   mcpConnected,
+  mcpConnecting,
   onToast,
   onReconnect,
 }: FilingAssistantProps) {
@@ -132,7 +134,12 @@ export function FilingAssistant({
 
   return (
     <div>
-      {!mcpConnected && (
+      {!mcpConnected && mcpConnecting && (
+        <div className="mb-3 text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded-[var(--radius-card)] px-3 py-2">
+          Connecting to NotePlan…
+        </div>
+      )}
+      {!mcpConnected && !mcpConnecting && (
         <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-[var(--radius-card)] px-3 py-2 flex items-center justify-between gap-3">
           <span>
             Filing is paused — the NotePlan connection is offline. Suggestions still

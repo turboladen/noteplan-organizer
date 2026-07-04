@@ -291,7 +291,7 @@ function App() {
 
   const mcpAutoConnectFiredRef = useRef(false);
 
-  // Sync MCP connection state on mount
+  // Probe MCP status on mount, then auto-connect if not already connected
   useEffect(() => {
     if (mcpAutoConnectFiredRef.current) return;
     mcpAutoConnectFiredRef.current = true;
@@ -424,6 +424,7 @@ function App() {
               <Backlog
                 basePath={notePlanPath}
                 mcpConnected={mcpConnected}
+                mcpConnecting={mcpState === "connecting"}
                 onToast={showToast}
                 onReconnect={handleMcpConnect}
               />
@@ -432,6 +433,7 @@ function App() {
             {activeView === "tasks" && (
               <TaskTriage
                 mcpConnected={mcpConnected}
+                mcpConnecting={mcpState === "connecting"}
                 onToast={showToast}
                 onReconnect={handleMcpConnect}
               />
@@ -441,6 +443,7 @@ function App() {
               <FilingAssistant
                 basePath={notePlanPath}
                 mcpConnected={mcpConnected}
+                mcpConnecting={mcpState === "connecting"}
                 onToast={showToast}
                 onReconnect={handleMcpConnect}
               />

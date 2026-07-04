@@ -3,6 +3,7 @@ import { mcpCallTool, openNotePlanUrl, searchTasks } from "../api/commands";
 
 interface TaskTriageProps {
   mcpConnected: boolean;
+  mcpConnecting: boolean;
   onToast: (message: string) => void;
   onReconnect: () => void;
 }
@@ -72,7 +73,12 @@ function parseTasks(raw: string): ParsedTask[] {
   return tasks;
 }
 
-export function TaskTriage({ mcpConnected, onToast, onReconnect }: TaskTriageProps) {
+export function TaskTriage({
+  mcpConnected,
+  mcpConnecting,
+  onToast,
+  onReconnect,
+}: TaskTriageProps) {
   const [rawResponse, setRawResponse] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -152,6 +158,20 @@ export function TaskTriage({ mcpConnected, onToast, onReconnect }: TaskTriagePro
     }
     return groups;
   }, [tasks]);
+
+  // NotePlan connection is still being established at launch
+  if (!mcpConnected && mcpConnecting) {
+    return (
+      <div className="text-center py-24 animate-fade-in">
+        <h2 className="text-xl font-medium text-text-secondary mb-2">
+          Connecting to NotePlan…
+        </h2>
+        <p className="text-text-tertiary max-w-md mx-auto text-sm">
+          Tasks load as soon as the connection is up.
+        </p>
+      </div>
+    );
+  }
 
   // NotePlan not connected — show reconnect prompt
   if (!mcpConnected) {

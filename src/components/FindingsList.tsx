@@ -569,7 +569,7 @@ const FindingCard = forwardRef<
                 }}
                 disabled={!mcpConnected}
                 className="flex-shrink-0 px-2 py-0.5 text-[11px] font-medium rounded-[var(--radius-badge)] border border-border-light bg-surface text-text-secondary hover:bg-accent/10 hover:text-accent hover:border-accent/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors opacity-0 group-hover:opacity-100"
-                title={mcpConnected ? finding.fix_action.label : "Connect MCP to enable fixes"}
+                title={mcpConnected ? finding.fix_action.label : "Reconnect NotePlan to enable fixes"}
               >
                 {finding.fix_action.label}
               </button>
