@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "NotePlan Organizer",
+  "productName": "NotePlan Companion",
   "version": "0.2.0",
   "identifier": "com.noteplan-organizer",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "NotePlan Organizer",
+        "title": "NotePlan Companion",
         "width": 1200,
         "height": 800,
         "resizable": true,

@@ -1,4 +1,4 @@
-# NotePlan Organizer
+# NotePlan Companion
 
 A desktop companion for [NotePlan](https://noteplan.co/) that scans your notes and surfaces
 structural issues, broken links, stale tasks, and organizational gaps — and adds a prioritized
@@ -106,7 +106,7 @@ This produces a native macOS `.app` bundle in `src-tauri/target/release/bundle/`
 ## Project Structure
 
 ```
-noteplan-organizer/
+noteplan-companion/
 ├── src-tauri/                  # Rust backend
 │   ├── src/
 │   │   ├── main.rs             # Tauri app entry point

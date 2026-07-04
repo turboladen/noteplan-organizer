@@ -1,8 +1,8 @@
 [package]
-name = "noteplan-organizer"
+name = "noteplan-companion"
 version = "0.2.0"
 authors = ["sloveless"]
-default-run = "noteplan-organizer"
+default-run = "noteplan-companion"
 edition = "2021"
 license = "MIT"
 rust-version = "1.77.2"
