@@ -13,8 +13,8 @@ use std::collections::HashSet;
 use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report};
 use crate::parser::matcher::FilingSuggestion;
 use crate::parser::{
-    build_backlog, build_filing_targets, build_project_board, extract_content_blocks,
-    match_blocks_to_targets, parse_note, scan_noteplan_dir, BacklogOptions, NoteStore,
+    build_backlog, build_filing_targets, extract_content_blocks, match_blocks_to_targets,
+    parse_note, scan_noteplan_dir, BacklogOptions, NoteStore,
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -256,19 +256,6 @@ fn read_from_cache<T>(
     Ok(out)
 }
 
-/// Build the read-only project priority board from the `#np-projects` control note.
-/// Pure read — no MCP, no writes. Served from the cache when populated.
-#[tauri::command]
-pub fn get_project_board(
-    path: String,
-    cache: State<'_, NoteStoreCache>,
-) -> Result<crate::models::ProjectBoard, String> {
-    let t0 = Instant::now();
-    let board = read_from_cache(&cache, &path, build_project_board)?;
-    log::info!("get_project_board served in {:?}", t0.elapsed());
-    Ok(board)
-}
-
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_backlog(
     path: String,
@@ -280,17 +267,6 @@ pub fn get_backlog(
         today: chrono::Local::now().date_naive(),
     };
     read_from_cache(&cache, &path, |s| build_backlog(s, &opts))
-}
-
-/// Search for tasks via MCP's noteplan_paragraphs tool.
-/// Returns the raw text response for the frontend to parse and display.
-#[tauri::command]
-pub async fn search_tasks(
-    mcp_state: State<'_, McpState>,
-    query: Option<String>,
-    completed: Option<bool>,
-) -> Result<String, String> {
-    tools::search_tasks(&mcp_state, query.as_deref(), completed).await
 }
 
 /// Get filing suggestions for a specific note: extract its content blocks,

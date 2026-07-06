@@ -2,8 +2,8 @@
 
 A small, committed NotePlan data directory that the read pipeline runs against
 headlessly. It is the regression harness for `scan_noteplan_dir`,
-`build_project_board`, `build_backlog`, and the task parser. The assertions live
-in `../fixture_vault.rs`.
+`build_backlog`, and the task parser. The assertions live in
+`../fixture_vault.rs`.
 
 **These files are test data — pure reads. Nothing in the test suite mutates them,
 and no MCP is involved.** It is NOT a real NotePlan vault; it only mirrors the

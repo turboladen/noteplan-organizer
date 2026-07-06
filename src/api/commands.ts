@@ -6,7 +6,6 @@ import type {
   FilingSuggestion,
   FilingTarget,
   McpStatus,
-  ProjectBoard,
   Report,
 } from "../types/api";
 
@@ -87,14 +86,6 @@ export async function getFilingSuggestions(
 }
 
 // ---------------------------------------------------------------------------
-// Priority board (read-only)
-// ---------------------------------------------------------------------------
-
-export async function getProjectBoard(path: string): Promise<ProjectBoard> {
-  return invoke<ProjectBoard>("get_project_board", { path });
-}
-
-// ---------------------------------------------------------------------------
 // Backlog (read-only read; writes require MCP connected)
 // ---------------------------------------------------------------------------
 
@@ -145,20 +136,6 @@ export async function backlogRemove(
     context,
     block_id: blockId,
     backlog_note_title: backlogNoteTitle,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Task triage (MCP-backed)
-// ---------------------------------------------------------------------------
-
-export async function searchTasks(
-  query?: string,
-  completed?: boolean,
-): Promise<string> {
-  return invoke<string>("search_tasks", {
-    query: query ?? null,
-    completed: completed ?? null,
   });
 }
 

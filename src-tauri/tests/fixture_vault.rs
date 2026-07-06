@@ -4,7 +4,7 @@
 //! These are pure reads — nothing here mutates the fixture or touches MCP.
 
 use app_lib::models::{Note, NoteKind, Task, TaskState};
-use app_lib::parser::{build_backlog, build_project_board, scan_noteplan_dir, NoteStore};
+use app_lib::parser::{build_backlog, scan_noteplan_dir, NoteStore};
 use std::path::{Path, PathBuf};
 
 fn fixture_path() -> PathBuf {
@@ -56,97 +56,6 @@ fn test_scan_note_counts_by_kind() {
     let archived = note(&store, "@Archive/Archived Alpha.md");
     assert_eq!(archived.tasks.len(), 1);
     assert_eq!(archived.tasks[0].block_id.as_deref(), Some("arch001"));
-}
-
-// ---------------------------------------------------------------------------
-// 2. build_project_board — contexts, ranks, counts, sort
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_board_contexts_ranks_and_counts() {
-    let store = load();
-    let board = build_project_board(&store);
-
-    assert_eq!(board.control_note_title.as_deref(), Some("Project Priorities"));
-    assert_eq!(board.contexts.len(), 2);
-    assert_eq!(board.contexts[0].name, "Work");
-    assert_eq!(board.contexts[1].name, "Home");
-
-    // Work: Alpha (rank 1), Beta (rank 2); the ghost ref consumes ordinal 3 and
-    // lands in `unresolved`.
-    let work = &board.contexts[0];
-    assert_eq!(work.projects.len(), 2);
-    assert_eq!(work.unresolved, vec!["99 - Ghost".to_string()]);
-
-    let alpha = &work.projects[0];
-    assert_eq!(alpha.rank, 1);
-    assert_eq!(alpha.title, "12 - Alpha Project");
-    assert_eq!(alpha.open_count, 8, "done + cancelled + excluded-@Archive dropped");
-    assert_eq!(alpha.priority_counts, [4, 1, 2, 1]);
-
-    let beta = &work.projects[1];
-    assert_eq!(beta.rank, 2);
-    assert_eq!(beta.open_count, 4);
-    assert_eq!(beta.priority_counts, [2, 2, 0, 0]);
-
-    // Home: one resolved project, no unresolved.
-    let home = &board.contexts[1];
-    assert_eq!(home.projects.len(), 1);
-    assert!(home.unresolved.is_empty());
-    let reno = &home.projects[0];
-    assert_eq!(reno.rank, 1);
-    assert_eq!(reno.open_count, 3);
-    assert_eq!(reno.priority_counts, [1, 0, 1, 1]);
-}
-
-#[test]
-fn test_board_task_sort() {
-    let store = load();
-    let board = build_project_board(&store);
-    let alpha = &board.contexts[0].projects[0];
-
-    // Highest priority (!!!) first.
-    assert_eq!(alpha.tasks[0].priority, 3);
-    assert_eq!(alpha.tasks[0].text, "Sketch the icon set");
-
-    // Within the no-priority tier: dated tasks first (ascending), then undated.
-    let p0_dates: Vec<Option<&str>> = alpha
-        .tasks
-        .iter()
-        .filter(|t| t.priority == 0)
-        .map(|t| t.scheduled_to.as_deref())
-        .collect();
-    assert_eq!(
-        p0_dates,
-        vec![Some("2026-07-10"), Some("2026-08-01"), None, None]
-    );
-}
-
-#[test]
-fn test_board_excludes_system_and_calendar_tasks() {
-    let store = load();
-    let board = build_project_board(&store);
-    let texts: Vec<&str> = board
-        .contexts
-        .iter()
-        .flat_map(|c| c.projects.iter())
-        .flat_map(|p| p.tasks.iter())
-        .map(|t| t.text.as_str())
-        .collect();
-
-    for forbidden in [
-        "Should not roll up", // in-project @Archive
-        "Archived task",      // @Archive
-        "Trashed task",       // @Trash
-        "Attachment task",    // _attachments
-        "Template task",      // @Templates
-        "Log the standup",    // Calendar daily note
-    ] {
-        assert!(
-            !texts.iter().any(|t| t.contains(forbidden)),
-            "excluded task leaked into a rollup: {forbidden:?}"
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------
