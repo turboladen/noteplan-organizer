@@ -185,7 +185,7 @@ rendering.
 **Shell layout**: There is no top header. `Sidebar.tsx` (w-52, `sticky top-0
 h-screen`) owns navigation + system status; main content has `px-6 py-6`.
 Sticky elements inside views use `top-6` and `max-h-[calc(100vh-3rem)]`
-(FindingsList, NotePreview, FilingAssistant, TaskTriage). If main padding
+(FindingsList, NotePreview, FilingAssistant, Board, Backlog). If main padding
 changes, update those offsets.
 
 **`is_folder` on Finding**: Every `Finding` struct literal must set `is_folder`. Use `true` for
