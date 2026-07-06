@@ -55,6 +55,10 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
   }, [basePath, includeOlder]);
 
   const backlogTitle = data?.control_note_title ?? "";
+  // Projects-only vaults (no #np-backlog note) still render contexts and
+  // pools via the control-note union, but there is nowhere to WRITE a rank —
+  // gate the Rank affordance instead of letting the command fail at runtime.
+  const hasBacklogNote = data?.control_note_title != null;
 
   // PRESERVED: commitReorder, onDrop, handleRank — lifted verbatim from the old
   // component's commitReorder (old lines 48-63), onDrop (old 65-78), and
@@ -149,7 +153,10 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
     const result = [...projectGroups.values()].sort(
       (a, b) => (a.rankBadge ?? 9999) - (b.rankBadge ?? 9999),
     );
-    if (calendarTasks.length > 0 || includeOlder) {
+    // Render the Calendar group even when empty (outside a filtered search),
+    // so the "Show older daily tasks" toggle stays reachable in vaults whose
+    // only calendar tasks are older than the 30-day window.
+    if (calendarTasks.length > 0 || includeOlder || !search.trim()) {
       calendarTasks.sort((a, b) =>
         (b.calendar_period ?? "").localeCompare(a.calendar_period ?? ""),
       );
@@ -326,6 +333,16 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
           <h3 className="text-[11px] uppercase tracking-wider text-text-muted mb-2">
             Everything else — rank when ready
           </h3>
+          {!hasBacklogNote && (
+            <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-[var(--radius-card)] px-3 py-2">
+              Ranking is disabled — no{" "}
+              <code className="bg-amber-100 px-1 rounded">#np-backlog</code> note exists
+              yet. Create a note tagged{" "}
+              <code className="bg-amber-100 px-1 rounded">#np-backlog</code> with a{" "}
+              <code className="bg-amber-100 px-1 rounded">## Work</code>-style heading
+              per context, then Rescan.
+            </div>
+          )}
           {groups.map((g) => (
             <div key={g.key} className="mb-3">
               <button
@@ -357,7 +374,12 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
                         slot={
                           <button
                             type="button"
-                            disabled={!mcpConnected || busy}
+                            disabled={!mcpConnected || busy || !hasBacklogNote}
+                            title={
+                              hasBacklogNote
+                                ? undefined
+                                : "Create a #np-backlog note to enable ranking"
+                            }
                             onClick={() => handleRank(t)}
                             className="w-full text-[11px] border border-border-light rounded-md px-1 text-text-secondary hover:bg-surface-hover disabled:opacity-40"
                           >
