@@ -74,6 +74,16 @@ fn write_overview(out: &mut String, store: &NoteStore) {
         .iter()
         .filter(|n| matches!(n.kind, NoteKind::Monthly))
         .count();
+    let quarterly = store
+        .notes
+        .iter()
+        .filter(|n| matches!(n.kind, NoteKind::Quarterly))
+        .count();
+    let yearly = store
+        .notes
+        .iter()
+        .filter(|n| matches!(n.kind, NoteKind::Yearly))
+        .count();
     let templates = store
         .notes
         .iter()
@@ -85,6 +95,8 @@ fn write_overview(out: &mut String, store: &NoteStore) {
     let _ = writeln!(out, "  Daily notes:    {}", daily);
     let _ = writeln!(out, "  Weekly notes:   {}", weekly);
     let _ = writeln!(out, "  Monthly notes:  {}", monthly);
+    let _ = writeln!(out, "  Quarterly notes: {}", quarterly);
+    let _ = writeln!(out, "  Yearly notes:   {}", yearly);
     let _ = writeln!(out, "  Templates:      {}", templates);
     let _ = writeln!(out, "  Total:          {}", store.notes.len());
     let _ = writeln!(out);

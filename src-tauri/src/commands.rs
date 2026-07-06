@@ -256,17 +256,21 @@ fn read_from_cache<T>(
     Ok(out)
 }
 
+/// Ranked backlog + unranked inventory per context, feeding Board and Backlog views.
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_backlog(
     path: String,
     include_older_dailies: Option<bool>,
     cache: State<'_, NoteStoreCache>,
 ) -> Result<crate::models::Backlog, String> {
+    let started = Instant::now();
     let opts = BacklogOptions {
         include_older_dailies: include_older_dailies.unwrap_or(false),
         today: chrono::Local::now().date_naive(),
     };
-    read_from_cache(&cache, &path, |s| build_backlog(s, &opts))
+    let backlog = read_from_cache(&cache, &path, |s| build_backlog(s, &opts))?;
+    log::info!("get_backlog took {:?}", started.elapsed());
+    Ok(backlog)
 }
 
 /// Get filing suggestions for a specific note: extract its content blocks,
