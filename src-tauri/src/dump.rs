@@ -91,14 +91,14 @@ fn write_overview(out: &mut String, store: &NoteStore) {
         .count();
 
     section(out, "OVERVIEW");
-    let _ = writeln!(out, "  Regular notes:  {}", regular);
-    let _ = writeln!(out, "  Daily notes:    {}", daily);
-    let _ = writeln!(out, "  Weekly notes:   {}", weekly);
-    let _ = writeln!(out, "  Monthly notes:  {}", monthly);
+    let _ = writeln!(out, "  Regular notes:   {}", regular);
+    let _ = writeln!(out, "  Daily notes:     {}", daily);
+    let _ = writeln!(out, "  Weekly notes:    {}", weekly);
+    let _ = writeln!(out, "  Monthly notes:   {}", monthly);
     let _ = writeln!(out, "  Quarterly notes: {}", quarterly);
-    let _ = writeln!(out, "  Yearly notes:   {}", yearly);
-    let _ = writeln!(out, "  Templates:      {}", templates);
-    let _ = writeln!(out, "  Total:          {}", store.notes.len());
+    let _ = writeln!(out, "  Yearly notes:    {}", yearly);
+    let _ = writeln!(out, "  Templates:       {}", templates);
+    let _ = writeln!(out, "  Total:           {}", store.notes.len());
     let _ = writeln!(out);
 }
 
