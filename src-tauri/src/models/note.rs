@@ -21,6 +21,8 @@ pub enum NoteKind {
     Daily,
     Weekly,
     Monthly,
+    Quarterly,
+    Yearly,
     Template,
 }
 

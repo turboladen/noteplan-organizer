@@ -37,6 +37,11 @@ Notes/
   _attachments/stray.md          # EXCLUDED
 Calendar/
   20260701.md               # daily note; its task must NOT roll up into projects
+  2026-W27.md               # weekly note (YYYY-Wnn pattern); ^calw01, ^calw02
+  2026-07.md                # monthly note (YYYY-MM pattern); ^calm01
+  2026-Q3.md                # quarterly note (YYYY-Qn pattern); ^calq01
+  2026.md                   # yearly note (YYYY pattern); ^caly01
+  20240101.md               # old daily note (YYYYMMDD pattern, outside window); ^cald02
 ```
 
 ## What it covers
@@ -55,6 +60,9 @@ Calendar/
   `@Archive` folder nested *inside* a project folder) and Calendar notes never
   roll up.
 - A **duplicate-title pair** (`Shared Title` in two folders).
+- **Calendar-kind classification**: Weekly, Monthly, Quarterly, Yearly, and Daily
+  notes classified correctly by filename pattern (YYYY-Wnn, YYYY-MM, YYYY-Qn,
+  YYYY, YYYYMMDD).
 
 ## Extending it
 

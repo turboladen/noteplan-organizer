@@ -40,12 +40,16 @@ fn task<'a>(n: &'a Note, text: &str) -> &'a Task {
 #[test]
 fn test_scan_note_counts_by_kind() {
     let store = load();
-    assert_eq!(store.notes.len(), 17, "total notes in fixture");
+    assert_eq!(store.notes.len(), 22, "total notes in fixture");
 
     let count = |k: fn(&NoteKind) -> bool| store.notes.iter().filter(|n| k(&n.kind)).count();
     assert_eq!(count(|k| matches!(k, NoteKind::Regular)), 15, "regular notes");
     assert_eq!(count(|k| matches!(k, NoteKind::Template)), 1, "template note");
-    assert_eq!(count(|k| matches!(k, NoteKind::Daily)), 1, "daily note");
+    assert_eq!(count(|k| matches!(k, NoteKind::Daily)), 2, "daily notes");
+    assert_eq!(count(|k| matches!(k, NoteKind::Weekly)), 1, "weekly note");
+    assert_eq!(count(|k| matches!(k, NoteKind::Monthly)), 1, "monthly note");
+    assert_eq!(count(|k| matches!(k, NoteKind::Quarterly)), 1, "quarterly note");
+    assert_eq!(count(|k| matches!(k, NoteKind::Yearly)), 1, "yearly note");
 
     // Excluded notes ARE parsed into the store (exclusion happens at the rollup
     // layer, not at scan time). The in-project @Archive note carries a task.
