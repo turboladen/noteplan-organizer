@@ -1,8 +1,15 @@
-use crate::models::{Backlog, BacklogContext, NoteKind, PoolTask, RankedTask, TaskState};
-use crate::parser::{context_folders, is_excluded_relative, NoteStore};
+use crate::models::{Backlog, BacklogContext, CalendarKind, NoteKind, PoolTask, RankedTask, TaskState};
+use crate::parser::{context_folder_projects, is_excluded_relative, parse_project_control, period, NoteStore};
 use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
+
+/// Options for building the backlog. `today` is injected (never read from the
+/// clock inside the builder) so integration tests are deterministic.
+pub struct BacklogOptions {
+    pub include_older_dailies: bool,
+    pub today: chrono::NaiveDate,
+}
 
 /// Marker tag identifying the app-owned backlog control note. Shared with the
 /// write planners (`backlog_write`) so reader and writer agree on ownership.
@@ -93,19 +100,90 @@ fn block_id_index(store: &NoteStore) -> std::collections::HashMap<String, (usize
     idx
 }
 
-pub fn build_backlog(store: &NoteStore) -> Backlog {
-    let Some(control) = parse_backlog_control(store) else {
-        return Backlog {
-            contexts: vec![],
-            control_note_title: None,
-            warnings: vec![],
-        };
-    };
+/// Whether `relative_path` lives under `folder` (a path segment prefix, not a
+/// bare string prefix — avoids a `format!` allocation per comparison, which
+/// otherwise runs once per project per task).
+fn is_under_folder(relative_path: &str, folder: &str) -> bool {
+    relative_path
+        .strip_prefix(folder)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// Project (rank, title) for a note path within a context's resolved folders.
+/// Picks the MOST SPECIFIC (longest) matching folder, so a project folder
+/// nested inside another resolved folder still attributes to its own
+/// project rather than whichever ancestor happens to appear first in the
+/// control note's ordering.
+fn project_for_path<'a>(
+    projects: &'a [(String, u32, String)],
+    relative_path: &str,
+) -> Option<&'a (String, u32, String)> {
+    projects
+        .iter()
+        .filter(|(folder, _, _)| is_under_folder(relative_path, folder))
+        .max_by_key(|(folder, _, _)| folder.len())
+}
+
+pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
+    // No #np-backlog note is NOT a fatal case: contexts are the UNION of
+    // #np-backlog and #np-projects, so a vault with only #np-projects still
+    // gets its contexts (rendered with empty ranked lists). Treat the missing
+    // control as empty — no contexts of its own, no ids, no title, no
+    // warnings — and let the union logic below do the rest.
+    let control = parse_backlog_control(store);
+    let control_contexts: &[(String, Vec<String>)] = control
+        .as_ref()
+        .map(|c| c.contexts.as_slice())
+        .unwrap_or(&[]);
     let index = block_id_index(store);
-    let ctx_folders = context_folders(store);
+    // Single control-note parse + `resolve_folder` walk: `ctx_folders` is
+    // derived locally from `ctx_projects` (folder is the first element of
+    // each triple) instead of calling `context_folders` separately, which
+    // would otherwise re-parse `#np-projects` and re-resolve every folder
+    // reference from scratch.
+    let ctx_projects = context_folder_projects(store);
+    let ctx_folders: Vec<(String, Vec<String>)> = ctx_projects
+        .iter()
+        .map(|(name, projects)| {
+            (
+                name.clone(),
+                projects.iter().map(|(folder, _, _)| folder.clone()).collect(),
+            )
+        })
+        .collect();
+    // #np-projects warnings (e.g. multiple control notes) are surfaced
+    // alongside #np-backlog's own — previously only the backlog control's
+    // warnings reached the frontend, silently dropping the projects side.
+    let projects_warnings = parse_project_control(store)
+        .map(|c| c.warnings)
+        .unwrap_or_default();
+
+    // Union of contexts: backlog-note order first, then any project-only
+    // contexts (present in #np-projects but not in #np-backlog) appended with
+    // an empty ranked list — so a context newly added to the projects board
+    // still shows up here (with just its pool) before anyone has ranked
+    // anything in it.
+    let mut context_names: Vec<String> =
+        control_contexts.iter().map(|(n, _)| n.clone()).collect();
+    for (name, _) in &ctx_folders {
+        if !context_names.iter().any(|c| c == name) {
+            context_names.push(name.clone());
+        }
+    }
 
     let mut contexts = Vec::new();
-    for (name, ids) in &control.contexts {
+    for name in &context_names {
+        let ids: &[String] = control_contexts
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, ids)| ids.as_slice())
+            .unwrap_or(&[]);
+        let projects: Vec<(String, u32, String)> = ctx_projects
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, p)| p.clone())
+            .unwrap_or_default();
+
         // Ranked, in list order.
         let mut ranked = Vec::new();
         let ranked_ids: HashSet<&String> = ids.iter().collect();
@@ -114,6 +192,7 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
                 Some(&(ni, ti)) => {
                     let note = &store.notes[ni];
                     let t = &note.tasks[ti];
+                    let project = project_for_path(&projects, &note.relative_path);
                     ranked.push(RankedTask {
                         rank: (i + 1) as u32,
                         block_id: id.clone(),
@@ -123,6 +202,11 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
                         source_relative_path: note.relative_path.clone(),
                         line_number: t.line_number,
                         resolved: true,
+                        tags: t.tags.clone(),
+                        project_title: project.map(|(_, _, title)| title.clone()),
+                        project_rank: project.map(|(_, rank, _)| *rank),
+                        calendar_kind: CalendarKind::from_note_kind(&note.kind),
+                        calendar_period: period::calendar_period(&note.kind, &note.relative_path),
                     });
                 }
                 None => ranked.push(RankedTask {
@@ -134,6 +218,11 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
                     source_relative_path: String::new(),
                     line_number: 0,
                     resolved: false,
+                    tags: Vec::new(),
+                    project_title: None,
+                    project_rank: None,
+                    calendar_kind: None,
+                    calendar_period: None,
                 }),
             }
         }
@@ -149,10 +238,19 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
             if is_excluded_relative(&note.relative_path) {
                 continue;
             }
+            let calendar_kind = CalendarKind::from_note_kind(&note.kind);
+            let is_calendar = calendar_kind.is_some();
             let in_folder = folders
                 .iter()
-                .any(|f| note.relative_path.starts_with(&format!("{}/", f)));
-            if !in_folder {
+                .any(|f| is_under_folder(&note.relative_path, f));
+            if !in_folder && !is_calendar {
+                continue;
+            }
+            // Daily notes respect the recency window unless explicitly expanded.
+            if matches!(calendar_kind, Some(CalendarKind::Daily))
+                && !opts.include_older_dailies
+                && !period::daily_within_window(&note.relative_path, opts.today)
+            {
                 continue;
             }
             for task in &note.tasks {
@@ -164,6 +262,7 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
                         continue; // already ranked
                     }
                 }
+                let project = project_for_path(&projects, &note.relative_path);
                 pool.push(PoolTask {
                     text: task.text.clone(),
                     priority: task.priority,
@@ -171,6 +270,11 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
                     source_relative_path: note.relative_path.clone(),
                     line_number: task.line_number,
                     block_id: task.block_id.clone(),
+                    tags: task.tags.clone(),
+                    project_title: project.map(|(_, _, title)| title.clone()),
+                    project_rank: project.map(|(_, rank, _)| *rank),
+                    calendar_kind,
+                    calendar_period: period::calendar_period(&note.kind, &note.relative_path),
                 });
             }
         }
@@ -188,10 +292,14 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
         });
     }
 
+    let control_note_title = control.as_ref().map(|c| c.note_title.clone());
+    let mut warnings = control.map(|c| c.warnings).unwrap_or_default();
+    warnings.extend(projects_warnings);
+
     Backlog {
         contexts,
-        control_note_title: Some(control.note_title),
-        warnings: control.warnings,
+        control_note_title,
+        warnings,
     }
 }
 
@@ -202,6 +310,13 @@ mod tests {
 
     fn store(notes: Vec<crate::models::Note>) -> NoteStore {
         NoteStore::new(notes)
+    }
+
+    fn test_opts() -> BacklogOptions {
+        BacklogOptions {
+            include_older_dailies: false,
+            today: chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap(),
+        }
     }
 
     fn projects_note() -> crate::models::Note {
@@ -224,22 +339,30 @@ mod tests {
         let work_note = parse_note(
             "/w.md",
             "Notes/32 - Product Ownership/32.01 - Janet.md",
-            "# Janet\n* Ship v2 spec !! ^a1b2c3\n* Email Palwasha !\n",
+            "# Janet\n* Ship v2 spec !! #v2 ^a1b2c3\n* Email Palwasha !\n",
             NoteKind::Regular,
         );
         let st = store(vec![projects_note(), backlog_note, work_note]);
 
-        let b = build_backlog(&st);
+        let b = build_backlog(&st, &test_opts());
         assert_eq!(b.control_note_title.as_deref(), Some("Backlog"));
         let ctx = &b.contexts[0];
         assert_eq!(ctx.name, "Work");
         assert_eq!(ctx.ranked.len(), 1);
         assert!(ctx.ranked[0].resolved);
-        assert_eq!(ctx.ranked[0].text, "Ship v2 spec");
+        assert_eq!(ctx.ranked[0].text, "Ship v2 spec #v2");
         assert_eq!(ctx.ranked[0].block_id, "a1b2c3");
         // Pool holds the other open task, excludes the already-ranked one.
         assert_eq!(ctx.pool.len(), 1);
         assert_eq!(ctx.pool[0].text, "Email Palwasha");
+        assert_eq!(ctx.ranked[0].tags, vec!["v2".to_string()]);
+        assert_eq!(
+            ctx.ranked[0].project_title.as_deref(),
+            Some("32 - Product Ownership")
+        );
+        assert_eq!(ctx.ranked[0].project_rank, Some(1));
+        assert!(ctx.ranked[0].calendar_kind.is_none());
+        assert_eq!(ctx.pool[0].project_rank, Some(1));
     }
 
     #[test]
@@ -251,16 +374,48 @@ mod tests {
             NoteKind::Regular,
         );
         let st = store(vec![projects_note(), backlog_note]);
-        let b = build_backlog(&st);
+        let b = build_backlog(&st, &test_opts());
         assert_eq!(b.contexts[0].ranked.len(), 1);
         assert!(!b.contexts[0].ranked[0].resolved);
     }
 
     #[test]
     fn test_no_backlog_note() {
+        // No #np-backlog note: title stays None, but contexts still come from
+        // #np-projects alone (union with an empty backlog control), each with
+        // an empty ranked list.
         let st = store(vec![projects_note()]);
-        let b = build_backlog(&st);
+        let b = build_backlog(&st, &test_opts());
         assert_eq!(b.control_note_title, None);
+        assert!(b.warnings.is_empty());
+        assert_eq!(b.contexts.len(), 1);
+        assert_eq!(b.contexts[0].name, "Work");
+        assert!(b.contexts[0].ranked.is_empty());
+    }
+
+    #[test]
+    fn test_projects_only_vault_still_gets_contexts() {
+        // No #np-backlog note at all: contexts come from #np-projects alone,
+        // with empty ranked lists and a working pool.
+        let projects_note = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/Projects.md",
+            "# P #np-projects\n## Work\n1. [[32 - Product Ownership]]\n",
+            NoteKind::Regular,
+        );
+        let work_note = parse_note(
+            "/w.md",
+            "Notes/32 - Product Ownership/32.01 - Janet.md",
+            "# Janet\n* Email Palwasha !\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note, work_note]);
+        let b = build_backlog(&st, &test_opts());
+        assert_eq!(b.control_note_title, None);
+        assert_eq!(b.contexts.len(), 1);
+        assert_eq!(b.contexts[0].name, "Work");
+        assert!(b.contexts[0].ranked.is_empty());
+        assert_eq!(b.contexts[0].pool.len(), 1);
     }
 
     #[test]
@@ -274,7 +429,7 @@ mod tests {
             NoteKind::Regular,
         );
         let st = store(vec![projects_note(), backlog_note]);
-        let b = build_backlog(&st);
+        let b = build_backlog(&st, &test_opts());
         let ranked = &b.contexts[0].ranked;
         assert_eq!(ranked.len(), 1, "only the list item counts, not the prose");
         assert_eq!(ranked[0].block_id, "d4e5f6");
@@ -292,7 +447,78 @@ mod tests {
             NoteKind::Regular,
         );
         let st = store(vec![projects_note(), backlog_note]);
-        let b = build_backlog(&st);
+        let b = build_backlog(&st, &test_opts());
         assert_eq!(b.contexts[0].ranked[0].block_id, "newid1");
+    }
+
+    #[test]
+    fn test_context_union_includes_project_only_contexts() {
+        // #np-backlog has only Work; #np-projects has Work AND Home.
+        let projects_note = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/Projects.md",
+            "# P #np-projects\n## Work\n1. [[32 - Product Ownership]]\n## Home\n1. [[21 - Home Reno]]\n",
+            NoteKind::Regular,
+        );
+        let backlog_note = parse_note(
+            "/b.md",
+            "Notes/_NotePlan Organizer/Backlog.md",
+            "# Backlog #np-backlog\n## Work\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note, backlog_note]);
+        let b = build_backlog(&st, &test_opts());
+        let names: Vec<&str> = b.contexts.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Work", "Home"]);
+        assert!(b.contexts[1].ranked.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_projects_control_notes_surface_warning() {
+        // Two notes carry #np-projects: parse_project_control picks one
+        // deterministically, but the ambiguity warning must still reach
+        // Backlog.warnings (previously only #np-backlog's own warnings were
+        // surfaced; the #np-projects side was silently dropped).
+        let projects_a = parse_note(
+            "/pa.md",
+            "Notes/_NotePlan Organizer/Projects A.md",
+            "# PA #np-projects\n## Work\n1. [[32 - Product Ownership]]\n",
+            NoteKind::Regular,
+        );
+        let projects_b = parse_note(
+            "/pb.md",
+            "Notes/_NotePlan Organizer/Projects B.md",
+            "# PB #np-projects\n## Work\n1. [[32 - Product Ownership]]\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_a, projects_b]);
+        let b = build_backlog(&st, &test_opts());
+        assert!(
+            b.warnings.iter().any(|w| w.contains("np-projects")),
+            "expected a #np-projects ambiguity warning, got {:?}",
+            b.warnings
+        );
+    }
+
+    #[test]
+    fn test_project_for_path_picks_most_specific_nested_folder() {
+        // A project folder nested inside another resolved project's folder
+        // must attribute to its OWN project (longest matching prefix), not
+        // whichever ancestor happens to appear first in the control note.
+        let outer = ("32 - Product Ownership".to_string(), 1u32, "Outer".to_string());
+        let inner = (
+            "32 - Product Ownership/32.01 - Nested".to_string(),
+            2u32,
+            "Inner".to_string(),
+        );
+        let projects = vec![outer.clone(), inner.clone()];
+        let hit = project_for_path(
+            &projects,
+            "32 - Product Ownership/32.01 - Nested/task.md",
+        );
+        assert_eq!(hit.map(|(_, _, title)| title.as_str()), Some("Inner"));
+        // A path only under the outer folder still resolves to the outer project.
+        let outer_hit = project_for_path(&projects, "32 - Product Ownership/task.md");
+        assert_eq!(outer_hit.map(|(_, _, title)| title.as_str()), Some("Outer"));
     }
 }

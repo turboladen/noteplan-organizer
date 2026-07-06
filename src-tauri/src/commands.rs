@@ -13,8 +13,8 @@ use std::collections::HashSet;
 use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report};
 use crate::parser::matcher::FilingSuggestion;
 use crate::parser::{
-    build_backlog, build_filing_targets, build_project_board, extract_content_blocks,
-    match_blocks_to_targets, parse_note, scan_noteplan_dir, NoteStore,
+    build_backlog, build_filing_targets, extract_content_blocks, match_blocks_to_targets,
+    parse_note, scan_noteplan_dir, BacklogOptions, NoteStore,
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -256,41 +256,21 @@ fn read_from_cache<T>(
     Ok(out)
 }
 
-/// Build the read-only project priority board from the `#np-projects` control note.
-/// Pure read — no MCP, no writes. Served from the cache when populated.
-#[tauri::command]
-pub fn get_project_board(
-    path: String,
-    cache: State<'_, NoteStoreCache>,
-) -> Result<crate::models::ProjectBoard, String> {
-    let t0 = Instant::now();
-    let board = read_from_cache(&cache, &path, build_project_board)?;
-    log::info!("get_project_board served in {:?}", t0.elapsed());
-    Ok(board)
-}
-
-/// Build the read-only backlog (ranked + pool) from #np-backlog + #np-projects.
-/// Pure read — no MCP, no writes. Served from the cache when populated.
-#[tauri::command]
+/// Ranked backlog + unranked inventory per context, feeding Board and Backlog views.
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_backlog(
     path: String,
+    include_older_dailies: Option<bool>,
     cache: State<'_, NoteStoreCache>,
 ) -> Result<crate::models::Backlog, String> {
-    let t0 = Instant::now();
-    let backlog = read_from_cache(&cache, &path, build_backlog)?;
-    log::info!("get_backlog served in {:?}", t0.elapsed());
+    let started = Instant::now();
+    let opts = BacklogOptions {
+        include_older_dailies: include_older_dailies.unwrap_or(false),
+        today: chrono::Local::now().date_naive(),
+    };
+    let backlog = read_from_cache(&cache, &path, |s| build_backlog(s, &opts))?;
+    log::info!("get_backlog took {:?}", started.elapsed());
     Ok(backlog)
-}
-
-/// Search for tasks via MCP's noteplan_paragraphs tool.
-/// Returns the raw text response for the frontend to parse and display.
-#[tauri::command]
-pub async fn search_tasks(
-    mcp_state: State<'_, McpState>,
-    query: Option<String>,
-    completed: Option<bool>,
-) -> Result<String, String> {
-    tools::search_tasks(&mcp_state, query.as_deref(), completed).await
 }
 
 /// Get filing suggestions for a specific note: extract its content blocks,
@@ -423,11 +403,46 @@ fn resolve_note(cache: &NoteStoreCache, title: &str) -> ResolvedNote {
     }
 }
 
+/// Resolve a note by its exact relative path (filename addressing, the app's
+/// standard — titles can collide, e.g. template-stamped daily-note headings,
+/// while paths are unique). Unlike `resolve_note`, a cache miss still yields
+/// Filename addressing (the path came from the frontend's own note data, not
+/// a guess) rather than falling back to Title here; `fetch_note_strict`
+/// fetches this addr with NO title fallback — a wrong-note guess among
+/// same-titled notes is worse than aborting the write.
+fn resolve_note_by_path(cache: &NoteStoreCache, relative_path: &str) -> ResolvedNote {
+    let guard = cache.0.read().unwrap_or_else(|p| p.into_inner());
+    if let Some(store) = guard.as_ref() {
+        if let Some(&idx) = store.path_index.get(relative_path) {
+            let n = &store.notes[idx];
+            return ResolvedNote {
+                addr: NoteAddr::Filename(n.relative_path.clone()),
+                patch: Some((n.file_path.clone(), n.relative_path.clone(), n.kind.clone())),
+            };
+        }
+    }
+    drop(guard);
+    // Path supplied but unknown to the cache (e.g. note created since the last
+    // scan): still prefer filename addressing — the path came from the
+    // frontend's own note data, and the resilient fetch falls back to title if
+    // the server rejects it. No cache patch identity available, so `patch` is
+    // None (the write cache won't be locally updated for this note).
+    ResolvedNote {
+        addr: NoteAddr::Filename(relative_path.to_string()),
+        patch: None,
+    }
+}
+
 /// Fetch a note, preferring the resolved (filename) addressing but falling back
-/// to TITLE if the filename call errors — the server's `filename` format is not
-/// yet runtime-verified, so this keeps the feature working (title, slower) rather
-/// than breaking every write if the guess is wrong. Returns the content AND the
-/// addr that worked, so the subsequent writes use the same known-good addressing.
+/// to TITLE if the filename call errors. Filename addressing itself is
+/// runtime-verified (see `docs/testing-with-mcp-inspector.md`); the title
+/// fallback here is for TITLE-resolved notes only (e.g. the backlog control
+/// note via `resolve_note`, which has no relative path to fall back to and
+/// where a title search is the only lookup available) — not a hedge against
+/// filename addressing being wrong. Never use this for a note resolved by exact
+/// path where a same-titled sibling could exist (see `fetch_note_strict`).
+/// Returns the content AND the addr that worked, so the subsequent writes use
+/// the same known-good addressing.
 async fn fetch_note_resilient(
     mcp: &McpState,
     resolved: &ResolvedNote,
@@ -442,6 +457,25 @@ async fn fetch_note_resilient(
             Ok((content, addr))
         }
         Err(e) => Err(e),
+    }
+}
+
+/// Fetch a note by its resolved addressing with NO title fallback. Used for
+/// the rank SOURCE note: its addr comes from the exact relative path the
+/// frontend displayed, and falling back to a title search could resolve to a
+/// DIFFERENT note with the same title (template-stamped daily notes collide
+/// systematically) — a wrong-note write, the one failure mode worse than a
+/// failed rank. If the path fetch fails, abort and let the user rescan/retry.
+async fn fetch_note_strict(
+    mcp: &McpState,
+    resolved: &ResolvedNote,
+) -> Result<(String, NoteAddr), String> {
+    match tools::get_note(mcp, &resolved.addr).await {
+        Ok(content) => Ok((content, resolved.addr.clone())),
+        Err(e) => Err(format!(
+            "could not fetch the task's source note at {:?}: {} — the note may have moved since the last scan; rescan and retry",
+            resolved.addr, e
+        )),
     }
 }
 
@@ -615,6 +649,7 @@ pub async fn backlog_rank_task(
     suppress: State<'_, WriteSuppression>,
     path: String,
     source_note_title: String,
+    source_relative_path: String,
     expected_text: String,
     context: String,
     backlog_note_title: String,
@@ -622,8 +657,13 @@ pub async fn backlog_rank_task(
     let t0 = Instant::now();
     // Phase 1: collision-id set from the warm cache (no full rescan).
     let existing = existing_ids_from_cache(&cache, &path);
-    // Resolve addressing + cache-patch identity (filename addressing when known).
-    let source = resolve_note(&cache, &source_note_title);
+    // Resolve addressing + cache-patch identity. Source is addressed by its
+    // relative path (filename addressing; titles can collide — e.g.
+    // template-stamped daily notes), never by title, and its fetch below uses
+    // `fetch_note_strict` (no title fallback) for the same reason.
+    // `source_note_title` is still needed below for the `[[title^id]]` backlog
+    // entry text.
+    let source = resolve_note_by_path(&cache, &source_relative_path);
     let backlog = resolve_note(&cache, &backlog_note_title);
     let t_ids = t0.elapsed();
 
@@ -632,8 +672,7 @@ pub async fn backlog_rank_task(
     let t1 = Instant::now();
     let (backlog_content, backlog_addr) =
         fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
-    let (source_content, source_addr) =
-        fetch_note_resilient(&mcp_state, &source, &source_note_title).await?;
+    let (source_content, source_addr) = fetch_note_strict(&mcp_state, &source).await?;
     let (block_id, source_ops) =
         plan_stamp_block_id(&source_content, &source_note_title, &expected_text, &existing)?;
     let entry = format!("- [[{}^{}]] {}", source_note_title, block_id, expected_text);
@@ -723,8 +762,12 @@ pub async fn backlog_remove(
 
 #[cfg(test)]
 mod tests {
-    use super::{content_after_ops, title_matches};
+    use super::{content_after_ops, resolve_note_by_path, title_matches};
+    use crate::app_state::NoteStoreCache;
     use crate::backlog_write::WriteOp;
+    use crate::mcp::tools::NoteAddr;
+    use crate::models::NoteKind;
+    use crate::parser::{parse_note, NoteStore};
 
     #[test]
     fn test_content_after_ops_replace_insert_delete() {
@@ -786,5 +829,56 @@ mod tests {
         // Different notes must NOT match.
         assert!(!title_matches("Beta Project", "Alpha Project"));
         assert!(!title_matches("Backlog #np-backlog", "Backlogs"));
+    }
+
+    #[test]
+    fn test_resolve_note_by_path_hits_cache() {
+        // Two notes sharing a title (e.g. template-stamped daily notes) would
+        // break title-based resolution; path addressing must still pick the
+        // exact one requested.
+        let store = NoteStore::new(vec![
+            parse_note(
+                "/abs/Calendar/20260701.md",
+                "Calendar/20260701.md",
+                "# Daily\n* one",
+                NoteKind::Daily,
+            ),
+            parse_note(
+                "/abs/Calendar/20260702.md",
+                "Calendar/20260702.md",
+                "# Daily\n* two",
+                NoteKind::Daily,
+            ),
+        ]);
+        let cache = NoteStoreCache::default();
+        cache.set(store);
+
+        let resolved = resolve_note_by_path(&cache, "Calendar/20260702.md");
+
+        assert!(
+            matches!(&resolved.addr, NoteAddr::Filename(p) if p == "Calendar/20260702.md"),
+            "expected Filename(\"Calendar/20260702.md\"), got {:?}",
+            resolved.addr
+        );
+        let (file_path, rel, _kind) = resolved.patch.expect("path in cache must yield a patch identity");
+        assert_eq!(file_path, "/abs/Calendar/20260702.md");
+        assert_eq!(rel, "Calendar/20260702.md");
+    }
+
+    #[test]
+    fn test_resolve_note_by_path_misses_cache_still_prefers_filename() {
+        // Note created since the last scan: not in the cache, but the frontend's
+        // path is still trusted for addressing (no cache-patch identity though).
+        let cache = NoteStoreCache::default();
+        cache.set(NoteStore::new(vec![]));
+
+        let resolved = resolve_note_by_path(&cache, "Notes/new-note.md");
+
+        assert!(
+            matches!(&resolved.addr, NoteAddr::Filename(p) if p == "Notes/new-note.md"),
+            "expected Filename(\"Notes/new-note.md\"), got {:?}",
+            resolved.addr
+        );
+        assert!(resolved.patch.is_none());
     }
 }

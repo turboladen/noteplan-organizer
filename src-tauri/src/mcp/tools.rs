@@ -282,27 +282,6 @@ pub async fn delete_line(state: &McpState, addr: &NoteAddr, line: usize) -> McpR
 // noteplan_paragraphs (task operations)
 // ---------------------------------------------------------------------------
 
-/// Search for tasks globally with optional filters. The real schema filters by a
-/// `status` enum, not a `completed` bool; map the bool a caller supplies onto
-/// the enum (true -> "done", false -> "open").
-/// NOTE: the exact enum values were not re-confirmed in the Inspector — verify
-/// against the live `noteplan_paragraphs` schema before relying on this filter.
-pub async fn search_tasks(
-    state: &McpState,
-    query: Option<&str>,
-    completed: Option<bool>,
-) -> McpResult<String> {
-    let mut args = json!({ "action": "search" });
-    if let Some(q) = query {
-        args["query"] = json!(q);
-    }
-    if let Some(c) = completed {
-        args["status"] = json!(if c { "done" } else { "open" });
-    }
-    let result = state.call_tool("noteplan_paragraphs", args).await?;
-    Ok(extract_text(&result))
-}
-
 /// Complete a task by marking it done.
 pub async fn complete_task(state: &McpState, title: &str, line: usize) -> McpResult<String> {
     let result = state

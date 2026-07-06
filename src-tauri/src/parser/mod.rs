@@ -6,10 +6,11 @@ pub mod hierarchy;
 mod link;
 mod markdown;
 pub mod matcher;
+pub mod period;
 mod projects;
 mod task;
 
-pub use backlog::build_backlog;
+pub use backlog::{build_backlog, BacklogOptions};
 pub(crate) use backlog::BACKLOG_TAG;
 pub use block::extract_content_blocks;
 pub use filing::build_filing_targets;
@@ -17,7 +18,7 @@ pub use folder::{parse_jd_id, parse_note_id};
 pub use link::extract_wiki_links;
 pub use markdown::parse_note;
 pub use matcher::match_blocks_to_targets;
-pub use projects::{build_project_board, context_folders, parse_project_control, ProjectControl};
+pub use projects::{context_folder_projects, context_folders, parse_project_control, ProjectControl};
 pub use task::{
     clean_task_text, is_task_line, parse_task_line, parse_tasks, task_display_text, ParsedTaskLine,
 };
@@ -146,13 +147,34 @@ pub fn scan_noteplan_dir(base_path: &str) -> NoteStore {
     NoteStore::new(notes)
 }
 
+/// Classify a Calendar/ note by its filename stem. NotePlan's conventions:
+/// daily `YYYYMMDD`, weekly `YYYY-Wnn`, monthly `YYYY-MM`, quarterly
+/// `YYYY-Qn`, yearly `YYYY`. Unrecognized stems fall back to Daily (matches
+/// the previous behavior for odd names).
 fn classify_calendar_note(path: &Path) -> NoteKind {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    if stem.contains("-W") {
-        NoteKind::Weekly
-    } else if stem.len() == 7 && stem.contains('-') {
-        // YYYY-MM format
-        NoteKind::Monthly
+    fn all_digits(s: &str) -> bool {
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+    }
+    if let Some((year, rest)) = stem.split_once('-') {
+        if all_digits(year) && year.len() == 4 {
+            if let Some(w) = rest.strip_prefix('W') {
+                if all_digits(w) {
+                    return NoteKind::Weekly;
+                }
+            }
+            if let Some(q) = rest.strip_prefix('Q') {
+                if all_digits(q) {
+                    return NoteKind::Quarterly;
+                }
+            }
+            if all_digits(rest) && rest.len() == 2 {
+                return NoteKind::Monthly;
+            }
+        }
+        NoteKind::Daily
+    } else if all_digits(stem) && stem.len() == 4 {
+        NoteKind::Yearly
     } else {
         NoteKind::Daily
     }

@@ -59,7 +59,14 @@ export interface Finding {
 
 export type NoteIdKind = "JdDotted" | "HubCode" | "Sequential" | "DatePrefix" | "BareHub";
 
-export type NoteKind = "Regular" | "Daily" | "Weekly" | "Monthly" | "Template";
+export type NoteKind =
+  | "Regular"
+  | "Daily"
+  | "Weekly"
+  | "Monthly"
+  | "Quarterly"
+  | "Yearly"
+  | "Template";
 
 export type TaskState = "Open" | "Done" | "Cancelled" | "Scheduled";
 
@@ -77,38 +84,12 @@ export interface Task {
   block_id: string | null;
 }
 
-export interface BoardTask {
-  text: string;
-  priority: number;
-  state: TaskState;
-  source_note_title: string;
-  source_relative_path: string;
-  line_number: number;
-  scheduled_to: string | null;
-  block_id: string | null;
-}
-
-export interface BoardProject {
-  rank: number;
-  title: string;
-  folder_relative_path: string;
-  tasks: BoardTask[];
-  open_count: number;
-  /** [none, !, !!, !!!] */
-  priority_counts: [number, number, number, number];
-}
-
-export interface BoardContext {
-  name: string;
-  projects: BoardProject[];
-  unresolved: string[];
-}
-
-export interface ProjectBoard {
-  contexts: BoardContext[];
-  control_note_title: string | null;
-  warnings: string[];
-}
+export type CalendarKind =
+  | "daily"
+  | "weekly"
+  | "monthly"
+  | "quarterly"
+  | "yearly";
 
 export interface RankedTask {
   rank: number;
@@ -119,6 +100,11 @@ export interface RankedTask {
   source_relative_path: string;
   line_number: number;
   resolved: boolean;
+  tags: string[];
+  project_title: string | null;
+  project_rank: number | null;
+  calendar_kind: CalendarKind | null;
+  calendar_period: string | null;
 }
 
 export interface PoolTask {
@@ -128,6 +114,11 @@ export interface PoolTask {
   source_relative_path: string;
   line_number: number;
   block_id: string | null;
+  tags: string[];
+  project_title: string | null;
+  project_rank: number | null;
+  calendar_kind: CalendarKind | null;
+  calendar_period: string | null;
 }
 
 export interface BacklogContext {
