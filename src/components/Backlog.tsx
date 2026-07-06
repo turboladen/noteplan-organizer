@@ -42,6 +42,8 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
       .then((b) => {
         setData(b);
         setActiveCtx((i) => (i < b.contexts.length ? i : 0));
+        // Resync disclosure to this vault's cache so state can't leak across a vault switch.
+        setCollapsed(collapsedCache.get(basePath) ?? new Set());
       })
       .catch((e) => onToast(`Backlog load failed: ${e}`));
   };
@@ -343,8 +345,8 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
               </button>
               {!collapsed.has(g.key) && (
                 <ul className="space-y-1.5">
-                  {g.tasks.map((t) => (
-                    <li key={`${t.source_relative_path}:${t.line_number}`}>
+                  {g.tasks.map((t, i) => (
+                    <li key={`${t.source_relative_path}:${t.line_number}:${i}`}>
                       <TaskCard
                         task={t}
                         hideProjectChip={!g.isCalendar}
