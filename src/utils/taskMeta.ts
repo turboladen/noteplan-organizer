@@ -8,3 +8,14 @@ export function folderPath(sourceRelativePath: string): string | null {
   const trimmed = dirs[0] === "Notes" ? dirs.slice(1) : dirs;
   return trimmed.length > 0 ? trimmed.join("/") : null;
 }
+
+/** Whether a task's text/tags match a free-text search query (case-insensitive
+ * substring on text, and on tags both bare and `#`-prefixed). An empty query
+ * matches everything. Shared so the ranked list and inventory groups in the
+ * Backlog can't drift into inconsistent filtering. */
+export function matchesSearch(query: string, text: string, tags: string[]): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (text.toLowerCase().includes(q)) return true;
+  return tags.some((t) => `#${t}`.toLowerCase().includes(q) || t.toLowerCase().includes(q));
+}

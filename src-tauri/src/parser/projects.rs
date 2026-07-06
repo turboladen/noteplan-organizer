@@ -130,17 +130,18 @@ fn resolve_folder(store: &NoteStore, reference: &str) -> Option<String> {
 }
 
 /// Public: map each control-note context to its resolved project folders.
-/// Reused by the backlog reader for pool bucketing.
+/// Reused by the backlog reader for pool bucketing. Derived from
+/// `context_folder_projects` (folder is the first element of each triple) so
+/// there's a single control-note parse + `resolve_folder` walk to keep in
+/// sync, not two independently-maintained traversals.
 pub fn context_folders(store: &NoteStore) -> Vec<(String, Vec<String>)> {
-    let Some(control) = parse_project_control(store) else {
-        return vec![];
-    };
-    control
-        .contexts
-        .iter()
-        .map(|(name, refs)| {
-            let folders = refs.iter().filter_map(|r| resolve_folder(store, r)).collect();
-            (name.clone(), folders)
+    context_folder_projects(store)
+        .into_iter()
+        .map(|(name, projects)| {
+            (
+                name,
+                projects.into_iter().map(|(folder, _, _)| folder).collect(),
+            )
         })
         .collect()
 }

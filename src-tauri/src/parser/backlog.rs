@@ -1,5 +1,5 @@
 use crate::models::{Backlog, BacklogContext, CalendarKind, NoteKind, PoolTask, RankedTask, TaskState};
-use crate::parser::{context_folder_projects, context_folders, is_excluded_relative, period, NoteStore};
+use crate::parser::{context_folder_projects, is_excluded_relative, parse_project_control, period, NoteStore};
 use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -100,14 +100,28 @@ fn block_id_index(store: &NoteStore) -> std::collections::HashMap<String, (usize
     idx
 }
 
+/// Whether `relative_path` lives under `folder` (a path segment prefix, not a
+/// bare string prefix — avoids a `format!` allocation per comparison, which
+/// otherwise runs once per project per task).
+fn is_under_folder(relative_path: &str, folder: &str) -> bool {
+    relative_path
+        .strip_prefix(folder)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
 /// Project (rank, title) for a note path within a context's resolved folders.
+/// Picks the MOST SPECIFIC (longest) matching folder, so a project folder
+/// nested inside another resolved folder still attributes to its own
+/// project rather than whichever ancestor happens to appear first in the
+/// control note's ordering.
 fn project_for_path<'a>(
     projects: &'a [(String, u32, String)],
     relative_path: &str,
 ) -> Option<&'a (String, u32, String)> {
     projects
         .iter()
-        .find(|(folder, _, _)| relative_path.starts_with(&format!("{}/", folder)))
+        .filter(|(folder, _, _)| is_under_folder(relative_path, folder))
+        .max_by_key(|(folder, _, _)| folder.len())
 }
 
 pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
@@ -122,8 +136,27 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
         .map(|c| c.contexts.as_slice())
         .unwrap_or(&[]);
     let index = block_id_index(store);
-    let ctx_folders = context_folders(store);
+    // Single control-note parse + `resolve_folder` walk: `ctx_folders` is
+    // derived locally from `ctx_projects` (folder is the first element of
+    // each triple) instead of calling `context_folders` separately, which
+    // would otherwise re-parse `#np-projects` and re-resolve every folder
+    // reference from scratch.
     let ctx_projects = context_folder_projects(store);
+    let ctx_folders: Vec<(String, Vec<String>)> = ctx_projects
+        .iter()
+        .map(|(name, projects)| {
+            (
+                name.clone(),
+                projects.iter().map(|(folder, _, _)| folder.clone()).collect(),
+            )
+        })
+        .collect();
+    // #np-projects warnings (e.g. multiple control notes) are surfaced
+    // alongside #np-backlog's own — previously only the backlog control's
+    // warnings reached the frontend, silently dropping the projects side.
+    let projects_warnings = parse_project_control(store)
+        .map(|c| c.warnings)
+        .unwrap_or_default();
 
     // Union of contexts: backlog-note order first, then any project-only
     // contexts (present in #np-projects but not in #np-backlog) appended with
@@ -209,7 +242,7 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
             let is_calendar = calendar_kind.is_some();
             let in_folder = folders
                 .iter()
-                .any(|f| note.relative_path.starts_with(&format!("{}/", f)));
+                .any(|f| is_under_folder(&note.relative_path, f));
             if !in_folder && !is_calendar {
                 continue;
             }
@@ -259,10 +292,14 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
         });
     }
 
+    let control_note_title = control.as_ref().map(|c| c.note_title.clone());
+    let mut warnings = control.map(|c| c.warnings).unwrap_or_default();
+    warnings.extend(projects_warnings);
+
     Backlog {
         contexts,
-        control_note_title: control.as_ref().map(|c| c.note_title.clone()),
-        warnings: control.map(|c| c.warnings).unwrap_or_default(),
+        control_note_title,
+        warnings,
     }
 }
 
@@ -434,5 +471,54 @@ mod tests {
         let names: Vec<&str> = b.contexts.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["Work", "Home"]);
         assert!(b.contexts[1].ranked.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_projects_control_notes_surface_warning() {
+        // Two notes carry #np-projects: parse_project_control picks one
+        // deterministically, but the ambiguity warning must still reach
+        // Backlog.warnings (previously only #np-backlog's own warnings were
+        // surfaced; the #np-projects side was silently dropped).
+        let projects_a = parse_note(
+            "/pa.md",
+            "Notes/_NotePlan Organizer/Projects A.md",
+            "# PA #np-projects\n## Work\n1. [[32 - Product Ownership]]\n",
+            NoteKind::Regular,
+        );
+        let projects_b = parse_note(
+            "/pb.md",
+            "Notes/_NotePlan Organizer/Projects B.md",
+            "# PB #np-projects\n## Work\n1. [[32 - Product Ownership]]\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_a, projects_b]);
+        let b = build_backlog(&st, &test_opts());
+        assert!(
+            b.warnings.iter().any(|w| w.contains("np-projects")),
+            "expected a #np-projects ambiguity warning, got {:?}",
+            b.warnings
+        );
+    }
+
+    #[test]
+    fn test_project_for_path_picks_most_specific_nested_folder() {
+        // A project folder nested inside another resolved project's folder
+        // must attribute to its OWN project (longest matching prefix), not
+        // whichever ancestor happens to appear first in the control note.
+        let outer = ("32 - Product Ownership".to_string(), 1u32, "Outer".to_string());
+        let inner = (
+            "32 - Product Ownership/32.01 - Nested".to_string(),
+            2u32,
+            "Inner".to_string(),
+        );
+        let projects = vec![outer.clone(), inner.clone()];
+        let hit = project_for_path(
+            &projects,
+            "32 - Product Ownership/32.01 - Nested/task.md",
+        );
+        assert_eq!(hit.map(|(_, _, title)| title.as_str()), Some("Inner"));
+        // A path only under the outer folder still resolves to the outer project.
+        let outer_hit = project_for_path(&projects, "32 - Product Ownership/task.md");
+        assert_eq!(outer_hit.map(|(_, _, title)| title.as_str()), Some("Outer"));
     }
 }

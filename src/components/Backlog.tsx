@@ -3,6 +3,7 @@ import { backlogRankTask, backlogReorder, getBacklog, openNotePlanUrl } from "..
 import type { Backlog as BacklogData, PoolTask, RankedTask } from "../types/api";
 import { TaskCard } from "./TaskCard";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
+import { matchesSearch } from "../utils/taskMeta";
 
 // Inventory-group disclosure survives view switches (component unmounts);
 // keyed by basePath so a vault switch starts fresh.
@@ -118,24 +119,14 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
   const ctx = data?.contexts[activeCtx];
 
   const visibleRanked = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const matchesQuery = (text: string, tags: string[]) =>
-      !q ||
-      text.toLowerCase().includes(q) ||
-      tags.some((t) => `#${t}`.toLowerCase().includes(q) || t.toLowerCase().includes(q));
-    return (ctx?.ranked ?? []).filter((t) => matchesQuery(t.text, t.tags));
+    return (ctx?.ranked ?? []).filter((t) => matchesSearch(search, t.text, t.tags));
   }, [ctx, search]);
 
   const groups = useMemo<InventoryGroup[]>(() => {
     if (!ctx) return [];
-    const q = search.trim().toLowerCase();
-    const matchesQuery = (text: string, tags: string[]) =>
-      !q ||
-      text.toLowerCase().includes(q) ||
-      tags.some((t) => `#${t}`.toLowerCase().includes(q) || t.toLowerCase().includes(q));
     const rankedCountFor = (pred: (t: RankedTask) => boolean) =>
       ctx.ranked.filter((t) => t.resolved && pred(t)).length;
-    const pool = ctx.pool.filter((t) => matchesQuery(t.text, t.tags));
+    const pool = ctx.pool.filter((t) => matchesSearch(search, t.text, t.tags));
 
     const projectGroups = new Map<string, InventoryGroup>();
     const calendarTasks: PoolTask[] = [];
