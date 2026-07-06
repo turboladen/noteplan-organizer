@@ -110,6 +110,13 @@ export interface ProjectBoard {
   warnings: string[];
 }
 
+export type CalendarKind =
+  | "daily"
+  | "weekly"
+  | "monthly"
+  | "quarterly"
+  | "yearly";
+
 export interface RankedTask {
   rank: number;
   block_id: string;
@@ -119,6 +126,11 @@ export interface RankedTask {
   source_relative_path: string;
   line_number: number;
   resolved: boolean;
+  tags: string[];
+  project_title: string | null;
+  project_rank: number | null;
+  calendar_kind: CalendarKind | null;
+  calendar_period: string | null;
 }
 
 export interface PoolTask {
@@ -128,6 +140,11 @@ export interface PoolTask {
   source_relative_path: string;
   line_number: number;
   block_id: string | null;
+  tags: string[];
+  project_title: string | null;
+  project_rank: number | null;
+  calendar_kind: CalendarKind | null;
+  calendar_period: string | null;
 }
 
 export interface BacklogContext {

@@ -269,21 +269,17 @@ pub fn get_project_board(
     Ok(board)
 }
 
-/// Build the read-only backlog (ranked + pool) from #np-backlog + #np-projects.
-/// Pure read — no MCP, no writes. Served from the cache when populated.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn get_backlog(
     path: String,
+    include_older_dailies: Option<bool>,
     cache: State<'_, NoteStoreCache>,
 ) -> Result<crate::models::Backlog, String> {
-    let t0 = Instant::now();
-    let opts = BacklogOptions {
-        include_older_dailies: false,
+    let opts = crate::parser::BacklogOptions {
+        include_older_dailies: include_older_dailies.unwrap_or(false),
         today: chrono::Local::now().date_naive(),
     };
-    let backlog = read_from_cache(&cache, &path, |s| build_backlog(s, &opts))?;
-    log::info!("get_backlog served in {:?}", t0.elapsed());
-    Ok(backlog)
+    read_from_cache(&cache, &path, |s| crate::parser::build_backlog(s, &opts))
 }
 
 /// Search for tasks via MCP's noteplan_paragraphs tool.

@@ -98,8 +98,14 @@ export async function getProjectBoard(path: string): Promise<ProjectBoard> {
 // Backlog (read-only read; writes require MCP connected)
 // ---------------------------------------------------------------------------
 
-export async function getBacklog(path: string): Promise<Backlog> {
-  return invoke<Backlog>("get_backlog", { path });
+export async function getBacklog(
+  path: string,
+  includeOlderDailies = false,
+): Promise<Backlog> {
+  return invoke<Backlog>("get_backlog", {
+    path,
+    include_older_dailies: includeOlderDailies,
+  });
 }
 
 export async function backlogRankTask(args: {
