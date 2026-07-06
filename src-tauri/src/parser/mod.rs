@@ -6,6 +6,7 @@ pub mod hierarchy;
 mod link;
 mod markdown;
 pub mod matcher;
+pub mod period;
 mod projects;
 mod task;
 
