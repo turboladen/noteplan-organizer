@@ -3,7 +3,6 @@ import { useState } from "react";
 export type AppView =
   | "board"
   | "backlog"
-  | "tasks"
   | "filing"
   | "findings"
   | "assessment";
@@ -13,7 +12,6 @@ export type McpUiState = "connecting" | "connected" | "offline";
 export const ALL_VIEWS: AppView[] = [
   "board",
   "backlog",
-  "tasks",
   "filing",
   "findings",
   "assessment",
@@ -36,7 +34,6 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: "board", label: "Board", icon: "▦" },
       { id: "backlog", label: "Backlog", icon: "☰" },
-      { id: "tasks", label: "Tasks", icon: "✓" },
     ],
   },
   {

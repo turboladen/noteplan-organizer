@@ -17,12 +17,11 @@ import {
   systemDump,
 } from "./api/commands";
 import { Backlog } from "./components/Backlog";
+import { Board } from "./components/Board";
 import { FilingAssistant } from "./components/FilingAssistant";
 import { FindingsList } from "./components/FindingsList";
-import { ProjectBoard } from "./components/ProjectBoard";
 import { ALL_VIEWS, Sidebar } from "./components/Sidebar";
 import type { AppView, McpUiState } from "./components/Sidebar";
-import { TaskTriage } from "./components/TaskTriage";
 import { SCAN_UPDATE_EVENT, SYSTEM_ASSESSMENT_CATEGORIES } from "./types/api";
 import type { Finding, FindingCategory, Report, ReportStats, Severity } from "./types/api";
 import { getFindingId } from "./utils/findingId";
@@ -435,20 +434,11 @@ function App() {
               </div>
             )}
 
-            {activeView === "board" && <ProjectBoard basePath={notePlanPath} />}
+            {activeView === "board" && <Board basePath={notePlanPath} />}
 
             {activeView === "backlog" && (
               <Backlog
                 basePath={notePlanPath}
-                mcpConnected={mcpConnected}
-                mcpConnecting={mcpState === "connecting"}
-                onToast={showToast}
-                onReconnect={handleMcpConnect}
-              />
-            )}
-
-            {activeView === "tasks" && (
-              <TaskTriage
                 mcpConnected={mcpConnected}
                 mcpConnecting={mcpState === "connecting"}
                 onToast={showToast}
