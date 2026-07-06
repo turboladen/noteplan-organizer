@@ -275,11 +275,11 @@ pub fn get_backlog(
     include_older_dailies: Option<bool>,
     cache: State<'_, NoteStoreCache>,
 ) -> Result<crate::models::Backlog, String> {
-    let opts = crate::parser::BacklogOptions {
+    let opts = BacklogOptions {
         include_older_dailies: include_older_dailies.unwrap_or(false),
         today: chrono::Local::now().date_naive(),
     };
-    read_from_cache(&cache, &path, |s| crate::parser::build_backlog(s, &opts))
+    read_from_cache(&cache, &path, |s| build_backlog(s, &opts))
 }
 
 /// Search for tasks via MCP's noteplan_paragraphs tool.
