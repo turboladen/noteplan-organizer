@@ -197,7 +197,19 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
   };
 
   if (!data) return <div className="text-sm text-text-tertiary">Loading backlog…</div>;
-  if (!ctx) return <div className="text-sm text-text-tertiary">No backlog contexts found.</div>;
+  if (!ctx)
+    return (
+      <div className="text-sm text-text-tertiary max-w-md">
+        <p className="mb-2">No contexts found.</p>
+        <p className="text-xs text-text-muted">
+          Create a note tagged{" "}
+          <code className="bg-surface-hover px-1 rounded">#np-backlog</code> with a{" "}
+          <code className="bg-surface-hover px-1 rounded">## Work</code>-style heading per
+          context (and a <code className="bg-surface-hover px-1 rounded">#np-projects</code>{" "}
+          note listing your project folders) to start ranking tasks.
+        </p>
+      </div>
+    );
 
   return (
     <div>

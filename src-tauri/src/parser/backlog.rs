@@ -111,13 +111,16 @@ fn project_for_path<'a>(
 }
 
 pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
-    let Some(control) = parse_backlog_control(store) else {
-        return Backlog {
-            contexts: vec![],
-            control_note_title: None,
-            warnings: vec![],
-        };
-    };
+    // No #np-backlog note is NOT a fatal case: contexts are the UNION of
+    // #np-backlog and #np-projects, so a vault with only #np-projects still
+    // gets its contexts (rendered with empty ranked lists). Treat the missing
+    // control as empty — no contexts of its own, no ids, no title, no
+    // warnings — and let the union logic below do the rest.
+    let control = parse_backlog_control(store);
+    let control_contexts: &[(String, Vec<String>)] = control
+        .as_ref()
+        .map(|c| c.contexts.as_slice())
+        .unwrap_or(&[]);
     let index = block_id_index(store);
     let ctx_folders = context_folders(store);
     let ctx_projects = context_folder_projects(store);
@@ -128,7 +131,7 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
     // still shows up here (with just its pool) before anyone has ranked
     // anything in it.
     let mut context_names: Vec<String> =
-        control.contexts.iter().map(|(n, _)| n.clone()).collect();
+        control_contexts.iter().map(|(n, _)| n.clone()).collect();
     for (name, _) in &ctx_folders {
         if !context_names.iter().any(|c| c == name) {
             context_names.push(name.clone());
@@ -137,8 +140,7 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
 
     let mut contexts = Vec::new();
     for name in &context_names {
-        let ids: &[String] = control
-            .contexts
+        let ids: &[String] = control_contexts
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, ids)| ids.as_slice())
@@ -259,8 +261,8 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
 
     Backlog {
         contexts,
-        control_note_title: Some(control.note_title),
-        warnings: control.warnings,
+        control_note_title: control.as_ref().map(|c| c.note_title.clone()),
+        warnings: control.map(|c| c.warnings).unwrap_or_default(),
     }
 }
 
@@ -342,9 +344,41 @@ mod tests {
 
     #[test]
     fn test_no_backlog_note() {
+        // No #np-backlog note: title stays None, but contexts still come from
+        // #np-projects alone (union with an empty backlog control), each with
+        // an empty ranked list.
         let st = store(vec![projects_note()]);
         let b = build_backlog(&st, &test_opts());
         assert_eq!(b.control_note_title, None);
+        assert!(b.warnings.is_empty());
+        assert_eq!(b.contexts.len(), 1);
+        assert_eq!(b.contexts[0].name, "Work");
+        assert!(b.contexts[0].ranked.is_empty());
+    }
+
+    #[test]
+    fn test_projects_only_vault_still_gets_contexts() {
+        // No #np-backlog note at all: contexts come from #np-projects alone,
+        // with empty ranked lists and a working pool.
+        let projects_note = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/Projects.md",
+            "# P #np-projects\n## Work\n1. [[32 - Product Ownership]]\n",
+            NoteKind::Regular,
+        );
+        let work_note = parse_note(
+            "/w.md",
+            "Notes/32 - Product Ownership/32.01 - Janet.md",
+            "# Janet\n* Email Palwasha !\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note, work_note]);
+        let b = build_backlog(&st, &test_opts());
+        assert_eq!(b.control_note_title, None);
+        assert_eq!(b.contexts.len(), 1);
+        assert_eq!(b.contexts[0].name, "Work");
+        assert!(b.contexts[0].ranked.is_empty());
+        assert_eq!(b.contexts[0].pool.len(), 1);
     }
 
     #[test]

@@ -59,7 +59,14 @@ export interface Finding {
 
 export type NoteIdKind = "JdDotted" | "HubCode" | "Sequential" | "DatePrefix" | "BareHub";
 
-export type NoteKind = "Regular" | "Daily" | "Weekly" | "Monthly" | "Template";
+export type NoteKind =
+  | "Regular"
+  | "Daily"
+  | "Weekly"
+  | "Monthly"
+  | "Quarterly"
+  | "Yearly"
+  | "Template";
 
 export type TaskState = "Open" | "Done" | "Cancelled" | "Scheduled";
 
