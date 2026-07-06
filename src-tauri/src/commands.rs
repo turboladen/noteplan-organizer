@@ -14,7 +14,7 @@ use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report}
 use crate::parser::matcher::FilingSuggestion;
 use crate::parser::{
     build_backlog, build_filing_targets, build_project_board, extract_content_blocks,
-    match_blocks_to_targets, parse_note, scan_noteplan_dir, NoteStore,
+    match_blocks_to_targets, parse_note, scan_noteplan_dir, BacklogOptions, NoteStore,
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -277,7 +277,11 @@ pub fn get_backlog(
     cache: State<'_, NoteStoreCache>,
 ) -> Result<crate::models::Backlog, String> {
     let t0 = Instant::now();
-    let backlog = read_from_cache(&cache, &path, build_backlog)?;
+    let opts = BacklogOptions {
+        include_older_dailies: false,
+        today: chrono::Local::now().date_naive(),
+    };
+    let backlog = read_from_cache(&cache, &path, |s| build_backlog(s, &opts))?;
     log::info!("get_backlog served in {:?}", t0.elapsed());
     Ok(backlog)
 }

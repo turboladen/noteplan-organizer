@@ -556,6 +556,59 @@ mod tests {
     }
 
     #[test]
+    fn test_rank_calendar_sourced_task_full_plan() {
+        // Task 4 harvests calendar tasks (Weekly/Monthly/Quarterly/Yearly/windowed
+        // Daily) into every backlog pool. Ranking one must flow through the SAME
+        // planner as a Notes/-sourced task. `plan_stamp_block_id` (and the
+        // `locate_unique_task_line` it delegates to) take only note CONTENT and
+        // TITLE — no relative path at all — so a Calendar/ source note (here,
+        // `Calendar/20260701.md`, title "Wednesday" per its `# Wednesday`
+        // heading) needs no special-casing in the planner; this test locks that
+        // in rather than adding a no-op path filter.
+        let source_content = "# Wednesday\n\n* Log the standup notes >2026-07-01\n";
+        let (id, source_ops) = plan_stamp_block_id(
+            source_content,
+            "Wednesday",
+            "Log the standup notes >2026-07-01",
+            &empty(),
+        )
+        .unwrap();
+        assert_eq!(source_ops.len(), 1);
+        match &source_ops[0] {
+            WriteOp::AppendBlockId {
+                line,
+                new_line_text,
+                block_id,
+            } => {
+                assert_eq!(*line, 3, "task is on line 3 of the calendar note");
+                assert_eq!(block_id, &id);
+                assert_eq!(
+                    new_line_text,
+                    &format!("* Log the standup notes >2026-07-01 ^{}", id)
+                );
+            }
+            other => panic!("expected AppendBlockId, got {:?}", other),
+        }
+        assert!(
+            source_ops
+                .iter()
+                .all(|op| !op.touches_content_note() || matches!(op, WriteOp::AppendBlockId { .. })),
+            "SAFETY: only an append may touch the calendar content note"
+        );
+
+        // Plus the control-note insertion into the backlog's Work section.
+        let entry = format!("- [[Wednesday^{}]] Log the standup notes >2026-07-01", id);
+        let backlog_ops = plan_append_entry(BL, "Work", &entry).unwrap();
+        assert_eq!(
+            backlog_ops,
+            vec![WriteOp::InsertBacklogLine {
+                line: 5,
+                text: entry,
+            }]
+        );
+    }
+
+    #[test]
     fn test_only_append_touches_content_note() {
         // Locks the core data-safety invariant: AppendBlockId is the ONLY variant
         // that mutates a user content note. Any future variant must consciously

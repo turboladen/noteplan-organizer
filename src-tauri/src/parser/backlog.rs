@@ -4,6 +4,13 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
+/// Options for building the backlog. `today` is injected (never read from the
+/// clock inside the builder) so integration tests are deterministic.
+pub struct BacklogOptions {
+    pub include_older_dailies: bool,
+    pub today: chrono::NaiveDate,
+}
+
 /// Marker tag identifying the app-owned backlog control note. Shared with the
 /// write planners (`backlog_write`) so reader and writer agree on ownership.
 pub(crate) const BACKLOG_TAG: &str = "np-backlog";
@@ -103,7 +110,7 @@ fn project_for_path<'a>(
         .find(|(folder, _, _)| relative_path.starts_with(&format!("{}/", folder)))
 }
 
-pub fn build_backlog(store: &NoteStore) -> Backlog {
+pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
     let Some(control) = parse_backlog_control(store) else {
         return Backlog {
             contexts: vec![],
@@ -115,8 +122,27 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
     let ctx_folders = context_folders(store);
     let ctx_projects = context_folder_projects(store);
 
+    // Union of contexts: backlog-note order first, then any project-only
+    // contexts (present in #np-projects but not in #np-backlog) appended with
+    // an empty ranked list — so a context newly added to the projects board
+    // still shows up here (with just its pool) before anyone has ranked
+    // anything in it.
+    let mut context_names: Vec<String> =
+        control.contexts.iter().map(|(n, _)| n.clone()).collect();
+    for (name, _) in &ctx_folders {
+        if !context_names.iter().any(|c| c == name) {
+            context_names.push(name.clone());
+        }
+    }
+
     let mut contexts = Vec::new();
-    for (name, ids) in &control.contexts {
+    for name in &context_names {
+        let ids: &[String] = control
+            .contexts
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, ids)| ids.as_slice())
+            .unwrap_or(&[]);
         let projects: Vec<(String, u32, String)> = ctx_projects
             .iter()
             .find(|(n, _)| n == name)
@@ -177,10 +203,19 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
             if is_excluded_relative(&note.relative_path) {
                 continue;
             }
+            let calendar_kind = CalendarKind::from_note_kind(&note.kind);
+            let is_calendar = calendar_kind.is_some();
             let in_folder = folders
                 .iter()
                 .any(|f| note.relative_path.starts_with(&format!("{}/", f)));
-            if !in_folder {
+            if !in_folder && !is_calendar {
+                continue;
+            }
+            // Daily notes respect the recency window unless explicitly expanded.
+            if matches!(calendar_kind, Some(CalendarKind::Daily))
+                && !opts.include_older_dailies
+                && !period::daily_within_window(&note.relative_path, opts.today)
+            {
                 continue;
             }
             for task in &note.tasks {
@@ -203,7 +238,7 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
                     tags: task.tags.clone(),
                     project_title: project.map(|(_, _, title)| title.clone()),
                     project_rank: project.map(|(_, rank, _)| *rank),
-                    calendar_kind: CalendarKind::from_note_kind(&note.kind),
+                    calendar_kind,
                     calendar_period: period::calendar_period(&note.kind, &note.relative_path),
                 });
             }
@@ -238,6 +273,13 @@ mod tests {
         NoteStore::new(notes)
     }
 
+    fn test_opts() -> BacklogOptions {
+        BacklogOptions {
+            include_older_dailies: false,
+            today: chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap(),
+        }
+    }
+
     fn projects_note() -> crate::models::Note {
         parse_note(
             "/p.md",
@@ -263,7 +305,7 @@ mod tests {
         );
         let st = store(vec![projects_note(), backlog_note, work_note]);
 
-        let b = build_backlog(&st);
+        let b = build_backlog(&st, &test_opts());
         assert_eq!(b.control_note_title.as_deref(), Some("Backlog"));
         let ctx = &b.contexts[0];
         assert_eq!(ctx.name, "Work");
@@ -293,7 +335,7 @@ mod tests {
             NoteKind::Regular,
         );
         let st = store(vec![projects_note(), backlog_note]);
-        let b = build_backlog(&st);
+        let b = build_backlog(&st, &test_opts());
         assert_eq!(b.contexts[0].ranked.len(), 1);
         assert!(!b.contexts[0].ranked[0].resolved);
     }
@@ -301,7 +343,7 @@ mod tests {
     #[test]
     fn test_no_backlog_note() {
         let st = store(vec![projects_note()]);
-        let b = build_backlog(&st);
+        let b = build_backlog(&st, &test_opts());
         assert_eq!(b.control_note_title, None);
     }
 
@@ -316,7 +358,7 @@ mod tests {
             NoteKind::Regular,
         );
         let st = store(vec![projects_note(), backlog_note]);
-        let b = build_backlog(&st);
+        let b = build_backlog(&st, &test_opts());
         let ranked = &b.contexts[0].ranked;
         assert_eq!(ranked.len(), 1, "only the list item counts, not the prose");
         assert_eq!(ranked[0].block_id, "d4e5f6");
@@ -334,7 +376,29 @@ mod tests {
             NoteKind::Regular,
         );
         let st = store(vec![projects_note(), backlog_note]);
-        let b = build_backlog(&st);
+        let b = build_backlog(&st, &test_opts());
         assert_eq!(b.contexts[0].ranked[0].block_id, "newid1");
+    }
+
+    #[test]
+    fn test_context_union_includes_project_only_contexts() {
+        // #np-backlog has only Work; #np-projects has Work AND Home.
+        let projects_note = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/Projects.md",
+            "# P #np-projects\n## Work\n1. [[32 - Product Ownership]]\n## Home\n1. [[21 - Home Reno]]\n",
+            NoteKind::Regular,
+        );
+        let backlog_note = parse_note(
+            "/b.md",
+            "Notes/_NotePlan Organizer/Backlog.md",
+            "# Backlog #np-backlog\n## Work\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note, backlog_note]);
+        let b = build_backlog(&st, &test_opts());
+        let names: Vec<&str> = b.contexts.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Work", "Home"]);
+        assert!(b.contexts[1].ranked.is_empty());
     }
 }

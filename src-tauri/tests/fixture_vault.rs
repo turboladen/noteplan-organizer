@@ -153,10 +153,17 @@ fn test_board_excludes_system_and_calendar_tasks() {
 // 3. build_backlog — ranked (resolved/stale), prose ignored, pool
 // ---------------------------------------------------------------------------
 
+fn test_opts() -> app_lib::parser::BacklogOptions {
+    app_lib::parser::BacklogOptions {
+        include_older_dailies: false,
+        today: chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap(),
+    }
+}
+
 #[test]
 fn test_backlog_ranked_stale_and_prose() {
     let store = load();
-    let backlog = build_backlog(&store);
+    let backlog = build_backlog(&store, &test_opts());
     assert_eq!(backlog.control_note_title.as_deref(), Some("Backlog"));
     assert_eq!(backlog.contexts.len(), 2);
 
@@ -185,17 +192,32 @@ fn test_backlog_ranked_stale_and_prose() {
 #[test]
 fn test_backlog_pool() {
     let store = load();
-    let backlog = build_backlog(&store);
+    let backlog = build_backlog(&store, &test_opts());
 
     let work = &backlog.contexts[0];
     // Work folders (Alpha 8 + Beta 4 open) minus the 2 ranked (alpha01, beta01).
-    assert_eq!(work.pool.len(), 10);
+    // Calendar tasks now join every pool too, so filter them out to keep the
+    // exact-length assertion meaningful for project-scoped tasks.
+    let work_project_pool: Vec<_> = work
+        .pool
+        .iter()
+        .filter(|t| t.calendar_kind.is_none())
+        .collect();
+    assert_eq!(work_project_pool.len(), 10);
     assert!(
         work.pool.iter().all(|t| t.block_id.as_deref() != Some("alpha01")
             && t.block_id.as_deref() != Some("beta01")),
         "ranked tasks excluded from pool"
     );
     assert!(work.pool.iter().any(|t| t.text == "Sketch the icon set"));
+    // Calendar tasks join every context's pool (membership, not exact length).
+    for id in ["calw01", "calm01", "calq01", "caly01"] {
+        assert!(
+            work.pool.iter().any(|t| t.block_id.as_deref() == Some(id)),
+            "{} missing from Work pool",
+            id
+        );
+    }
 
     let home = &backlog.contexts[1];
     assert_eq!(home.name, "Home");
@@ -203,7 +225,68 @@ fn test_backlog_pool() {
     assert_eq!(home.ranked[0].block_id, "home01");
     assert_eq!(home.ranked[0].text, "Pick countertop");
     // Home Reno has 3 open tasks; one (home01) is ranked.
-    assert_eq!(home.pool.len(), 2);
+    let home_project_pool: Vec<_> = home
+        .pool
+        .iter()
+        .filter(|t| t.calendar_kind.is_none())
+        .collect();
+    assert_eq!(home_project_pool.len(), 2);
+    for id in ["calw01", "calm01", "calq01", "caly01"] {
+        assert!(
+            home.pool.iter().any(|t| t.block_id.as_deref() == Some(id)),
+            "{} missing from Home pool",
+            id
+        );
+    }
+}
+
+#[test]
+fn test_backlog_calendar_harvest_and_window() {
+    let store = load();
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap();
+    let opts = app_lib::parser::BacklogOptions {
+        include_older_dailies: false,
+        today,
+    };
+    let b = app_lib::parser::build_backlog(&store, &opts);
+
+    for ctx in &b.contexts {
+        let pool_ids: Vec<&str> = ctx
+            .pool
+            .iter()
+            .filter_map(|t| t.block_id.as_deref())
+            .collect();
+        // All periodic kinds harvested, in EVERY context:
+        for id in ["calw01", "calm01", "calq01", "caly01"] {
+            assert!(pool_ids.contains(&id), "{} missing from {}", id, ctx.name);
+        }
+        // Old daily outside the 30-day window is absent:
+        assert!(!pool_ids.contains(&"cald02"), "old daily leaked into {}", ctx.name);
+        // Completed weekly task never harvested:
+        assert!(!pool_ids.contains(&"calw02"));
+        // Calendar pool tasks carry calendar metadata, no project:
+        let weekly = ctx
+            .pool
+            .iter()
+            .find(|t| t.block_id.as_deref() == Some("calw01"))
+            .unwrap();
+        assert_eq!(weekly.calendar_period.as_deref(), Some("2026-W27"));
+        assert!(weekly.project_title.is_none());
+        assert_eq!(weekly.tags, vec!["budget".to_string()]);
+    }
+
+    // include_older_dailies brings the old daily back:
+    let opts_older = app_lib::parser::BacklogOptions {
+        include_older_dailies: true,
+        today,
+    };
+    let b2 = app_lib::parser::build_backlog(&store, &opts_older);
+    let pool_ids: Vec<String> = b2.contexts[0]
+        .pool
+        .iter()
+        .filter_map(|t| t.block_id.clone())
+        .collect();
+    assert!(pool_ids.contains(&"cald02".to_string()));
 }
 
 // ---------------------------------------------------------------------------
