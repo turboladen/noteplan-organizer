@@ -146,6 +146,30 @@ pub fn context_folders(store: &NoteStore) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
+/// Public: map each control-note context to resolved (folder, rank, title)
+/// triples. Rank is the reference's 1-based ordinal in the control note —
+/// unresolved refs still consume an ordinal (same rule as build_project_board).
+/// Reused by the backlog reader to stamp project metadata onto tasks.
+pub fn context_folder_projects(store: &NoteStore) -> Vec<(String, Vec<(String, u32, String)>)> {
+    let Some(control) = parse_project_control(store) else {
+        return vec![];
+    };
+    control
+        .contexts
+        .iter()
+        .map(|(name, refs)| {
+            let projects = refs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, r)| {
+                    resolve_folder(store, r).map(|folder| (folder, (i + 1) as u32, r.clone()))
+                })
+                .collect();
+            (name.clone(), projects)
+        })
+        .collect()
+}
+
 /// Roll up open/scheduled tasks under a folder into a ranked BoardProject.
 fn build_project(store: &NoteStore, rank: u32, title: &str, folder: &str) -> BoardProject {
     let prefix = format!("{}/", folder);
@@ -466,5 +490,34 @@ mod tests {
         assert_eq!(board.control_note_title.as_deref(), Some("Alpha"));
         assert!(!board.warnings.is_empty(), "conflict is surfaced as a warning");
         assert_eq!(board.contexts[0].name, "Work");
+    }
+
+    #[test]
+    fn test_context_folder_projects_ranks_and_titles() {
+        let control = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/Projects.md",
+            "# P #np-projects\n## Work\n1. [[99 - Ghost]]\n2. [[32 - Product Ownership]]\n",
+            NoteKind::Regular,
+        );
+        let member = parse_note(
+            "/m.md",
+            "Notes/32 - Product Ownership/32.01 - Janet.md",
+            "# Janet\n* task\n",
+            NoteKind::Regular,
+        );
+        let store = NoteStore::new(vec![control, member]);
+        let got = context_folder_projects(&store);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "Work");
+        // Ghost (rank 1) doesn't resolve to a folder; Product Ownership keeps ordinal rank 2.
+        assert_eq!(
+            got[0].1,
+            vec![(
+                "Notes/32 - Product Ownership".to_string(),
+                2,
+                "32 - Product Ownership".to_string()
+            )]
+        );
     }
 }

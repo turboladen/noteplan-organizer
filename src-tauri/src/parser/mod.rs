@@ -18,7 +18,10 @@ pub use folder::{parse_jd_id, parse_note_id};
 pub use link::extract_wiki_links;
 pub use markdown::parse_note;
 pub use matcher::match_blocks_to_targets;
-pub use projects::{build_project_board, context_folders, parse_project_control, ProjectControl};
+pub use projects::{
+    build_project_board, context_folder_projects, context_folders, parse_project_control,
+    ProjectControl,
+};
 pub use task::{
     clean_task_text, is_task_line, parse_task_line, parse_tasks, task_display_text, ParsedTaskLine,
 };

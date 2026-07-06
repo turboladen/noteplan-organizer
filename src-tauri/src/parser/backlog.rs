@@ -1,5 +1,5 @@
-use crate::models::{Backlog, BacklogContext, NoteKind, PoolTask, RankedTask, TaskState};
-use crate::parser::{context_folders, is_excluded_relative, NoteStore};
+use crate::models::{Backlog, BacklogContext, CalendarKind, NoteKind, PoolTask, RankedTask, TaskState};
+use crate::parser::{context_folder_projects, context_folders, is_excluded_relative, period, NoteStore};
 use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -93,6 +93,16 @@ fn block_id_index(store: &NoteStore) -> std::collections::HashMap<String, (usize
     idx
 }
 
+/// Project (rank, title) for a note path within a context's resolved folders.
+fn project_for_path<'a>(
+    projects: &'a [(String, u32, String)],
+    relative_path: &str,
+) -> Option<&'a (String, u32, String)> {
+    projects
+        .iter()
+        .find(|(folder, _, _)| relative_path.starts_with(&format!("{}/", folder)))
+}
+
 pub fn build_backlog(store: &NoteStore) -> Backlog {
     let Some(control) = parse_backlog_control(store) else {
         return Backlog {
@@ -103,9 +113,16 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
     };
     let index = block_id_index(store);
     let ctx_folders = context_folders(store);
+    let ctx_projects = context_folder_projects(store);
 
     let mut contexts = Vec::new();
     for (name, ids) in &control.contexts {
+        let projects: Vec<(String, u32, String)> = ctx_projects
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, p)| p.clone())
+            .unwrap_or_default();
+
         // Ranked, in list order.
         let mut ranked = Vec::new();
         let ranked_ids: HashSet<&String> = ids.iter().collect();
@@ -114,6 +131,7 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
                 Some(&(ni, ti)) => {
                     let note = &store.notes[ni];
                     let t = &note.tasks[ti];
+                    let project = project_for_path(&projects, &note.relative_path);
                     ranked.push(RankedTask {
                         rank: (i + 1) as u32,
                         block_id: id.clone(),
@@ -123,6 +141,11 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
                         source_relative_path: note.relative_path.clone(),
                         line_number: t.line_number,
                         resolved: true,
+                        tags: t.tags.clone(),
+                        project_title: project.map(|(_, _, title)| title.clone()),
+                        project_rank: project.map(|(_, rank, _)| *rank),
+                        calendar_kind: CalendarKind::from_note_kind(&note.kind),
+                        calendar_period: period::calendar_period(&note.kind, &note.relative_path),
                     });
                 }
                 None => ranked.push(RankedTask {
@@ -134,6 +157,11 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
                     source_relative_path: String::new(),
                     line_number: 0,
                     resolved: false,
+                    tags: Vec::new(),
+                    project_title: None,
+                    project_rank: None,
+                    calendar_kind: None,
+                    calendar_period: None,
                 }),
             }
         }
@@ -164,6 +192,7 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
                         continue; // already ranked
                     }
                 }
+                let project = project_for_path(&projects, &note.relative_path);
                 pool.push(PoolTask {
                     text: task.text.clone(),
                     priority: task.priority,
@@ -171,6 +200,11 @@ pub fn build_backlog(store: &NoteStore) -> Backlog {
                     source_relative_path: note.relative_path.clone(),
                     line_number: task.line_number,
                     block_id: task.block_id.clone(),
+                    tags: task.tags.clone(),
+                    project_title: project.map(|(_, _, title)| title.clone()),
+                    project_rank: project.map(|(_, rank, _)| *rank),
+                    calendar_kind: CalendarKind::from_note_kind(&note.kind),
+                    calendar_period: period::calendar_period(&note.kind, &note.relative_path),
                 });
             }
         }
@@ -224,7 +258,7 @@ mod tests {
         let work_note = parse_note(
             "/w.md",
             "Notes/32 - Product Ownership/32.01 - Janet.md",
-            "# Janet\n* Ship v2 spec !! ^a1b2c3\n* Email Palwasha !\n",
+            "# Janet\n* Ship v2 spec !! #v2 ^a1b2c3\n* Email Palwasha !\n",
             NoteKind::Regular,
         );
         let st = store(vec![projects_note(), backlog_note, work_note]);
@@ -235,11 +269,19 @@ mod tests {
         assert_eq!(ctx.name, "Work");
         assert_eq!(ctx.ranked.len(), 1);
         assert!(ctx.ranked[0].resolved);
-        assert_eq!(ctx.ranked[0].text, "Ship v2 spec");
+        assert_eq!(ctx.ranked[0].text, "Ship v2 spec #v2");
         assert_eq!(ctx.ranked[0].block_id, "a1b2c3");
         // Pool holds the other open task, excludes the already-ranked one.
         assert_eq!(ctx.pool.len(), 1);
         assert_eq!(ctx.pool[0].text, "Email Palwasha");
+        assert_eq!(ctx.ranked[0].tags, vec!["v2".to_string()]);
+        assert_eq!(
+            ctx.ranked[0].project_title.as_deref(),
+            Some("32 - Product Ownership")
+        );
+        assert_eq!(ctx.ranked[0].project_rank, Some(1));
+        assert!(ctx.ranked[0].calendar_kind.is_none());
+        assert_eq!(ctx.pool[0].project_rank, Some(1));
     }
 
     #[test]
