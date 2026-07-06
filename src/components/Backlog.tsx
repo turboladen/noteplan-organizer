@@ -101,6 +101,7 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
       await backlogRankTask({
         path: basePath,
         sourceNoteTitle: t.source_note_title,
+        sourceRelativePath: t.source_relative_path,
         expectedText: t.text,
         context: ctx.name,
         backlogNoteTitle: backlogTitle,

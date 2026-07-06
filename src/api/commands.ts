@@ -102,6 +102,7 @@ export async function getBacklog(
 export async function backlogRankTask(args: {
   path: string;
   sourceNoteTitle: string;
+  sourceRelativePath: string;
   expectedText: string;
   context: string;
   backlogNoteTitle: string;
@@ -109,6 +110,7 @@ export async function backlogRankTask(args: {
   return invoke<void>("backlog_rank_task", {
     path: args.path,
     source_note_title: args.sourceNoteTitle,
+    source_relative_path: args.sourceRelativePath,
     expected_text: args.expectedText,
     context: args.context,
     backlog_note_title: args.backlogNoteTitle,
