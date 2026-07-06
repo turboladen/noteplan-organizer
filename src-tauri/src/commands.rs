@@ -407,9 +407,9 @@ fn resolve_note(cache: &NoteStoreCache, title: &str) -> ResolvedNote {
 /// standard — titles can collide, e.g. template-stamped daily-note headings,
 /// while paths are unique). Unlike `resolve_note`, a cache miss still yields
 /// Filename addressing (the path came from the frontend's own note data, not
-/// a guess) rather than falling back to Title here; `fetch_note_resilient`
-/// provides the actual title fallback if the server rejects the filename at
-/// fetch time.
+/// a guess) rather than falling back to Title here; `fetch_note_strict`
+/// fetches this addr with NO title fallback — a wrong-note guess among
+/// same-titled notes is worse than aborting the write.
 fn resolve_note_by_path(cache: &NoteStoreCache, relative_path: &str) -> ResolvedNote {
     let guard = cache.0.read().unwrap_or_else(|p| p.into_inner());
     if let Some(store) = guard.as_ref() {
@@ -434,10 +434,15 @@ fn resolve_note_by_path(cache: &NoteStoreCache, relative_path: &str) -> Resolved
 }
 
 /// Fetch a note, preferring the resolved (filename) addressing but falling back
-/// to TITLE if the filename call errors — the server's `filename` format is not
-/// yet runtime-verified, so this keeps the feature working (title, slower) rather
-/// than breaking every write if the guess is wrong. Returns the content AND the
-/// addr that worked, so the subsequent writes use the same known-good addressing.
+/// to TITLE if the filename call errors. Filename addressing itself is
+/// runtime-verified (see `docs/testing-with-mcp-inspector.md`); the title
+/// fallback here is for TITLE-resolved notes only (e.g. the backlog control
+/// note via `resolve_note`, which has no relative path to fall back to and
+/// where a title search is the only lookup available) — not a hedge against
+/// filename addressing being wrong. Never use this for a note resolved by exact
+/// path where a same-titled sibling could exist (see `fetch_note_strict`).
+/// Returns the content AND the addr that worked, so the subsequent writes use
+/// the same known-good addressing.
 async fn fetch_note_resilient(
     mcp: &McpState,
     resolved: &ResolvedNote,
@@ -452,6 +457,25 @@ async fn fetch_note_resilient(
             Ok((content, addr))
         }
         Err(e) => Err(e),
+    }
+}
+
+/// Fetch a note by its resolved addressing with NO title fallback. Used for
+/// the rank SOURCE note: its addr comes from the exact relative path the
+/// frontend displayed, and falling back to a title search could resolve to a
+/// DIFFERENT note with the same title (template-stamped daily notes collide
+/// systematically) — a wrong-note write, the one failure mode worse than a
+/// failed rank. If the path fetch fails, abort and let the user rescan/retry.
+async fn fetch_note_strict(
+    mcp: &McpState,
+    resolved: &ResolvedNote,
+) -> Result<(String, NoteAddr), String> {
+    match tools::get_note(mcp, &resolved.addr).await {
+        Ok(content) => Ok((content, resolved.addr.clone())),
+        Err(e) => Err(format!(
+            "could not fetch the task's source note at {:?}: {} — the note may have moved since the last scan; rescan and retry",
+            resolved.addr, e
+        )),
     }
 }
 
@@ -635,9 +659,10 @@ pub async fn backlog_rank_task(
     let existing = existing_ids_from_cache(&cache, &path);
     // Resolve addressing + cache-patch identity. Source is addressed by its
     // relative path (filename addressing; titles can collide — e.g.
-    // template-stamped daily notes), never by title. `source_note_title` is
-    // still needed below for the `[[title^id]]` backlog entry text and as the
-    // resilient-fetch fallback if filename addressing is rejected by the server.
+    // template-stamped daily notes), never by title, and its fetch below uses
+    // `fetch_note_strict` (no title fallback) for the same reason.
+    // `source_note_title` is still needed below for the `[[title^id]]` backlog
+    // entry text.
     let source = resolve_note_by_path(&cache, &source_relative_path);
     let backlog = resolve_note(&cache, &backlog_note_title);
     let t_ids = t0.elapsed();
@@ -647,8 +672,7 @@ pub async fn backlog_rank_task(
     let t1 = Instant::now();
     let (backlog_content, backlog_addr) =
         fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
-    let (source_content, source_addr) =
-        fetch_note_resilient(&mcp_state, &source, &source_note_title).await?;
+    let (source_content, source_addr) = fetch_note_strict(&mcp_state, &source).await?;
     let (block_id, source_ops) =
         plan_stamp_block_id(&source_content, &source_note_title, &expected_text, &existing)?;
     let entry = format!("- [[{}^{}]] {}", source_note_title, block_id, expected_text);
