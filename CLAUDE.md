@@ -16,8 +16,8 @@ bunx tsc --noEmit -p tsconfig.app.json  # Type-check TypeScript (bare `bunx tsc 
 A `justfile` mirrors these: `just install / dev / build / test / check`.
 
 `cargo test` also runs the integration tests in `src-tauri/tests/fixture_vault.rs`,
-which exercise the whole read pipeline (`scan_noteplan_dir` → `build_project_board`
-/ `build_backlog` + parser edges) against the committed fixture vault at
+which exercise the whole read pipeline (`scan_noteplan_dir` → `build_backlog`
++ parser edges) against the committed fixture vault at
 `src-tauri/tests/fixture-vault/`. See that dir's `README.md` for the layout and how
 to extend it. The lib target is `app_lib` (`[lib]` in `Cargo.toml`), so integration
 tests import it as `use app_lib::…`.
@@ -56,8 +56,8 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
   Sub-modules for the Priorities board (spec: `docs/superpowers/specs/2026-07-01-project-priority-board-design.md`):
   - `task.rs` — `parse_task_line`: THE single tokenizer for task lines (state, `!` priority,
     `^blockId`, dates, tags); all task detection must go through it, never a new regex
-  - `projects.rs` — `#np-projects` control note → ranked project Board (`build_project_board`)
-  - `backlog.rs` — `#np-backlog` control note → ranked+pool Backlog (`build_backlog`)
+  - `projects.rs` — `#np-projects` control note: parses control note structure and resolves folder/rank metadata (no board building)
+  - `backlog.rs` — `build_backlog`: harvests ranked and calendar tasks (daily/weekly/monthly/quarterly/yearly; 30-day daily window via `parser/period.rs`); takes `BacklogOptions` (injected `today` for deterministic tests) and stamps tags, project rank/title, and calendar kind+period metadata
 - `backlog_write.rs` — SAFETY CORE for all NotePlan writes: pure planners emit `WriteOp` (only
   `AppendBlockId` can touch a content note, strictly additive); `locate_unique_task_line`
   relocates by unique cleaned-text (abort on 0/>1). New write features MUST use this pattern.
@@ -88,9 +88,16 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
   data).
 - `components/NotePreview.tsx` — Inline sticky preview panel (w-80, not a fixed overlay);
   participates in FindingsList flex layout
-- `components/ProjectBoard.tsx` / `components/Backlog.tsx` — Board (read-only ranked projects)
-  and Backlog (drag-to-rank, writes via NotePlan connection; read-only while disconnected) —
-  separate sidebar views under Plan
+- `components/Board.tsx` — Ranked work queue (read-only). Displays tasks harvested by `build_backlog`
+  ranked by control note; group-by-Project shows folder hierarchy with P-badges; stale entries
+  flagged; ↗ opens task in NotePlan
+- `components/Backlog.tsx` — Backlog grooming view: ranked queue on top (drag-to-rank writes
+  control note via MCP), collapsible grouped inventory below (organized by area+project), calendar
+  group shows recent daily + weekly/monthly/quarterly/yearly tasks with period chips; "Show older
+  daily tasks" button (controlled by `include_older_dailies` via 30-day window); search filters
+  both sections; "Ranked only" toggle hides inventory
+- `components/TaskCard.tsx` — Reusable task display component (title, state, priority, blockId,
+  tags, project rank+title, calendar kind+period); used by Board and Backlog queues
 - `utils/noteplanUrl.ts` — Builds `noteplan://` x-callback-url links
 
 ## Critical Gotchas
@@ -169,7 +176,7 @@ camelCase by default, but this codebase's `api/commands.ts` sends snake_case key
 with a multi-word argument MUST be annotated `#[tauri::command(rename_all = "snake_case")]` or
 the invoke fails at runtime with "missing required key someArgName" (checking that TS keys match
 the Rust parameter names is NOT sufficient). Single-word args are unaffected. See
-`backlog_rank_task` in commands.rs for the pattern; audit bead: noteplan-organizer-cvb.
+`backlog_rank_task` and `get_backlog` (with `include_older_dailies`) in commands.rs for the pattern.
 
 **React filter keying**: The findings list uses `key={selectedCategory::selectedSeverity}` on the
 parent div to force React to re-mount when filters change. Removing this causes stale list
@@ -194,13 +201,14 @@ chevron, Enter key handler, and expanded section all guard on these fields — s
 analyzers that don't need expandable detail.
 
 **View architecture**: App.tsx routes a single `AppView` union
-(`board | backlog | tasks | filing | findings | assessment`) persisted to
+(`board | backlog | filing | findings | assessment`) persisted to
 localStorage (`noteplan-companion:last-view`). Navigation items live in the
 `NAV_GROUPS` config array in `Sidebar.tsx` — a new view is one array entry.
-Findings vs Assessment still split on `SYSTEM_ASSESSMENT_CATEGORIES` with
-independent filter state. The scan report feeds ONLY Findings/Assessment and
-the sidebar badges; Board/Backlog/Filing/Tasks fetch their own data and take
-`basePath` from the detected `notePlanPath`, never from `report`.
+Plan group = Board (read-only ranked work queue, reads `get_backlog`) + Backlog
+(grooming: ranked queue + grouped inventory, reads `get_backlog`). Both Plan views
+fetch their own data via `get_backlog` and take `basePath` from the detected
+`notePlanPath`, never from `report`. Findings vs Assessment still split on
+`SYSTEM_ASSESSMENT_CATEGORIES` with independent filter state.
 
 **Card UX convention**: File path click = open in NotePlan (primary action). Preview is a secondary
 hover-reveal `⌕` icon. Don't reassign file path click to preview — users want direct access to fix
