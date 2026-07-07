@@ -14,7 +14,7 @@ on-disk shape the parser expects (`Notes/` + `Calendar/`).
 ```
 Notes/
   _NotePlan Organizer/
-    Project Priorities.md   # #np-projects: ## Work [Alpha, Beta, 99-Ghost(unresolved)], ## Home [Home Reno]
+    Project Priorities.md   # #np-projects: ## Work (declares #work) [Alpha, Beta, 99-Ghost(unresolved)], ## Home (declares #home) [Home Reno], ## Reading (tag-less) [88-Someday(unresolved)]
     Backlog.md              # #np-backlog:  ## Work [alpha01, beta01, dead999(stale), prose ref], ## Home [home01]
   1x - Domains [Work]/
     12 - Alpha Project/      # JD project folder (Work context)
@@ -36,7 +36,7 @@ Notes/
   @Trash/Deleted.md              # EXCLUDED
   _attachments/stray.md          # EXCLUDED
 Calendar/
-  20260701.md               # daily note; its task must NOT roll up into projects
+  20260701.md               # daily note; untagged task must NOT roll up; #home ^calh01 + #work ^calk01 drive tag-scoping test
   2026-W27.md               # weekly note (YYYY-Wnn pattern); ^calw01, ^calw02
   2026-07.md                # monthly note (YYYY-MM pattern); ^calm01
   2026-Q3.md                # quarterly note (YYYY-Qn pattern); ^calq01
@@ -60,6 +60,11 @@ Calendar/
   `@Archive` folder nested *inside* a project folder) and Calendar notes never
   roll up.
 - A **duplicate-title pair** (`Shared Title` in two folders).
+- **Tag-scoped contexts**: `Work` declares `#work`, `Home` declares `#home`, and
+  `Reading` is tag-less. The daily `20260701` carries a `#work` (`calk01`) and a
+  `#home` (`calh01`) task, so each joins only its matching context plus the
+  tag-less `Reading`; the orphan-tagged (`#budget`) weekly `calw01` still appears
+  everywhere.
 - **Calendar-kind classification**: Weekly, Monthly, Quarterly, Yearly, and Daily
   notes classified correctly by filename pattern (YYYY-Wnn, YYYY-MM, YYYY-Qn,
   YYYY, YYYYMMDD).
