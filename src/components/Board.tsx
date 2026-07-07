@@ -97,6 +97,16 @@ export function Board({ basePath }: { basePath: string }) {
         </label>
       </div>
 
+      {ctx && ctx.tags.length > 0 && (
+        <p className="text-xs text-text-tertiary -mt-2 mb-4">
+          Calendar tasks tagged{" "}
+          {ctx.tags.map((t) => (
+            <span key={t} className="text-text-secondary">#{t} </span>
+          ))}
+          appear under this context.
+        </p>
+      )}
+
       {ctx.ranked.length === 0 && (
         <p className="text-sm text-text-tertiary py-8 text-center">
           Nothing ranked in {ctx.name} yet — visit the Backlog to rank tasks.

@@ -260,6 +260,16 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
         ))}
       </div>
 
+      {ctx && ctx.tags.length > 0 && (
+        <p className="text-xs text-text-tertiary -mt-2 mb-4">
+          Calendar tasks tagged{" "}
+          {ctx.tags.map((t) => (
+            <span key={t} className="text-text-secondary">#{t} </span>
+          ))}
+          appear under this context.
+        </p>
+      )}
+
       <div className="flex items-center gap-2 mb-4 text-xs">
         <input
           type="text"
