@@ -10,15 +10,18 @@ pub mod period;
 mod projects;
 mod task;
 
-pub use backlog::{build_backlog, BacklogOptions};
 pub(crate) use backlog::BACKLOG_TAG;
+pub use backlog::{build_backlog, BacklogOptions};
 pub use block::extract_content_blocks;
 pub use filing::build_filing_targets;
 pub use folder::{parse_jd_id, parse_note_id};
 pub use link::extract_wiki_links;
 pub use markdown::parse_note;
 pub use matcher::match_blocks_to_targets;
-pub use projects::{context_folder_projects, context_folders, parse_project_control, ProjectControl};
+pub use projects::{
+    context_folder_projects, context_folders, context_tags, parse_project_control, Context,
+    ProjectControl,
+};
 pub use task::{
     clean_task_text, is_task_line, parse_task_line, parse_tasks, task_display_text, ParsedTaskLine,
 };
@@ -206,7 +209,9 @@ mod tests {
         assert!(is_excluded_relative("Notes/@Templates/x.md"));
         assert!(is_excluded_relative("Notes/_attachments/x.png"));
         assert!(is_excluded_relative("Notes/_NotePlan Organizer/Backlog.md"));
-        assert!(!is_excluded_relative("Notes/32 - Product Ownership/32.01 - Janet.md"));
+        assert!(!is_excluded_relative(
+            "Notes/32 - Product Ownership/32.01 - Janet.md"
+        ));
     }
 
     fn note_fixture(rel: &str, content: &str) -> Note {
