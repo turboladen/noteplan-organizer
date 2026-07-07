@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getBacklog, openNotePlanUrl } from "../api/commands";
 import type { Backlog as BacklogData, RankedTask } from "../types/api";
 import { TaskCard } from "./TaskCard";
+import { ContextTagCaption } from "./ContextTagCaption";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 
 type GroupBy = "none" | "project";
@@ -97,15 +98,7 @@ export function Board({ basePath }: { basePath: string }) {
         </label>
       </div>
 
-      {ctx && ctx.tags.length > 0 && (
-        <p className="text-xs text-text-tertiary -mt-2 mb-4">
-          Calendar tasks tagged{" "}
-          {ctx.tags.map((t) => (
-            <span key={t} className="text-text-secondary">#{t} </span>
-          ))}
-          appear under this context.
-        </p>
-      )}
+      <ContextTagCaption tags={ctx.tags} />
 
       {ctx.ranked.length === 0 && (
         <p className="text-sm text-text-tertiary py-8 text-center">

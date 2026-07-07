@@ -2,7 +2,7 @@ use crate::models::{
     Backlog, BacklogContext, CalendarKind, NoteKind, PoolTask, RankedTask, TaskState,
 };
 use crate::parser::{
-    context_folder_projects, context_tags, is_excluded_relative, parse_project_control, period,
+    is_excluded_relative, parse_project_control, period, resolve_context_projects, tag_scoped_by,
     NoteStore,
 };
 use regex::Regex;
@@ -108,7 +108,7 @@ fn block_id_index(store: &NoteStore) -> std::collections::HashMap<String, (usize
 /// Whether `relative_path` lives under `folder` (a path segment prefix, not a
 /// bare string prefix — avoids a `format!` allocation per comparison, which
 /// otherwise runs once per project per task).
-fn is_under_folder(relative_path: &str, folder: &str) -> bool {
+pub(crate) fn is_under_folder(relative_path: &str, folder: &str) -> bool {
     relative_path
         .strip_prefix(folder)
         .is_some_and(|rest| rest.starts_with('/'))
@@ -116,7 +116,8 @@ fn is_under_folder(relative_path: &str, folder: &str) -> bool {
 
 /// Whether a CALENDAR task belongs in a context's pool. `declared` are the
 /// context's declared tags (lowercased, no `#`); `claimed` is the union of all
-/// contexts' declared tags. Comparison is case-insensitive.
+/// contexts' declared tags. Comparison is case-insensitive and honors NotePlan
+/// hierarchical tags (a declared `work` scopes a `work/deck` task).
 /// See spec 2026-07-06-tag-scoped-contexts-design.md.
 fn calendar_task_in_context(
     task_tags: &[String],
@@ -130,10 +131,11 @@ fn calendar_task_in_context(
         return true; // untagged calendar task → universal
     }
     let lc: Vec<String> = task_tags.iter().map(|t| t.to_lowercase()).collect();
-    if lc.iter().any(|t| declared.contains(t)) {
-        return true; // task claimed by this context
+    let scoped_by = |scope: &str| lc.iter().any(|t| tag_scoped_by(t, scope));
+    if declared.iter().any(|d| scoped_by(d)) {
+        return true; // task claimed by this context (exact or hierarchical child)
     }
-    if !lc.iter().any(|t| claimed.contains(t)) {
+    if !claimed.iter().any(|c| scoped_by(c)) {
         return true; // orphan tag → universal
     }
     false
@@ -166,12 +168,18 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
         .map(|c| c.contexts.as_slice())
         .unwrap_or(&[]);
     let index = block_id_index(store);
-    // Single control-note parse + `resolve_folder` walk: `ctx_folders` is
-    // derived locally from `ctx_projects` (folder is the first element of
-    // each triple) instead of calling `context_folders` separately, which
-    // would otherwise re-parse `#np-projects` and re-resolve every folder
-    // reference from scratch.
-    let ctx_projects = context_folder_projects(store);
+    // Parse `#np-projects` exactly ONCE and derive everything from it: resolved
+    // project folders, per-context declared tags, and warnings. Calling
+    // `context_folder_projects` + `context_tags` + `parse_project_control`
+    // separately would re-parse the control note and re-walk `resolve_folder`
+    // three times per build.
+    let projects_control = parse_project_control(store);
+    let ctx_projects = projects_control
+        .as_ref()
+        .map(|c| resolve_context_projects(store, c))
+        .unwrap_or_default();
+    // `ctx_folders` is derived locally from `ctx_projects` (folder is the first
+    // element of each triple), not via a separate `context_folders` call.
     let ctx_folders: Vec<(String, Vec<String>)> = ctx_projects
         .iter()
         .map(|(name, projects)| {
@@ -186,7 +194,15 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
         .collect();
     // Declared tags per context + the union of all claimed tags, for scoping
     // calendar tasks (cf8). Empty when no context declares tags → legacy behavior.
-    let ctx_tags = context_tags(store);
+    let ctx_tags: Vec<(String, Vec<String>)> = projects_control
+        .as_ref()
+        .map(|c| {
+            c.contexts
+                .iter()
+                .map(|ctx| (ctx.name.clone(), ctx.tags.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
     let claimed_tags: HashSet<String> = ctx_tags
         .iter()
         .flat_map(|(_, tags)| tags.iter().cloned())
@@ -194,9 +210,7 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
     // #np-projects warnings (e.g. multiple control notes) are surfaced
     // alongside #np-backlog's own — previously only the backlog control's
     // warnings reached the frontend, silently dropping the projects side.
-    let projects_warnings = parse_project_control(store)
-        .map(|c| c.warnings)
-        .unwrap_or_default();
+    let projects_warnings = projects_control.map(|c| c.warnings).unwrap_or_default();
 
     // Union of contexts: backlog-note order first, then any project-only
     // contexts (present in #np-projects but not in #np-backlog) appended with
@@ -582,6 +596,25 @@ mod tests {
         assert!(!calendar_task_in_context(
             &["home".into()],
             &["work".into()],
+            &claimed
+        ));
+        // Hierarchical: #work/deck is scoped by declared #work.
+        assert!(calendar_task_in_context(
+            &["work/deck".into()],
+            &["work".into()],
+            &claimed
+        ));
+        // Hierarchical claim by another context excludes: #home/chores out of Work.
+        assert!(!calendar_task_in_context(
+            &["home/chores".into()],
+            &["work".into()],
+            &claimed
+        ));
+        // A lookalike (#workshop) is NOT a child of #work, so it stays an orphan
+        // and remains universal — shows even under a Home-only context.
+        assert!(calendar_task_in_context(
+            &["workshop".into()],
+            &["home".into()],
             &claimed
         ));
     }

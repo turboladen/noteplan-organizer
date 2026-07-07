@@ -10,8 +10,8 @@ pub mod period;
 mod projects;
 mod task;
 
-pub(crate) use backlog::BACKLOG_TAG;
 pub use backlog::{build_backlog, BacklogOptions};
+pub(crate) use backlog::{is_under_folder, BACKLOG_TAG};
 pub use block::extract_content_blocks;
 pub use filing::build_filing_targets;
 pub use folder::{parse_jd_id, parse_note_id};
@@ -22,6 +22,7 @@ pub use projects::{
     context_folder_projects, context_folders, context_tags, parse_project_control, Context,
     ProjectControl,
 };
+pub(crate) use projects::{resolve_context_projects, tag_scoped_by};
 pub use task::{
     clean_task_text, is_task_line, parse_task_line, parse_tasks, task_display_text, ParsedTaskLine,
 };

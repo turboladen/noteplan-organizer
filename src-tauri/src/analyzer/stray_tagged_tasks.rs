@@ -1,20 +1,15 @@
 use crate::analyzer::Analyzer;
 use crate::models::{Finding, FindingCategory, NoteKind, Severity, TaskState};
-use crate::parser::{context_folders, context_tags, is_excluded_relative, NoteStore};
+use crate::parser::{
+    context_folders, context_tags, is_excluded_relative, is_under_folder, tag_scoped_by, NoteStore,
+};
 use std::collections::HashSet;
 
-/// Flags open tasks that carry a context-declared tag but live outside every
-/// tracked project folder (and are not calendar/template/excluded notes) — i.e.
-/// tagged work the contexts want but `#np-projects` can't see. One finding per
-/// note. See spec 2026-07-06-tag-scoped-contexts-design.md.
+/// Flags open or scheduled tasks that carry a context-declared tag but live
+/// outside every tracked project folder (and are not calendar/template/excluded
+/// notes) — i.e. tagged work the contexts want but `#np-projects` can't see. One
+/// finding per note. See spec 2026-07-06-tag-scoped-contexts-design.md.
 pub struct StrayTaggedTaskAnalyzer;
-
-fn under_any_folder(path: &str, folders: &[String]) -> bool {
-    folders.iter().any(|f| {
-        path.strip_prefix(f)
-            .is_some_and(|rest| rest.starts_with('/'))
-    })
-}
 
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -55,7 +50,10 @@ impl Analyzer for StrayTaggedTaskAnalyzer {
             ) {
                 continue;
             }
-            if under_any_folder(&note.relative_path, &tracked) {
+            if tracked
+                .iter()
+                .any(|f| is_under_folder(&note.relative_path, f))
+            {
                 continue;
             }
 
@@ -64,9 +62,10 @@ impl Analyzer for StrayTaggedTaskAnalyzer {
                 .iter()
                 .filter(|t| matches!(t.state, TaskState::Open | TaskState::Scheduled))
                 .filter(|t| {
-                    t.tags
-                        .iter()
-                        .any(|tag| declared.contains(&tag.to_lowercase()))
+                    t.tags.iter().any(|tag| {
+                        let lc = tag.to_lowercase();
+                        declared.iter().any(|d| tag_scoped_by(&lc, d))
+                    })
                 })
                 .map(|t| (t.line_number, t.text.clone()))
                 .collect();
@@ -131,6 +130,19 @@ mod tests {
         assert_eq!(cats(&f), 1);
         assert!(f[0].file_path.ends_with("Loose Ideas.md"));
         assert!(f[0].context.as_deref().unwrap().contains("Paint the shed"));
+    }
+
+    #[test]
+    fn test_flags_hierarchical_child_tag() {
+        // A declared `#home` also scopes a hierarchical `#home/chores` task.
+        let loose = parse_note(
+            "/l.md",
+            "Notes/2x - Projects [Personal]/Loose Ideas.md",
+            "# Loose Ideas\n* Fix the gutter #home/chores\n",
+            NoteKind::Regular,
+        );
+        let store = NoteStore::new(vec![projects(), loose]);
+        assert_eq!(cats(&StrayTaggedTaskAnalyzer.analyze(&store)), 1);
     }
 
     #[test]

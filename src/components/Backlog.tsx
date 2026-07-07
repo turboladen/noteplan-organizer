@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { backlogRankTask, backlogReorder, getBacklog, openNotePlanUrl } from "../api/commands";
 import type { Backlog as BacklogData, PoolTask, RankedTask } from "../types/api";
 import { TaskCard } from "./TaskCard";
+import { ContextTagCaption } from "./ContextTagCaption";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 import { matchesSearch } from "../utils/taskMeta";
 
@@ -260,15 +261,7 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
         ))}
       </div>
 
-      {ctx && ctx.tags.length > 0 && (
-        <p className="text-xs text-text-tertiary -mt-2 mb-4">
-          Calendar tasks tagged{" "}
-          {ctx.tags.map((t) => (
-            <span key={t} className="text-text-secondary">#{t} </span>
-          ))}
-          appear under this context.
-        </p>
-      )}
+      <ContextTagCaption tags={ctx.tags} />
 
       <div className="flex items-center gap-2 mb-4 text-xs">
         <input

@@ -174,9 +174,20 @@ pub fn context_folders(store: &NoteStore) -> Vec<(String, Vec<String>)> {
 /// unresolved refs still consume an ordinal.
 /// Reused by the backlog reader to stamp project metadata onto tasks.
 pub fn context_folder_projects(store: &NoteStore) -> Vec<(String, Vec<(String, u32, String)>)> {
-    let Some(control) = parse_project_control(store) else {
-        return vec![];
-    };
+    match parse_project_control(store) {
+        Some(control) => resolve_context_projects(store, &control),
+        None => vec![],
+    }
+}
+
+/// Core of `context_folder_projects` that works from an already-parsed control
+/// note, so a caller that also needs the contexts' tags/warnings (e.g.
+/// `build_backlog`) can parse `#np-projects` exactly once instead of re-parsing
+/// it per accessor.
+pub(crate) fn resolve_context_projects(
+    store: &NoteStore,
+    control: &ProjectControl,
+) -> Vec<(String, Vec<(String, u32, String)>)> {
     control
         .contexts
         .iter()
@@ -205,6 +216,16 @@ pub fn context_tags(store: &NoteStore) -> Vec<(String, Vec<String>)> {
         .into_iter()
         .map(|ctx| (ctx.name, ctx.tags))
         .collect()
+}
+
+/// Whether a task tag is scoped by a context's declared tag. Both must be
+/// lowercased and `#`-free. Matches exactly, or as a hierarchical child — a
+/// declared `work` scopes a `work/deck` task, following NotePlan's nested-tag
+/// convention (a `workshop` tag is NOT a child of `work`).
+pub(crate) fn tag_scoped_by(task_tag_lower: &str, declared_lower: &str) -> bool {
+    task_tag_lower == declared_lower
+        || (task_tag_lower.starts_with(declared_lower)
+            && task_tag_lower.as_bytes().get(declared_lower.len()) == Some(&b'/'))
 }
 
 #[cfg(test)]
