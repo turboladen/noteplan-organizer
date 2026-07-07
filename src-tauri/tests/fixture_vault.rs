@@ -40,12 +40,12 @@ fn task<'a>(n: &'a Note, text: &str) -> &'a Task {
 #[test]
 fn test_scan_note_counts_by_kind() {
     let store = load();
-    assert_eq!(store.notes.len(), 22, "total notes in fixture");
+    assert_eq!(store.notes.len(), 23, "total notes in fixture");
 
     let count = |k: fn(&NoteKind) -> bool| store.notes.iter().filter(|n| k(&n.kind)).count();
     assert_eq!(
         count(|k| matches!(k, NoteKind::Regular)),
-        15,
+        16,
         "regular notes"
     );
     assert_eq!(
@@ -241,7 +241,11 @@ fn test_backlog_tag_scoped_calendar_tasks() {
 
     // Orphan-tagged (#budget) calendar task still shows everywhere.
     for name in ["Work", "Home", "Reading"] {
-        assert!(has(name, "calw01"), "orphan #budget task missing from {}", name);
+        assert!(
+            has(name, "calw01"),
+            "orphan #budget task missing from {}",
+            name
+        );
     }
 
     // Declared tags are exposed on the context.
@@ -349,4 +353,24 @@ fn test_duplicate_title_pair_present() {
         .collect();
     assert_eq!(dirs.len(), 2, "duplicate-title pair");
     assert_ne!(dirs[0], dirs[1], "the pair lives in two different folders");
+}
+
+#[test]
+fn test_stray_tagged_task_analyzer_flags_loose_note() {
+    use app_lib::analyzer::run_all_analyzers;
+    use app_lib::models::FindingCategory;
+    let store = load();
+    let findings = run_all_analyzers(&store);
+    let stray: Vec<_> = findings
+        .iter()
+        .filter(|f| matches!(f.category, FindingCategory::StrayTaggedTask))
+        .collect();
+    // Exactly the one loose #home note outside any tracked folder.
+    assert_eq!(stray.len(), 1);
+    assert!(stray[0].file_path.ends_with("Loose Ideas.md"));
+    // Calendar-note tagged tasks are never flagged.
+    assert!(
+        stray.iter().all(|f| !f.file_path.contains("Calendar/")),
+        "calendar tasks must not be flagged as stray"
+    );
 }

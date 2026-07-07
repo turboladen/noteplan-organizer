@@ -5,6 +5,7 @@ pub mod hub_completeness;
 pub mod id_consistency;
 pub mod orphaned_notes;
 pub mod stale_tasks;
+pub mod stray_tagged_tasks;
 pub mod template_placeholders;
 pub mod unfiled;
 
@@ -53,6 +54,7 @@ pub fn run_all_analyzers(store: &NoteStore) -> Vec<Finding> {
         Box::new(orphaned_notes::OrphanedNoteAnalyzer),
         Box::new(duplicates::DuplicateAnalyzer),
         Box::new(stale_tasks::StaleTaskAnalyzer),
+        Box::new(stray_tagged_tasks::StrayTaggedTaskAnalyzer),
         Box::new(template_placeholders::TemplatePlaceholderAnalyzer),
         // System assessment
         Box::new(area_balance::AreaBalanceAnalyzer),

@@ -19,6 +19,7 @@ pub enum FindingCategory {
     Duplicate,
     StaleTask,
     TemplatePlaceholder,
+    StrayTaggedTask,
     // System assessment checks
     AreaBalance,
     DepthInconsistency,
@@ -41,6 +42,7 @@ impl FindingCategory {
             Self::Duplicate => "Duplicate",
             Self::StaleTask => "Stale Task",
             Self::TemplatePlaceholder => "Template Placeholder",
+            Self::StrayTaggedTask => "Stray Tagged Task",
             Self::AreaBalance => "Area Balance",
             Self::DepthInconsistency => "Depth Inconsistency",
             Self::CategorySprawl => "Category Sprawl",
