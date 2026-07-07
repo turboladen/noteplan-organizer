@@ -231,7 +231,9 @@ cause stale revs because `.git/refs` is a directory, not a file).
 
 ## Code Style
 
-- Rust: standard formatting (`cargo fmt`), no `clippy` config yet
+- Rust: `cargo +nightly fmt` (or `just fmt`) — `rustfmt.toml` uses nightly-only options
+  (`imports_granularity`, `format_strings`); plain stable `cargo fmt` will misformat. `just fmt-check`
+  mirrors the CI gate (`.github/workflows/ci.yml`). No `clippy` config yet.
 - TypeScript: ESLint with React hooks plugin, no Prettier
 - Use `bun` for all frontend tooling, never `npm` or `npx`
 - Tailwind CSS v4 (plugin-based via `@tailwindcss/vite`, no `tailwind.config.js`)
