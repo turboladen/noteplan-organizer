@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getBacklog, openNotePlanUrl } from "../api/commands";
 import type { Backlog as BacklogData, RankedTask } from "../types/api";
 import { TaskCard } from "./TaskCard";
+import { ContextTagCaption } from "./ContextTagCaption";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 
 type GroupBy = "none" | "project";
@@ -96,6 +97,8 @@ export function Board({ basePath }: { basePath: string }) {
           </select>
         </label>
       </div>
+
+      <ContextTagCaption tags={ctx.tags} />
 
       {ctx.ranked.length === 0 && (
         <p className="text-sm text-text-tertiary py-8 text-center">

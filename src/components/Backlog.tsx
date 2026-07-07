@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { backlogRankTask, backlogReorder, getBacklog, openNotePlanUrl } from "../api/commands";
 import type { Backlog as BacklogData, PoolTask, RankedTask } from "../types/api";
 import { TaskCard } from "./TaskCard";
+import { ContextTagCaption } from "./ContextTagCaption";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 import { matchesSearch } from "../utils/taskMeta";
 
@@ -259,6 +260,8 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
           </button>
         ))}
       </div>
+
+      <ContextTagCaption tags={ctx.tags} />
 
       <div className="flex items-center gap-2 mb-4 text-xs">
         <input

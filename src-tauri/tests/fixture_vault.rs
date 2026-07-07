@@ -40,15 +40,27 @@ fn task<'a>(n: &'a Note, text: &str) -> &'a Task {
 #[test]
 fn test_scan_note_counts_by_kind() {
     let store = load();
-    assert_eq!(store.notes.len(), 22, "total notes in fixture");
+    assert_eq!(store.notes.len(), 23, "total notes in fixture");
 
     let count = |k: fn(&NoteKind) -> bool| store.notes.iter().filter(|n| k(&n.kind)).count();
-    assert_eq!(count(|k| matches!(k, NoteKind::Regular)), 15, "regular notes");
-    assert_eq!(count(|k| matches!(k, NoteKind::Template)), 1, "template note");
+    assert_eq!(
+        count(|k| matches!(k, NoteKind::Regular)),
+        16,
+        "regular notes"
+    );
+    assert_eq!(
+        count(|k| matches!(k, NoteKind::Template)),
+        1,
+        "template note"
+    );
     assert_eq!(count(|k| matches!(k, NoteKind::Daily)), 2, "daily notes");
     assert_eq!(count(|k| matches!(k, NoteKind::Weekly)), 1, "weekly note");
     assert_eq!(count(|k| matches!(k, NoteKind::Monthly)), 1, "monthly note");
-    assert_eq!(count(|k| matches!(k, NoteKind::Quarterly)), 1, "quarterly note");
+    assert_eq!(
+        count(|k| matches!(k, NoteKind::Quarterly)),
+        1,
+        "quarterly note"
+    );
     assert_eq!(count(|k| matches!(k, NoteKind::Yearly)), 1, "yearly note");
 
     // Excluded notes ARE parsed into the store (exclusion happens at the rollup
@@ -74,7 +86,7 @@ fn test_backlog_ranked_stale_and_prose() {
     let store = load();
     let backlog = build_backlog(&store, &test_opts());
     assert_eq!(backlog.control_note_title.as_deref(), Some("Backlog"));
-    assert_eq!(backlog.contexts.len(), 2);
+    assert_eq!(backlog.contexts.len(), 3);
 
     let work = &backlog.contexts[0];
     assert_eq!(work.name, "Work");
@@ -114,8 +126,10 @@ fn test_backlog_pool() {
         .collect();
     assert_eq!(work_project_pool.len(), 10);
     assert!(
-        work.pool.iter().all(|t| t.block_id.as_deref() != Some("alpha01")
-            && t.block_id.as_deref() != Some("beta01")),
+        work.pool
+            .iter()
+            .all(|t| t.block_id.as_deref() != Some("alpha01")
+                && t.block_id.as_deref() != Some("beta01")),
         "ranked tasks excluded from pool"
     );
     assert!(work.pool.iter().any(|t| t.text == "Sketch the icon set"));
@@ -170,7 +184,11 @@ fn test_backlog_calendar_harvest_and_window() {
             assert!(pool_ids.contains(&id), "{} missing from {}", id, ctx.name);
         }
         // Old daily outside the 30-day window is absent:
-        assert!(!pool_ids.contains(&"cald02"), "old daily leaked into {}", ctx.name);
+        assert!(
+            !pool_ids.contains(&"cald02"),
+            "old daily leaked into {}",
+            ctx.name
+        );
         // Completed weekly task never harvested:
         assert!(!pool_ids.contains(&"calw02"));
         // Calendar pool tasks carry calendar metadata, no project:
@@ -196,6 +214,43 @@ fn test_backlog_calendar_harvest_and_window() {
         .filter_map(|t| t.block_id.clone())
         .collect();
     assert!(pool_ids.contains(&"cald02".to_string()));
+}
+
+#[test]
+fn test_backlog_tag_scoped_calendar_tasks() {
+    let store = load();
+    let b = build_backlog(&store, &test_opts());
+
+    let ctx = |name: &str| b.contexts.iter().find(|c| c.name == name).unwrap();
+    let has = |name: &str, id: &str| {
+        ctx(name)
+            .pool
+            .iter()
+            .any(|t| t.block_id.as_deref() == Some(id))
+    };
+
+    // #work calendar task: Work + tag-less Reading, NOT Home.
+    assert!(has("Work", "calk01"));
+    assert!(has("Reading", "calk01"));
+    assert!(!has("Home", "calk01"), "#work task leaked into Home");
+
+    // #home calendar task: Home + Reading, NOT Work.
+    assert!(has("Home", "calh01"));
+    assert!(has("Reading", "calh01"));
+    assert!(!has("Work", "calh01"), "#home task leaked into Work");
+
+    // Orphan-tagged (#budget) calendar task still shows everywhere.
+    for name in ["Work", "Home", "Reading"] {
+        assert!(
+            has(name, "calw01"),
+            "orphan #budget task missing from {}",
+            name
+        );
+    }
+
+    // Declared tags are exposed on the context.
+    assert_eq!(ctx("Work").tags, vec!["work".to_string()]);
+    assert!(ctx("Reading").tags.is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +331,10 @@ fn test_parser_states_dates_tags_mentions() {
     ));
 
     let hub = note(&store, "12 - Alpha Project.md");
-    assert_eq!(task(hub, "Kick off the project #planning").tags, vec!["planning".to_string()]);
+    assert_eq!(
+        task(hub, "Kick off the project #planning").tags,
+        vec!["planning".to_string()]
+    );
 }
 
 #[test]
@@ -295,4 +353,24 @@ fn test_duplicate_title_pair_present() {
         .collect();
     assert_eq!(dirs.len(), 2, "duplicate-title pair");
     assert_ne!(dirs[0], dirs[1], "the pair lives in two different folders");
+}
+
+#[test]
+fn test_stray_tagged_task_analyzer_flags_loose_note() {
+    use app_lib::analyzer::run_all_analyzers;
+    use app_lib::models::FindingCategory;
+    let store = load();
+    let findings = run_all_analyzers(&store);
+    let stray: Vec<_> = findings
+        .iter()
+        .filter(|f| matches!(f.category, FindingCategory::StrayTaggedTask))
+        .collect();
+    // Exactly the one loose #home note outside any tracked folder.
+    assert_eq!(stray.len(), 1);
+    assert!(stray[0].file_path.ends_with("Loose Ideas.md"));
+    // Calendar-note tagged tasks are never flagged.
+    assert!(
+        stray.iter().all(|f| !f.file_path.contains("Calendar/")),
+        "calendar tasks must not be flagged as stray"
+    );
 }

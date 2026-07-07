@@ -25,6 +25,7 @@ export type FindingCategory =
   | "Duplicate"
   | "StaleTask"
   | "TemplatePlaceholder"
+  | "StrayTaggedTask"
   // System assessment
   | "AreaBalance"
   | "DepthInconsistency"
@@ -125,6 +126,7 @@ export interface BacklogContext {
   name: string;
   ranked: RankedTask[];
   pool: PoolTask[];
+  tags: string[];
 }
 
 export interface Backlog {
@@ -242,6 +244,7 @@ export const CATEGORY_LABELS: Record<FindingCategory, string> = {
   Duplicate: "Duplicate",
   StaleTask: "Stale Task",
   TemplatePlaceholder: "Template Placeholder",
+  StrayTaggedTask: "Stray Tagged Task",
   AreaBalance: "Area Balance",
   DepthInconsistency: "Depth Inconsistency",
   CategorySprawl: "Category Sprawl",
@@ -261,6 +264,7 @@ export const CATEGORY_ICONS: Record<FindingCategory, string> = {
   Duplicate: "copy",
   StaleTask: "clock",
   TemplatePlaceholder: "template",
+  StrayTaggedTask: "tag",
   AreaBalance: "scale",
   DepthInconsistency: "layers",
   CategorySprawl: "grid",
@@ -331,6 +335,7 @@ export const CATEGORY_BADGE_STYLES: Record<
   CategorySprawl: { bg: "bg-violet-50", text: "text-violet-700", dot: "bg-violet-500" },
   EmptyStructure: { bg: "bg-violet-50", text: "text-violet-700", dot: "bg-violet-500" },
   MissingHub: { bg: "bg-violet-50", text: "text-violet-700", dot: "bg-violet-500" },
+  StrayTaggedTask: { bg: "bg-violet-50", text: "text-violet-700", dot: "bg-violet-500" },
 
   // Staleness family (amber)
   StaleTask: { bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-500" },

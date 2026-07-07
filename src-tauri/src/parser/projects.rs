@@ -13,12 +13,21 @@ static LIST_ITEM_RE: LazyLock<Regex> =
 // Wiki link inner text: [[Something]] -> Something.
 static WIKILINK_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\[([^\]]+)\]\]").unwrap());
 
+/// One `## Context` section of the control note.
+#[derive(Debug, Clone)]
+pub struct Context {
+    pub name: String,
+    /// Ordered project reference texts (wiki-link inner text or plain name).
+    pub refs: Vec<String>,
+    /// Declared tags, lowercased, without the leading `#`.
+    pub tags: Vec<String>,
+}
+
 /// Parsed structure of the `#np-projects` control note.
 #[derive(Debug, Clone)]
 pub struct ProjectControl {
     pub note_title: String,
-    /// (context heading, ordered project reference texts).
-    pub contexts: Vec<(String, Vec<String>)>,
+    pub contexts: Vec<Context>,
     pub warnings: Vec<String>,
 }
 
@@ -64,21 +73,35 @@ fn strip_marker_tag(title: &str) -> String {
         .join(" ")
 }
 
-/// Parse `## Heading` sections, each with an ordered list of project references.
-fn parse_contexts(content: &str) -> Vec<(String, Vec<String>)> {
-    let mut contexts: Vec<(String, Vec<String>)> = Vec::new();
+/// Parse `## Heading` sections. A list item that is entirely `#tag` tokens
+/// declares the context's tags; any other list item is a project reference.
+fn parse_contexts(content: &str) -> Vec<Context> {
+    let mut contexts: Vec<Context> = Vec::new();
     for line in content.lines() {
         if let Some(caps) = HEADING_RE.captures(line) {
-            contexts.push((caps[1].to_string(), Vec::new()));
+            contexts.push(Context {
+                name: caps[1].to_string(),
+                refs: Vec::new(),
+                tags: Vec::new(),
+            });
         } else if let Some(caps) = LIST_ITEM_RE.captures(line) {
-            if let Some((_, refs)) = contexts.last_mut() {
+            if let Some(ctx) = contexts.last_mut() {
                 let raw = caps[1].trim();
-                let text = WIKILINK_RE
-                    .captures(raw)
-                    .map(|c| c[1].trim().to_string())
-                    .unwrap_or_else(|| raw.to_string());
-                if !text.is_empty() {
-                    refs.push(text);
+                let tokens: Vec<&str> = raw.split_whitespace().collect();
+                let all_tags =
+                    !tokens.is_empty() && tokens.iter().all(|t| t.starts_with('#') && t.len() > 1);
+                if all_tags {
+                    for t in tokens {
+                        ctx.tags.push(t.trim_start_matches('#').to_lowercase());
+                    }
+                } else {
+                    let text = WIKILINK_RE
+                        .captures(raw)
+                        .map(|c| c[1].trim().to_string())
+                        .unwrap_or_else(|| raw.to_string());
+                    if !text.is_empty() {
+                        ctx.refs.push(text);
+                    }
                 }
             }
         }
@@ -151,23 +174,58 @@ pub fn context_folders(store: &NoteStore) -> Vec<(String, Vec<String>)> {
 /// unresolved refs still consume an ordinal.
 /// Reused by the backlog reader to stamp project metadata onto tasks.
 pub fn context_folder_projects(store: &NoteStore) -> Vec<(String, Vec<(String, u32, String)>)> {
-    let Some(control) = parse_project_control(store) else {
-        return vec![];
-    };
+    match parse_project_control(store) {
+        Some(control) => resolve_context_projects(store, &control),
+        None => vec![],
+    }
+}
+
+/// Core of `context_folder_projects` that works from an already-parsed control
+/// note, so a caller that also needs the contexts' tags/warnings (e.g.
+/// `build_backlog`) can parse `#np-projects` exactly once instead of re-parsing
+/// it per accessor.
+pub(crate) fn resolve_context_projects(
+    store: &NoteStore,
+    control: &ProjectControl,
+) -> Vec<(String, Vec<(String, u32, String)>)> {
     control
         .contexts
         .iter()
-        .map(|(name, refs)| {
-            let projects = refs
+        .map(|ctx| {
+            let projects = ctx
+                .refs
                 .iter()
                 .enumerate()
                 .filter_map(|(i, r)| {
                     resolve_folder(store, r).map(|folder| (folder, (i + 1) as u32, r.clone()))
                 })
                 .collect();
-            (name.clone(), projects)
+            (ctx.name.clone(), projects)
         })
         .collect()
+}
+
+/// Public: map each control-note context to its declared tags (lowercased, no
+/// `#`). Consumed by the backlog reader to scope calendar tasks.
+pub fn context_tags(store: &NoteStore) -> Vec<(String, Vec<String>)> {
+    let Some(control) = parse_project_control(store) else {
+        return vec![];
+    };
+    control
+        .contexts
+        .into_iter()
+        .map(|ctx| (ctx.name, ctx.tags))
+        .collect()
+}
+
+/// Whether a task tag is scoped by a context's declared tag. Both must be
+/// lowercased and `#`-free. Matches exactly, or as a hierarchical child — a
+/// declared `work` scopes a `work/deck` task, following NotePlan's nested-tag
+/// convention (a `workshop` tag is NOT a child of `work`).
+pub(crate) fn tag_scoped_by(task_tag_lower: &str, declared_lower: &str) -> bool {
+    task_tag_lower == declared_lower
+        || (task_tag_lower.starts_with(declared_lower)
+            && task_tag_lower.as_bytes().get(declared_lower.len()) == Some(&b'/'))
 }
 
 #[cfg(test)]
@@ -183,18 +241,60 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_context_tags_discriminated_from_refs() {
+        let content = "# P #np-projects\n## Work\n- #work #office\n1. [[32 - Product Ownership]]\n## Home\n- #home\n1. [[42 - House Reno]]\n## Someday\n1. [[50 - Read list]]\n";
+        let store = store_with(content, "Notes/_NotePlan Organizer/P.md");
+        let ctrl = parse_project_control(&store).unwrap();
+        assert_eq!(ctrl.contexts.len(), 3);
+        // Work: two declared tags, one ref (the #tag item is NOT a ref).
+        assert_eq!(ctrl.contexts[0].name, "Work");
+        assert_eq!(
+            ctrl.contexts[0].tags,
+            vec!["work".to_string(), "office".to_string()]
+        );
+        assert_eq!(
+            ctrl.contexts[0].refs,
+            vec!["32 - Product Ownership".to_string()]
+        );
+        // Home: one tag, one ref.
+        assert_eq!(ctrl.contexts[1].tags, vec!["home".to_string()]);
+        assert_eq!(ctrl.contexts[1].refs, vec!["42 - House Reno".to_string()]);
+        // Someday: no tags (legacy context).
+        assert!(ctrl.contexts[2].tags.is_empty());
+        assert_eq!(ctrl.contexts[2].refs, vec!["50 - Read list".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_context_tags_uppercase_normalized() {
+        let content = "# P #np-projects\n## Work\n- #Work\n";
+        let store = store_with(content, "Notes/_NotePlan Organizer/P.md");
+        let ctrl = parse_project_control(&store).unwrap();
+        assert_eq!(ctrl.contexts[0].tags, vec!["work".to_string()]);
+    }
+
+    #[test]
+    fn test_context_tags_accessor() {
+        let content = "# P #np-projects\n## Work\n- #work\n1. [[32 - Product Ownership]]\n## Home\n1. [[42 - House Reno]]\n";
+        let store = store_with(content, "Notes/_NotePlan Organizer/P.md");
+        let got = context_tags(&store);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0], ("Work".to_string(), vec!["work".to_string()]));
+        assert_eq!(got[1], ("Home".to_string(), Vec::<String>::new()));
+    }
+
+    #[test]
     fn test_parse_contexts_ordered() {
         let content = "# Project Priorities #np-projects\n\n## Work\n1. [[32 - Product Ownership]]\n2. [[35 - Platform Migration]]\n\n## Home\n1. [[42 - House Reno]]\n";
         let store = store_with(content, "Notes/_NotePlan Organizer/Project Priorities.md");
         let ctrl = parse_project_control(&store).expect("control note found by tag");
         assert_eq!(ctrl.contexts.len(), 2);
-        assert_eq!(ctrl.contexts[0].0, "Work");
+        assert_eq!(ctrl.contexts[0].name, "Work");
         assert_eq!(
-            ctrl.contexts[0].1,
+            ctrl.contexts[0].refs,
             vec!["32 - Product Ownership", "35 - Platform Migration"]
         );
-        assert_eq!(ctrl.contexts[1].0, "Home");
-        assert_eq!(ctrl.contexts[1].1, vec!["42 - House Reno"]);
+        assert_eq!(ctrl.contexts[1].name, "Home");
+        assert_eq!(ctrl.contexts[1].refs, vec!["42 - House Reno"]);
     }
 
     #[test]
@@ -208,7 +308,7 @@ mod tests {
         let content = "# P #np-projects\n## Work\n- 32 - Product Ownership\n";
         let store = store_with(content, "Notes/_NotePlan Organizer/P.md");
         let ctrl = parse_project_control(&store).unwrap();
-        assert_eq!(ctrl.contexts[0].1, vec!["32 - Product Ownership"]);
+        assert_eq!(ctrl.contexts[0].refs, vec!["32 - Product Ownership"]);
     }
 
     #[test]
