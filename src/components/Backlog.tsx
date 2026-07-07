@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { backlogRankTask, backlogReorder, getBacklog, openNotePlanUrl } from "../api/commands";
 import type { Backlog as BacklogData, PoolTask, RankedTask } from "../types/api";
 import { TaskCard } from "./TaskCard";
@@ -39,20 +39,31 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
     () => collapsedCache.get(basePath) ?? new Set(),
   );
 
+  // A monotonic generation guards every load() — the effect-driven one and the
+  // imperative post-write reloads alike. Each call captures the current gen and
+  // applies its result only if still the latest, so a stale in-flight load
+  // (superseded by a newer reload, or from a vault the user already navigated
+  // away from) can never apply the wrong vault's data. (noteplan-organizer-lo2)
+  const loadGen = useRef(0);
   const load = (older: boolean) => {
+    const gen = ++loadGen.current;
     getBacklog(basePath, older)
       .then((b) => {
+        if (gen !== loadGen.current) return;
         setData(b);
         setActiveCtx((i) => (i < b.contexts.length ? i : 0));
         // Resync disclosure to this vault's cache so state can't leak across a vault switch.
         setCollapsed(collapsedCache.get(basePath) ?? new Set());
       })
-      .catch((e) => onToast(`Backlog load failed: ${e}`));
+      .catch((e) => {
+        if (gen !== loadGen.current) return;
+        onToast(`Backlog load failed: ${e}`);
+      });
   };
 
   useEffect(() => {
     load(includeOlder);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load identity is stable per basePath/includeOlder
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only on basePath/includeOlder; load reads basePath and takes includeOlder as an arg, both covered
   }, [basePath, includeOlder]);
 
   const backlogTitle = data?.control_note_title ?? "";
@@ -129,8 +140,12 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
 
   const groups = useMemo<InventoryGroup[]>(() => {
     if (!ctx) return [];
+    // Derived from the memoized visibleRanked (same search filter) plus the
+    // resolved check, so the per-group "N ranked" counts and the ranked list
+    // share one filtering pass and can never drift.
+    const rankedMatching = visibleRanked.filter((t) => t.resolved);
     const rankedCountFor = (pred: (t: RankedTask) => boolean) =>
-      ctx.ranked.filter((t) => t.resolved && pred(t)).length;
+      rankedMatching.filter(pred).length;
     const pool = ctx.pool.filter((t) => matchesSearch(search, t.text, t.tags));
 
     const projectGroups = new Map<string, InventoryGroup>();
@@ -181,7 +196,7 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
       });
     }
     return result;
-  }, [ctx, search, includeOlder]);
+  }, [ctx, search, includeOlder, visibleRanked]);
 
   const toggleGroup = (key: string) =>
     setCollapsed((prev) => {
