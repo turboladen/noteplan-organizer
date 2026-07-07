@@ -5,8 +5,8 @@
 use crate::{
     models::NoteKind,
     parser::{
-        hierarchy::{build_hierarchy, JdNode},
         NoteStore,
+        hierarchy::{JdNode, build_hierarchy},
     },
 };
 use std::{

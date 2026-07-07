@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Mutex, time::Duration};
 
 use notify::RecursiveMode;
-use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
+use notify_debouncer_mini::{DebouncedEvent, Debouncer, new_debouncer};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{

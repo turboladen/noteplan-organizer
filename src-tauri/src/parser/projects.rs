@@ -232,7 +232,7 @@ mod tests {
     use super::*;
     use crate::{
         models::NoteKind,
-        parser::{parse_note, NoteStore},
+        parser::{NoteStore, parse_note},
     };
 
     fn store_with(content: &str, tag_note_path: &str) -> NoteStore {

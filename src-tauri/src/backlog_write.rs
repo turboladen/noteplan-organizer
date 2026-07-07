@@ -1,7 +1,7 @@
-use crate::parser::{clean_task_text, task_display_text, BACKLOG_TAG};
+use crate::parser::{BACKLOG_TAG, clean_task_text, task_display_text};
 use regex::Regex;
 use std::{
-    collections::{hash_map::DefaultHasher, HashSet},
+    collections::{HashSet, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     sync::LazyLock,
 };
@@ -617,22 +617,28 @@ mod tests {
         // Locks the core data-safety invariant: AppendBlockId is the ONLY variant
         // that mutates a user content note. Any future variant must consciously
         // decide its classification here.
-        assert!(WriteOp::AppendBlockId {
-            line: 1,
-            new_line_text: "x ^abcd".into(),
-            block_id: "abcd".into(),
-        }
-        .touches_content_note());
-        assert!(!WriteOp::InsertBacklogLine {
-            line: 1,
-            text: "x".into()
-        }
-        .touches_content_note());
-        assert!(!WriteOp::ReplaceBacklogLine {
-            line: 1,
-            text: "x".into()
-        }
-        .touches_content_note());
+        assert!(
+            WriteOp::AppendBlockId {
+                line: 1,
+                new_line_text: "x ^abcd".into(),
+                block_id: "abcd".into(),
+            }
+            .touches_content_note()
+        );
+        assert!(
+            !WriteOp::InsertBacklogLine {
+                line: 1,
+                text: "x".into()
+            }
+            .touches_content_note()
+        );
+        assert!(
+            !WriteOp::ReplaceBacklogLine {
+                line: 1,
+                text: "x".into()
+            }
+            .touches_content_note()
+        );
         assert!(!WriteOp::DeleteBacklogLine { line: 1 }.touches_content_note());
     }
 }

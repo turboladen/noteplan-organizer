@@ -1,7 +1,7 @@
 use crate::{
     analyzer::{Analyzer, HUB_SECTIONS},
     models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity},
-    parser::{hierarchy::build_hierarchy, NoteStore},
+    parser::{NoteStore, hierarchy::build_hierarchy},
 };
 
 pub struct MissingHubAnalyzer;

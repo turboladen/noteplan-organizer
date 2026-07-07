@@ -5,7 +5,7 @@
 
 use app_lib::{
     models::{Note, NoteKind, Task, TaskState},
-    parser::{build_backlog, scan_noteplan_dir, NoteStore},
+    parser::{NoteStore, build_backlog, scan_noteplan_dir},
 };
 use std::path::{Path, PathBuf};
 
@@ -289,10 +289,12 @@ fn test_parser_non_task_lines_ignored() {
     // Design has 4 tasks: Finalize, Review mockups, [x] Draft, Sketch. The bare
     // `-` note and the `+` line are NOT tasks.
     assert_eq!(design.tasks.len(), 4);
-    assert!(design
-        .tasks
-        .iter()
-        .all(|t| !t.text.contains("plain note") && !t.text.contains("also not a task")));
+    assert!(
+        design
+            .tasks
+            .iter()
+            .all(|t| !t.text.contains("plain note") && !t.text.contains("also not a task"))
+    );
 }
 
 #[test]

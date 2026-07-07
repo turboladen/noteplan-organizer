@@ -2,8 +2,8 @@ use crate::{
     analyzer::Analyzer,
     models::{Finding, FindingCategory, NoteKind, Severity, TaskState},
     parser::{
-        is_excluded_relative, is_under_folder, parse_project_control, resolve_context_projects,
-        tag_scoped_by, NoteStore,
+        NoteStore, is_excluded_relative, is_under_folder, parse_project_control,
+        resolve_context_projects, tag_scoped_by,
     },
 };
 use std::collections::HashSet;

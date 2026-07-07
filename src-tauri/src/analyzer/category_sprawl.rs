@@ -1,7 +1,7 @@
 use crate::{
     analyzer::Analyzer,
     models::{Finding, FindingCategory, NoteKind, Severity},
-    parser::{hierarchy::build_hierarchy, NoteStore},
+    parser::{NoteStore, hierarchy::build_hierarchy},
 };
 
 pub struct CategorySprawlAnalyzer;

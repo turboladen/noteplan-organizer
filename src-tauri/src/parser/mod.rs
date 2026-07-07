@@ -10,8 +10,8 @@ pub mod period;
 mod projects;
 mod task;
 
-pub use backlog::{build_backlog, BacklogOptions};
-pub(crate) use backlog::{is_under_folder, BACKLOG_TAG};
+pub(crate) use backlog::{BACKLOG_TAG, is_under_folder};
+pub use backlog::{BacklogOptions, build_backlog};
 pub use block::extract_content_blocks;
 pub use filing::build_filing_targets;
 pub use folder::{parse_jd_id, parse_note_id};
@@ -19,12 +19,12 @@ pub use link::extract_wiki_links;
 pub use markdown::parse_note;
 pub use matcher::match_blocks_to_targets;
 pub use projects::{
-    context_folder_projects, context_folders, context_tags, parse_project_control, Context,
-    ProjectControl,
+    Context, ProjectControl, context_folder_projects, context_folders, context_tags,
+    parse_project_control,
 };
 pub(crate) use projects::{resolve_context_projects, tag_scoped_by};
 pub use task::{
-    clean_task_text, is_task_line, parse_task_line, parse_tasks, task_display_text, ParsedTaskLine,
+    ParsedTaskLine, clean_task_text, is_task_line, parse_task_line, parse_tasks, task_display_text,
 };
 
 /// Folders whose notes are excluded from analysis and task rollups:
@@ -230,10 +230,12 @@ mod tests {
         assert_eq!(store.notes.len(), 2, "replaced, not appended");
         let i = store.path_index["Notes/a.md"];
         assert_eq!(store.notes[i].tasks.len(), 2);
-        assert!(store.notes[i]
-            .tasks
-            .iter()
-            .any(|t| t.block_id.as_deref() == Some("abc123")));
+        assert!(
+            store.notes[i]
+                .tasks
+                .iter()
+                .any(|t| t.block_id.as_deref() == Some("abc123"))
+        );
         // b.md untouched and still indexed.
         assert_eq!(store.notes[store.path_index["Notes/b.md"]].title, "B");
         assert!(store.has_note_titled("A"));

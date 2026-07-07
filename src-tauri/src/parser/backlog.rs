@@ -1,8 +1,8 @@
 use crate::{
     models::{Backlog, BacklogContext, CalendarKind, NoteKind, PoolTask, RankedTask, TaskState},
     parser::{
-        is_excluded_relative, parse_project_control, period, resolve_context_projects,
-        tag_scoped_by, NoteStore,
+        NoteStore, is_excluded_relative, parse_project_control, period, resolve_context_projects,
+        tag_scoped_by,
     },
 };
 use regex::Regex;

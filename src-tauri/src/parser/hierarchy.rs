@@ -1,4 +1,4 @@
-use super::{parse_jd_id, NoteStore};
+use super::{NoteStore, parse_jd_id};
 use crate::models::NoteKind;
 use std::collections::BTreeMap;
 

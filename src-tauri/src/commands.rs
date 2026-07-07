@@ -1,13 +1,13 @@
 use crate::{
     analyzer::run_all_analyzers,
     app_state::{NoteStoreCache, WriteSuppression},
-    backlog_write::{plan_append_entry, plan_remove, plan_reorder, plan_stamp_block_id, WriteOp},
+    backlog_write::{WriteOp, plan_append_entry, plan_remove, plan_reorder, plan_stamp_block_id},
     config, dump, export,
-    mcp::{tools, tools::NoteAddr, McpState},
+    mcp::{McpState, tools, tools::NoteAddr},
     models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report},
     parser::{
-        build_backlog, build_filing_targets, extract_content_blocks, match_blocks_to_targets,
-        matcher::FilingSuggestion, parse_note, scan_noteplan_dir, BacklogOptions, NoteStore,
+        BacklogOptions, NoteStore, build_backlog, build_filing_targets, extract_content_blocks,
+        match_blocks_to_targets, matcher::FilingSuggestion, parse_note, scan_noteplan_dir,
     },
 };
 use std::{
@@ -795,7 +795,7 @@ mod tests {
         backlog_write::WriteOp,
         mcp::tools::NoteAddr,
         models::NoteKind,
-        parser::{parse_note, NoteStore},
+        parser::{NoteStore, parse_note},
     };
 
     #[test]

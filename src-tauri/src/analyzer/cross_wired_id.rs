@@ -1,7 +1,7 @@
 use crate::{
     analyzer::Analyzer,
     models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity},
-    parser::{parse_jd_id, NoteStore},
+    parser::{NoteStore, parse_jd_id},
 };
 
 pub struct CrossWiredIdAnalyzer;

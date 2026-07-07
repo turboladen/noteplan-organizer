@@ -213,9 +213,11 @@ mod tests {
         let findings = IdConsistencyAnalyzer.analyze(&store);
         assert_eq!(findings.len(), 2); // One finding per duplicate
         assert!(findings.iter().all(|f| f.severity == Severity::Warning));
-        assert!(findings
-            .iter()
-            .all(|f| f.description.contains("Duplicate sequential ID")));
+        assert!(
+            findings
+                .iter()
+                .all(|f| f.description.contains("Duplicate sequential ID"))
+        );
     }
 
     #[test]
@@ -228,9 +230,11 @@ mod tests {
         let findings = IdConsistencyAnalyzer.analyze(&store);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].severity, Severity::Info);
-        assert!(findings[0]
-            .description
-            .contains("old-style hierarchical ID"));
+        assert!(
+            findings[0]
+                .description
+                .contains("old-style hierarchical ID")
+        );
     }
 
     #[test]

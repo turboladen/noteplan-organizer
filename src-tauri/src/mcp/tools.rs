@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use super::client::McpState;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Extracts the text content from a CallToolResult.
 /// MCP tool results contain a `content` array; we concatenate all text entries.
