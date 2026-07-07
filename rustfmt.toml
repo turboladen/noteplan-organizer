@@ -1,0 +1,7 @@
+# https://github.com/rust-lang/rustfmt/blob/master/Configurations.md
+# `edition` pins parsing/formatting behavior (kammerz's cross-repo convention) so
+# local runs agree with CI regardless of any user-level rustfmt config.
+# The options below are NIGHTLY-ONLY — run `cargo +nightly fmt` (see justfile / CI).
+edition = "2024"
+imports_granularity = "Crate"
+format_strings = true

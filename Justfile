@@ -25,6 +25,11 @@ check-ts:
 # Type-check both Rust and TypeScript
 check-all: check check-ts
 
-# Format Rust code
+# Format Rust code (nightly — rustfmt.toml uses nightly-only options)
 fmt:
-    cargo fmt --manifest-path src-tauri/Cargo.toml
+    cargo +nightly fmt --manifest-path src-tauri/Cargo.toml
+
+# Verify Rust formatting without writing — mirrors CI. Nightly because
+# rustfmt.toml uses nightly-only options (run `just fmt` to fix).
+fmt-check:
+    cargo +nightly fmt --manifest-path src-tauri/Cargo.toml --check
