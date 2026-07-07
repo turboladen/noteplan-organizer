@@ -1,7 +1,8 @@
 use crate::analyzer::Analyzer;
 use crate::models::{Finding, FindingCategory, NoteKind, Severity, TaskState};
 use crate::parser::{
-    context_folders, context_tags, is_excluded_relative, is_under_folder, tag_scoped_by, NoteStore,
+    is_excluded_relative, is_under_folder, parse_project_control, resolve_context_projects,
+    tag_scoped_by, NoteStore,
 };
 use std::collections::HashSet;
 
@@ -21,16 +22,23 @@ fn truncate(s: &str, max: usize) -> String {
 
 impl Analyzer for StrayTaggedTaskAnalyzer {
     fn analyze(&self, store: &NoteStore) -> Vec<Finding> {
-        let declared: HashSet<String> = context_tags(store)
-            .into_iter()
-            .flat_map(|(_, tags)| tags)
+        // Parse the `#np-projects` control note ONCE and derive both the declared
+        // tags and the tracked folders from it (rather than calling context_tags
+        // + context_folders, which each re-parse and — for folders — re-resolve).
+        let Some(control) = parse_project_control(store) else {
+            return Vec::new();
+        };
+        let declared: HashSet<String> = control
+            .contexts
+            .iter()
+            .flat_map(|ctx| ctx.tags.iter().cloned())
             .collect();
         if declared.is_empty() {
             return Vec::new();
         }
-        let tracked: Vec<String> = context_folders(store)
+        let tracked: Vec<String> = resolve_context_projects(store, &control)
             .into_iter()
-            .flat_map(|(_, folders)| folders)
+            .flat_map(|(_, projects)| projects.into_iter().map(|(folder, _, _)| folder))
             .collect();
 
         let mut findings = Vec::new();
