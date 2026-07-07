@@ -1,7 +1,8 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, NoteKind, Severity};
-use crate::parser::hierarchy::build_hierarchy;
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, NoteKind, Severity},
+    parser::{hierarchy::build_hierarchy, NoteStore},
+};
 
 pub struct CategorySprawlAnalyzer;
 
@@ -33,11 +34,14 @@ impl Analyzer for CategorySprawlAnalyzer {
                     MAX_AREAS
                 ),
                 suggestion: Some(
-                    "Consider consolidating related areas. Too many top-level areas makes the system hard to navigate.".to_string(),
+                    "Consider consolidating related areas. Too many top-level areas makes the \
+                     system hard to navigate."
+                        .to_string(),
                 ),
                 line_number: None,
                 context: None,
-                is_folder: true, fix_action: None,
+                is_folder: true,
+                fix_action: None,
             });
         }
 
@@ -51,15 +55,19 @@ impl Analyzer for CategorySprawlAnalyzer {
                         category: FindingCategory::CategorySprawl,
                         file_path: format!("Notes/{}/{}", area.name, cat.name),
                         description: format!(
-                            "Category '{}/{}' has {} notes — consider splitting into sub-categories",
+                            "Category '{}/{}' has {} notes — consider splitting into \
+                             sub-categories",
                             area.name, cat.name, count
                         ),
                         suggestion: Some(
-                            "Large categories become hard to browse. Group related notes into numbered sub-categories.".to_string(),
+                            "Large categories become hard to browse. Group related notes into \
+                             numbered sub-categories."
+                                .to_string(),
                         ),
                         line_number: None,
                         context: None,
-                        is_folder: true, fix_action: None,
+                        is_folder: true,
+                        fix_action: None,
                     });
                 }
             }
@@ -83,11 +91,14 @@ impl Analyzer for CategorySprawlAnalyzer {
                     name
                 ),
                 suggestion: Some(
-                    "Assign a JD area number, move contents into an existing area, or archive if no longer needed.".to_string(),
+                    "Assign a JD area number, move contents into an existing area, or archive if \
+                     no longer needed."
+                        .to_string(),
                 ),
                 line_number: None,
                 context: None,
-                is_folder: true, fix_action: None,
+                is_folder: true,
+                fix_action: None,
             });
         }
 

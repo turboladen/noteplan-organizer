@@ -3,8 +3,10 @@
 //!
 //! These are pure reads — nothing here mutates the fixture or touches MCP.
 
-use app_lib::models::{Note, NoteKind, Task, TaskState};
-use app_lib::parser::{build_backlog, scan_noteplan_dir, NoteStore};
+use app_lib::{
+    models::{Note, NoteKind, Task, TaskState},
+    parser::{build_backlog, scan_noteplan_dir, NoteStore},
+};
 use std::path::{Path, PathBuf};
 
 fn fixture_path() -> PathBuf {
@@ -357,8 +359,7 @@ fn test_duplicate_title_pair_present() {
 
 #[test]
 fn test_stray_tagged_task_analyzer_flags_loose_note() {
-    use app_lib::analyzer::run_all_analyzers;
-    use app_lib::models::FindingCategory;
+    use app_lib::{analyzer::run_all_analyzers, models::FindingCategory};
     let store = load();
     let findings = run_all_analyzers(&store);
     let stray: Vec<_> = findings

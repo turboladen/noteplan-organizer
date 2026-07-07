@@ -71,7 +71,10 @@ mod tests {
             Some("2026")
         );
         assert_eq!(calendar_period(&NoteKind::Regular, "Notes/x.md"), None);
-        assert_eq!(calendar_period(&NoteKind::Daily, "Calendar/garbage.md"), None);
+        assert_eq!(
+            calendar_period(&NoteKind::Daily, "Calendar/garbage.md"),
+            None
+        );
     }
 
     #[test]

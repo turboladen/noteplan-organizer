@@ -7,9 +7,7 @@
 //! use the in-app `system_dump` command instead (which runs inside the Tauri
 //! process with the necessary permissions).
 
-use app_lib::config;
-use app_lib::dump;
-use app_lib::parser::scan_noteplan_dir;
+use app_lib::{config, dump, parser::scan_noteplan_dir};
 
 fn main() {
     let path = config::detect_noteplan_path().unwrap_or_else(|| {

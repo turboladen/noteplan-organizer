@@ -1,13 +1,12 @@
-use crate::models::{
-    Backlog, BacklogContext, CalendarKind, NoteKind, PoolTask, RankedTask, TaskState,
-};
-use crate::parser::{
-    is_excluded_relative, parse_project_control, period, resolve_context_projects, tag_scoped_by,
-    NoteStore,
+use crate::{
+    models::{Backlog, BacklogContext, CalendarKind, NoteKind, PoolTask, RankedTask, TaskState},
+    parser::{
+        is_excluded_relative, parse_project_control, period, resolve_context_projects,
+        tag_scoped_by, NoteStore,
+    },
 };
 use regex::Regex;
-use std::collections::HashSet;
-use std::sync::LazyLock;
+use std::{collections::HashSet, sync::LazyLock};
 
 /// Options for building the backlog. `today` is injected (never read from the
 /// clock inside the builder) so integration tests are deterministic.
@@ -491,7 +490,8 @@ mod tests {
         let backlog_note = parse_note(
             "/b.md",
             "Notes/_NotePlan Organizer/Backlog.md",
-            "# Backlog #np-backlog\n## Work\nsee [[Note^abc123]] for context\n- [[Janet^d4e5f6]] Ship\n",
+            "# Backlog #np-backlog\n## Work\nsee [[Note^abc123]] for context\n- [[Janet^d4e5f6]] \
+             Ship\n",
             NoteKind::Regular,
         );
         let st = store(vec![projects_note(), backlog_note]);
@@ -509,7 +509,8 @@ mod tests {
         let backlog_note = parse_note(
             "/b.md",
             "Notes/_NotePlan Organizer/Backlog.md",
-            "# Backlog #np-backlog\n## Work\n- [[Src^newid1]] Follow up on [[Meeting^ab12cd]] notes\n",
+            "# Backlog #np-backlog\n## Work\n- [[Src^newid1]] Follow up on [[Meeting^ab12cd]] \
+             notes\n",
             NoteKind::Regular,
         );
         let st = store(vec![projects_note(), backlog_note]);
@@ -523,7 +524,8 @@ mod tests {
         let projects_note = parse_note(
             "/p.md",
             "Notes/_NotePlan Organizer/Projects.md",
-            "# P #np-projects\n## Work\n1. [[32 - Product Ownership]]\n## Home\n1. [[21 - Home Reno]]\n",
+            "# P #np-projects\n## Work\n1. [[32 - Product Ownership]]\n## Home\n1. [[21 - Home \
+             Reno]]\n",
             NoteKind::Regular,
         );
         let backlog_note = parse_note(
@@ -624,13 +626,15 @@ mod tests {
         let projects = parse_note(
             "/p.md",
             "Notes/_NotePlan Organizer/Projects.md",
-            "# P #np-projects\n## Work\n- #work\n1. [[32 - Product Ownership]]\n## Home\n- #home\n1. [[21 - Home Reno]]\n",
+            "# P #np-projects\n## Work\n- #work\n1. [[32 - Product Ownership]]\n## Home\n- \
+             #home\n1. [[21 - Home Reno]]\n",
             NoteKind::Regular,
         );
         let daily = parse_note(
             "/d.md",
             "Calendar/20260705.md",
-            "# Day\n* Buy paint #home ^calx01\n* Prep deck #work ^caly01\n* Untagged chore ^calz01\n",
+            "# Day\n* Buy paint #home ^calx01\n* Prep deck #work ^caly01\n* Untagged chore \
+             ^calz01\n",
             NoteKind::Daily,
         );
         let st = store(vec![projects, daily]);

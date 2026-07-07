@@ -1,7 +1,8 @@
-use crate::analyzer::{Analyzer, HUB_SECTIONS};
-use crate::models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity};
-use crate::parser::hierarchy::build_hierarchy;
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::{Analyzer, HUB_SECTIONS},
+    models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity},
+    parser::{hierarchy::build_hierarchy, NoteStore},
+};
 
 pub struct MissingHubAnalyzer;
 
@@ -72,12 +73,15 @@ impl Analyzer for MissingHubAnalyzer {
                             area.name, cat.name, cat_notes
                         ),
                         suggestion: Some(
-                            "Add a hub note named '00.PH' (Project Hub), '00.DH' (Domain Hub), or '00.RH' (Reference Hub) with sections like Related, Description, and links to key notes."
+                            "Add a hub note named '00.PH' (Project Hub), '00.DH' (Domain Hub), or \
+                             '00.RH' (Reference Hub) with sections like Related, Description, and \
+                             links to key notes."
                                 .to_string(),
                         ),
                         line_number: None,
                         context: None,
-                        is_folder: true, fix_action: None,
+                        is_folder: true,
+                        fix_action: None,
                     });
                 }
             }

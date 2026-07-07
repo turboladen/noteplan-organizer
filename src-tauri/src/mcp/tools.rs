@@ -60,7 +60,8 @@ pub(crate) fn parse_get_notes_content(json_text: &str) -> McpResult<String> {
     }
     if v.get("hasMore").and_then(Value::as_bool) == Some(true) {
         return Err(
-            "get_notes returned partial content (hasMore) — refusing to operate on a truncated note."
+            "get_notes returned partial content (hasMore) — refusing to operate on a truncated \
+             note."
                 .to_string(),
         );
     }
@@ -78,7 +79,10 @@ pub(crate) fn parse_edit_response(json_text: &str) -> McpResult<String> {
     let v: Value = serde_json::from_str(json_text)
         .map_err(|e| format!("edit_content: response was not JSON ({e}): {json_text}"))?;
     if v.get("success").and_then(Value::as_bool) != Some(true) {
-        return Err(format!("edit did not report success: {}", response_error(&v)));
+        return Err(format!(
+            "edit did not report success: {}",
+            response_error(&v)
+        ));
     }
     Ok(v.get("message")
         .and_then(Value::as_str)
@@ -105,7 +109,9 @@ pub(crate) fn assert_bridge_backend(envelope_json: &str, op_desc: &str) -> Resul
     let v: Value = serde_json::from_str(envelope_json)
         .map_err(|e| format!("{op_desc}: response was not JSON ({e}); aborting"))?;
     let backends = v.get("backends").and_then(Value::as_array).ok_or_else(|| {
-        format!("{op_desc}: response has no `backends` — cannot confirm NotePlan applied it; aborting")
+        format!(
+            "{op_desc}: response has no `backends` — cannot confirm NotePlan applied it; aborting"
+        )
     })?;
     if backends.is_empty() {
         return Err(format!(
@@ -115,7 +121,8 @@ pub(crate) fn assert_bridge_backend(envelope_json: &str, op_desc: &str) -> Resul
     for b in backends {
         if b.as_str() != Some("bridge") {
             return Err(format!(
-                "{op_desc}: not applied through NotePlan (backend: {}) — ensure NotePlan is running; aborting",
+                "{op_desc}: not applied through NotePlan (backend: {}) — ensure NotePlan is \
+                 running; aborting",
                 b.as_str().unwrap_or("<non-string>")
             ));
         }
@@ -417,7 +424,10 @@ mod tests {
     fn test_parse_edit_response_success_false_errs() {
         let json = r#"{"success":false,"error":"line 99 out of range"}"#;
         let err = parse_edit_response(json).unwrap_err();
-        assert!(err.contains("line 99 out of range"), "surfaces error: {err}");
+        assert!(
+            err.contains("line 99 out of range"),
+            "surfaces error: {err}"
+        );
     }
 
     #[test]
@@ -436,7 +446,9 @@ mod tests {
 
     #[test]
     fn test_assert_bridge_backend_ok() {
-        assert!(assert_bridge_backend(r#"{"success":true,"backends":["bridge"]}"#, "edit_line").is_ok());
+        assert!(
+            assert_bridge_backend(r#"{"success":true,"backends":["bridge"]}"#, "edit_line").is_ok()
+        );
     }
 
     #[test]

@@ -1,5 +1,4 @@
-use crate::models::NoteKind;
-use crate::parser::NoteStore;
+use crate::{models::NoteKind, parser::NoteStore};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -231,9 +230,10 @@ pub(crate) fn tag_scoped_by(task_tag_lower: &str, declared_lower: &str) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::NoteKind;
-    use crate::parser::parse_note;
-    use crate::parser::NoteStore;
+    use crate::{
+        models::NoteKind,
+        parser::{parse_note, NoteStore},
+    };
 
     fn store_with(content: &str, tag_note_path: &str) -> NoteStore {
         let note = parse_note("/x.md", tag_note_path, content, NoteKind::Regular);
@@ -242,7 +242,9 @@ mod tests {
 
     #[test]
     fn test_parse_context_tags_discriminated_from_refs() {
-        let content = "# P #np-projects\n## Work\n- #work #office\n1. [[32 - Product Ownership]]\n## Home\n- #home\n1. [[42 - House Reno]]\n## Someday\n1. [[50 - Read list]]\n";
+        let content = "# P #np-projects\n## Work\n- #work #office\n1. [[32 - Product \
+                       Ownership]]\n## Home\n- #home\n1. [[42 - House Reno]]\n## Someday\n1. [[50 \
+                       - Read list]]\n";
         let store = store_with(content, "Notes/_NotePlan Organizer/P.md");
         let ctrl = parse_project_control(&store).unwrap();
         assert_eq!(ctrl.contexts.len(), 3);
@@ -274,7 +276,8 @@ mod tests {
 
     #[test]
     fn test_context_tags_accessor() {
-        let content = "# P #np-projects\n## Work\n- #work\n1. [[32 - Product Ownership]]\n## Home\n1. [[42 - House Reno]]\n";
+        let content = "# P #np-projects\n## Work\n- #work\n1. [[32 - Product Ownership]]\n## \
+                       Home\n1. [[42 - House Reno]]\n";
         let store = store_with(content, "Notes/_NotePlan Organizer/P.md");
         let got = context_tags(&store);
         assert_eq!(got.len(), 2);
@@ -284,7 +287,9 @@ mod tests {
 
     #[test]
     fn test_parse_contexts_ordered() {
-        let content = "# Project Priorities #np-projects\n\n## Work\n1. [[32 - Product Ownership]]\n2. [[35 - Platform Migration]]\n\n## Home\n1. [[42 - House Reno]]\n";
+        let content = "# Project Priorities #np-projects\n\n## Work\n1. [[32 - Product \
+                       Ownership]]\n2. [[35 - Platform Migration]]\n\n## Home\n1. [[42 - House \
+                       Reno]]\n";
         let store = store_with(content, "Notes/_NotePlan Organizer/Project Priorities.md");
         let ctrl = parse_project_control(&store).expect("control note found by tag");
         assert_eq!(ctrl.contexts.len(), 2);

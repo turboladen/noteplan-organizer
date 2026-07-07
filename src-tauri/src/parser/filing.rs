@@ -1,6 +1,8 @@
-use crate::analyzer::HUB_SECTIONS;
-use crate::models::{FilingTarget, NoteKind};
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::HUB_SECTIONS,
+    models::{FilingTarget, NoteKind},
+    parser::NoteStore,
+};
 
 /// Build a list of filing targets from the note store.
 ///

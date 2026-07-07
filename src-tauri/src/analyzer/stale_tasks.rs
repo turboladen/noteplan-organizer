@@ -1,6 +1,8 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, FixAction, NoteKind, Severity, TaskState};
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, FixAction, NoteKind, Severity, TaskState},
+    parser::NoteStore,
+};
 use chrono::{Local, NaiveDate};
 
 pub struct StaleTaskAnalyzer;

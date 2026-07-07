@@ -7,8 +7,10 @@
 //! fetched via MCP `get_note`, so a stale cache can never mis-target a write.
 
 use crate::parser::NoteStore;
-use std::sync::RwLock;
-use std::time::{Duration, Instant};
+use std::{
+    sync::RwLock,
+    time::{Duration, Instant},
+};
 
 /// Cached parse of the vault, populated by scans (`perform_scan` / watcher) and
 /// patched in place after the app's own writes. Board/backlog reads use it to

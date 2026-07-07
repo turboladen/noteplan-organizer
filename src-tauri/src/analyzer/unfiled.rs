@@ -1,6 +1,8 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, NoteKind, Severity};
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, NoteKind, Severity},
+    parser::NoteStore,
+};
 
 pub struct UnfiledSlipAnalyzer;
 

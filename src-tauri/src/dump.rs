@@ -2,11 +2,17 @@
 //!
 //! Used by both the CLI binary (`bin/dump.rs`) and the Tauri `system_dump` command.
 
-use crate::models::NoteKind;
-use crate::parser::hierarchy::{build_hierarchy, JdNode};
-use crate::parser::NoteStore;
-use std::collections::{BTreeMap, HashMap};
-use std::fmt::Write;
+use crate::{
+    models::NoteKind,
+    parser::{
+        hierarchy::{build_hierarchy, JdNode},
+        NoteStore,
+    },
+};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Write,
+};
 
 /// Generate the full system assessment dump as a string.
 pub fn generate_dump(store: &NoteStore, path: &str) -> String {

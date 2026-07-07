@@ -1,7 +1,8 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, Severity};
-use crate::parser::hierarchy::build_hierarchy;
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, Severity},
+    parser::{hierarchy::build_hierarchy, NoteStore},
+};
 
 pub struct AreaBalanceAnalyzer;
 
@@ -25,16 +26,16 @@ impl Analyzer for AreaBalanceAnalyzer {
                     severity: Severity::Warning,
                     category: FindingCategory::AreaBalance,
                     file_path: format!("Notes/{}", area.folder_name),
-                    description: format!(
-                        "Area '{}' has no notes",
-                        area.folder_name
-                    ),
+                    description: format!("Area '{}' has no notes", area.folder_name),
                     suggestion: Some(
-                        "Consider removing this area or populating it. Empty areas add navigational overhead.".to_string(),
+                        "Consider removing this area or populating it. Empty areas add \
+                         navigational overhead."
+                            .to_string(),
                     ),
                     line_number: None,
                     context: None,
-                    is_folder: true, fix_action: None,
+                    is_folder: true,
+                    fix_action: None,
                 });
             } else if avg > 0.0 && (count as f64) > avg * 3.0 {
                 findings.push(Finding {
@@ -42,18 +43,22 @@ impl Analyzer for AreaBalanceAnalyzer {
                     category: FindingCategory::AreaBalance,
                     file_path: format!("Notes/{}", area.folder_name),
                     description: format!(
-                        "Area '{}' has {} notes (average is {:.0}) — significantly larger than other areas",
+                        "Area '{}' has {} notes (average is {:.0}) — significantly larger than \
+                         other areas",
                         area.folder_name, count, avg
                     ),
                     suggestion: Some(
-                        "Consider splitting this area into more focused sub-areas or moving some categories elsewhere.".to_string(),
+                        "Consider splitting this area into more focused sub-areas or moving some \
+                         categories elsewhere."
+                            .to_string(),
                     ),
                     line_number: None,
                     context: Some(format!(
                         "{} categories, {} notes total",
                         area.category_count, count
                     )),
-                    is_folder: true, fix_action: None,
+                    is_folder: true,
+                    fix_action: None,
                 });
             }
         }

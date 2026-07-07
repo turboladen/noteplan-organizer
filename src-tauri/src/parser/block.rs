@@ -201,7 +201,8 @@ mod tests {
 
     #[test]
     fn test_basic_headed_sections() {
-        let content = "# 20260316\n## Meeting Notes\n- Discussed roadmap\n- Action items\n## Tasks\n* Review PR #work\n";
+        let content = "# 20260316\n## Meeting Notes\n- Discussed roadmap\n- Action items\n## \
+                       Tasks\n* Review PR #work\n";
         let blocks = extract_content_blocks(content);
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].kind, BlockKind::Heading);
@@ -231,7 +232,8 @@ mod tests {
 
     #[test]
     fn test_mixed_content() {
-        let content = "# 20260316\nA loose thought.\n\n* Task one\n* Task two\n\n## Project X\nNotes about project X.\n[[Project X Hub]]\n";
+        let content = "# 20260316\nA loose thought.\n\n* Task one\n* Task two\n\n## Project \
+                       X\nNotes about project X.\n[[Project X Hub]]\n";
         let blocks = extract_content_blocks(content);
         assert_eq!(blocks.len(), 3);
         assert_eq!(blocks[0].kind, BlockKind::Paragraph);
@@ -258,7 +260,8 @@ mod tests {
 
     #[test]
     fn test_nested_headings_stay_grouped() {
-        let content = "# Daily\n## Project X\n### Design\nDesign notes\n### Implementation\nImpl notes\n## Other\nStuff\n";
+        let content = "# Daily\n## Project X\n### Design\nDesign notes\n### Implementation\nImpl \
+                       notes\n## Other\nStuff\n";
         let blocks = extract_content_blocks(content);
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].heading.as_deref(), Some("Project X"));

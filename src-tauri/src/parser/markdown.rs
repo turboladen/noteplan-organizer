@@ -1,8 +1,9 @@
-use crate::models::{Note, NoteKind, Section};
-use crate::parser::{extract_wiki_links, parse_note_id, parse_tasks};
+use crate::{
+    models::{Note, NoteKind, Section},
+    parser::{extract_wiki_links, parse_note_id, parse_tasks},
+};
 use regex::Regex;
-use std::path::Path;
-use std::sync::LazyLock;
+use std::{path::Path, sync::LazyLock};
 
 static HEADING_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(#{1,6})\s+(.+)$").unwrap());
 

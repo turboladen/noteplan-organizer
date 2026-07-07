@@ -1,13 +1,13 @@
-use std::path::Path;
-use std::sync::Mutex;
-use std::time::Duration;
+use std::{path::Path, sync::Mutex, time::Duration};
 
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::app_state::{NoteStoreCache, WriteSuppression};
-use crate::commands::perform_scan;
+use crate::{
+    app_state::{NoteStoreCache, WriteSuppression},
+    commands::perform_scan,
+};
 
 /// Event name emitted to the frontend on file-change rescans.
 /// Must match `SCAN_UPDATE_EVENT` in `src/types/api.ts`.

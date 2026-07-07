@@ -1,9 +1,10 @@
 use crate::parser::{clean_task_text, task_display_text, BACKLOG_TAG};
 use regex::Regex;
-use std::collections::hash_map::DefaultHasher;
-use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
-use std::sync::LazyLock;
+use std::{
+    collections::{hash_map::DefaultHasher, HashSet},
+    hash::{Hash, Hasher},
+    sync::LazyLock,
+};
 
 /// A planned mutation. By construction, content notes can ONLY be appended to
 /// (AppendBlockId); all delete/replace variants target the app-owned backlog
@@ -117,7 +118,8 @@ pub fn locate_unique_task_line(content: &str, expected: &str) -> Result<(usize, 
         if task_display_text(line).as_deref() == Some(expected) {
             if found.is_some() {
                 return Err(format!(
-                    "Ambiguous: multiple task lines match \"{}\" — cannot safely stamp. Disambiguate and retry.",
+                    "Ambiguous: multiple task lines match \"{}\" — cannot safely stamp. \
+                     Disambiguate and retry.",
                     expected
                 ));
             }
@@ -244,7 +246,8 @@ pub fn plan_reorder(
     have.sort();
     if want != have {
         return Err(format!(
-            "Reorder mismatch for \"{}\": provided ids do not match the section's current entries. Rescan and retry.",
+            "Reorder mismatch for \"{}\": provided ids do not match the section's current \
+             entries. Rescan and retry.",
             context
         ));
     }
@@ -358,7 +361,8 @@ mod tests {
         assert!(ops.is_empty(), "no write when already stamped");
     }
 
-    const BL: &str = "# Backlog #np-backlog\n## Work\n- [[Janet^a1b2c3]] Ship v2 spec\n- [[Ops^d4e5f6]] Review tix\n## Home\n- [[Reno^g7h8i9]] Call contractor\n";
+    const BL: &str = "# Backlog #np-backlog\n## Work\n- [[Janet^a1b2c3]] Ship v2 spec\n- \
+                      [[Ops^d4e5f6]] Review tix\n## Home\n- [[Reno^g7h8i9]] Call contractor\n";
 
     #[test]
     fn test_append_entry_after_last_item_in_section() {
@@ -453,7 +457,8 @@ mod tests {
     fn test_reorder_skips_hand_written_non_id_bullet() {
         // A hand-written bullet without a [[…^id]] must be left in place, and its
         // presence must not fail the reorder of the id-bearing entries.
-        let bl = "# B #np-backlog\n## Work\n- [[Janet^a1b2c3]] Ship\n- a plain hand-written note\n- [[Ops^d4e5f6]] Review\n";
+        let bl = "# B #np-backlog\n## Work\n- [[Janet^a1b2c3]] Ship\n- a plain hand-written \
+                  note\n- [[Ops^d4e5f6]] Review\n";
         let ops = plan_reorder(bl, "Work", &["d4e5f6".to_string(), "a1b2c3".to_string()]).unwrap();
         // Only the two id-bearing lines (3 and 5) are rewritten; line 4 untouched.
         assert_eq!(
@@ -497,7 +502,8 @@ mod tests {
     fn test_reorder_preserves_stale_entry_text() {
         // A stale (unresolved) entry keeps a real block id in the backlog line; a
         // reorder must preserve its ORIGINAL text, not blank it out.
-        let bl = "# B #np-backlog\n## Work\n- [[Gone^deadid1]] original stale text\n- [[Janet^a1b2c3]] Ship\n";
+        let bl = "# B #np-backlog\n## Work\n- [[Gone^deadid1]] original stale text\n- \
+                  [[Janet^a1b2c3]] Ship\n";
         let ops = plan_reorder(bl, "Work", &["a1b2c3".to_string(), "deadid1".to_string()]).unwrap();
         assert_eq!(
             ops,
@@ -532,9 +538,7 @@ mod tests {
         // A bare `-` list item is not a task; locate finds no matching task line,
         // so the stamp is refused (defends against stamping arbitrary content).
         let content = "# Janet\n- just a plain list item\n";
-        assert!(
-            plan_stamp_block_id(content, "Janet", "just a plain list item", &empty()).is_err()
-        );
+        assert!(plan_stamp_block_id(content, "Janet", "just a plain list item", &empty()).is_err());
     }
 
     #[test]

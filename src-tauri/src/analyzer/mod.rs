@@ -19,8 +19,7 @@ pub mod missing_hub;
 pub mod naming_inconsistency;
 pub mod stale_area;
 
-use crate::models::Finding;
-use crate::parser::NoteStore;
+use crate::{models::Finding, parser::NoteStore};
 
 /// Section headings that identify a note as a hub/index note.
 /// Shared between hub_completeness and missing_hub analyzers.

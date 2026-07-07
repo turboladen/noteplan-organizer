@@ -1,23 +1,20 @@
-use crate::analyzer::run_all_analyzers;
-use crate::app_state::{NoteStoreCache, WriteSuppression};
-use crate::backlog_write::{
-    plan_append_entry, plan_remove, plan_reorder, plan_stamp_block_id, WriteOp,
+use crate::{
+    analyzer::run_all_analyzers,
+    app_state::{NoteStoreCache, WriteSuppression},
+    backlog_write::{plan_append_entry, plan_remove, plan_reorder, plan_stamp_block_id, WriteOp},
+    config, dump, export,
+    mcp::{tools, tools::NoteAddr, McpState},
+    models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report},
+    parser::{
+        build_backlog, build_filing_targets, extract_content_blocks, match_blocks_to_targets,
+        matcher::FilingSuggestion, parse_note, scan_noteplan_dir, BacklogOptions, NoteStore,
+    },
 };
-use crate::config;
-use crate::dump;
-use crate::export;
-use crate::mcp::tools;
-use crate::mcp::tools::NoteAddr;
-use crate::mcp::McpState;
-use std::collections::HashSet;
-use crate::models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report};
-use crate::parser::matcher::FilingSuggestion;
-use crate::parser::{
-    build_backlog, build_filing_targets, extract_content_blocks, match_blocks_to_targets,
-    parse_note, scan_noteplan_dir, BacklogOptions, NoteStore,
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    time::{Duration, Instant},
 };
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
 use tauri::State;
 
 /// Validate that a file path is within the NotePlan data directory.
@@ -473,7 +470,8 @@ async fn fetch_note_strict(
     match tools::get_note(mcp, &resolved.addr).await {
         Ok(content) => Ok((content, resolved.addr.clone())),
         Err(e) => Err(format!(
-            "could not fetch the task's source note at {:?}: {} — the note may have moved since the last scan; rescan and retry",
+            "could not fetch the task's source note at {:?}: {} — the note may have moved since \
+             the last scan; rescan and retry",
             resolved.addr, e
         )),
     }
@@ -530,7 +528,12 @@ fn content_after_ops(content: &str, ops: &[WriteOp]) -> String {
 /// This is a READ cache patch only; a rare divergence (a concurrent user edit
 /// mid-write) just causes brief display staleness that the next real watcher
 /// event / manual scan corrects. Skips notes not uniquely in the cache.
-fn patch_cache_after_ops(cache: &NoteStoreCache, resolved: &ResolvedNote, pre_content: &str, ops: &[WriteOp]) {
+fn patch_cache_after_ops(
+    cache: &NoteStoreCache,
+    resolved: &ResolvedNote,
+    pre_content: &str,
+    ops: &[WriteOp],
+) {
     let Some((file_path, rel, kind)) = &resolved.patch else {
         return;
     };
@@ -673,8 +676,12 @@ pub async fn backlog_rank_task(
     let (backlog_content, backlog_addr) =
         fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
     let (source_content, source_addr) = fetch_note_strict(&mcp_state, &source).await?;
-    let (block_id, source_ops) =
-        plan_stamp_block_id(&source_content, &source_note_title, &expected_text, &existing)?;
+    let (block_id, source_ops) = plan_stamp_block_id(
+        &source_content,
+        &source_note_title,
+        &expected_text,
+        &existing,
+    )?;
     let entry = format!("- [[{}^{}]] {}", source_note_title, block_id, expected_text);
     let backlog_ops = plan_append_entry(&backlog_content, &context, &entry)?;
     let t_plan = t1.elapsed();
@@ -685,8 +692,7 @@ pub async fn backlog_rank_task(
     let t2 = Instant::now();
     let mut all_ops = source_ops.clone();
     all_ops.extend(backlog_ops.clone());
-    let write_result =
-        apply_ops(&mcp_state, &suppress, &source_addr, &backlog_addr, all_ops).await;
+    let write_result = apply_ops(&mcp_state, &suppress, &source_addr, &backlog_addr, all_ops).await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW); // cover the trailing debounce
     let t_write = t2.elapsed();
 
@@ -698,7 +704,8 @@ pub async fn backlog_rank_task(
         patch_cache_after_ops(&cache, &backlog, &backlog_content, &backlog_ops);
     }
     log::info!(
-        "rank timing: ids {t_ids:?}, mcp+plan {t_plan:?}, writes {t_write:?}, patch {:?}, total {:?} (source via {}, backlog via {})",
+        "rank timing: ids {t_ids:?}, mcp+plan {t_plan:?}, writes {t_write:?}, patch {:?}, total \
+         {:?} (source via {}, backlog via {})",
         t3.elapsed(),
         t0.elapsed(),
         source_addr.mode(),
@@ -725,13 +732,23 @@ pub async fn backlog_reorder(
     let (backlog_content, backlog_addr) =
         fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
     let ops = plan_reorder(&backlog_content, &context, &ordered_block_ids)?;
-    let write_result =
-        apply_ops(&mcp_state, &suppress, &backlog_addr, &backlog_addr, ops.clone()).await;
+    let write_result = apply_ops(
+        &mcp_state,
+        &suppress,
+        &backlog_addr,
+        &backlog_addr,
+        ops.clone(),
+    )
+    .await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
     if write_result.is_ok() {
         patch_cache_after_ops(&cache, &backlog, &backlog_content, &ops);
     }
-    log::info!("reorder total {:?} (backlog via {})", t0.elapsed(), backlog_addr.mode());
+    log::info!(
+        "reorder total {:?} (backlog via {})",
+        t0.elapsed(),
+        backlog_addr.mode()
+    );
     write_result
 }
 
@@ -750,24 +767,36 @@ pub async fn backlog_remove(
     let (backlog_content, backlog_addr) =
         fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
     let ops = plan_remove(&backlog_content, &context, &block_id)?;
-    let write_result =
-        apply_ops(&mcp_state, &suppress, &backlog_addr, &backlog_addr, ops.clone()).await;
+    let write_result = apply_ops(
+        &mcp_state,
+        &suppress,
+        &backlog_addr,
+        &backlog_addr,
+        ops.clone(),
+    )
+    .await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW);
     if write_result.is_ok() {
         patch_cache_after_ops(&cache, &backlog, &backlog_content, &ops);
     }
-    log::info!("remove total {:?} (backlog via {})", t0.elapsed(), backlog_addr.mode());
+    log::info!(
+        "remove total {:?} (backlog via {})",
+        t0.elapsed(),
+        backlog_addr.mode()
+    );
     write_result
 }
 
 #[cfg(test)]
 mod tests {
     use super::{content_after_ops, resolve_note_by_path, title_matches};
-    use crate::app_state::NoteStoreCache;
-    use crate::backlog_write::WriteOp;
-    use crate::mcp::tools::NoteAddr;
-    use crate::models::NoteKind;
-    use crate::parser::{parse_note, NoteStore};
+    use crate::{
+        app_state::NoteStoreCache,
+        backlog_write::WriteOp,
+        mcp::tools::NoteAddr,
+        models::NoteKind,
+        parser::{parse_note, NoteStore},
+    };
 
     #[test]
     fn test_content_after_ops_replace_insert_delete() {
@@ -823,7 +852,10 @@ mod tests {
         // The control-note cache title keeps the marker tag; the frontend sends
         // the stripped title. Both must match.
         assert!(title_matches("Backlog #np-backlog", "Backlog"));
-        assert!(title_matches("Project Priorities #np-projects", "Project Priorities"));
+        assert!(title_matches(
+            "Project Priorities #np-projects",
+            "Project Priorities"
+        ));
         // Exact (untagged) source-note titles still match, case-insensitively.
         assert!(title_matches("Design", "design"));
         // Different notes must NOT match.
@@ -860,7 +892,9 @@ mod tests {
             "expected Filename(\"Calendar/20260702.md\"), got {:?}",
             resolved.addr
         );
-        let (file_path, rel, _kind) = resolved.patch.expect("path in cache must yield a patch identity");
+        let (file_path, rel, _kind) = resolved
+            .patch
+            .expect("path in cache must yield a patch identity");
         assert_eq!(file_path, "/abs/Calendar/20260702.md");
         assert_eq!(rel, "Calendar/20260702.md");
     }

@@ -1,6 +1,8 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, NoteKind, Severity};
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, NoteKind, Severity},
+    parser::NoteStore,
+};
 use std::collections::HashMap;
 
 pub struct NamingInconsistencyAnalyzer;
@@ -114,7 +116,8 @@ impl Analyzer for NamingInconsistencyAnalyzer {
                             category: FindingCategory::NamingInconsistency,
                             file_path: format!("Notes/{}", folder),
                             description: format!(
-                                "Folder uses '{}' separator but most folders use '{}' — likely a typo",
+                                "Folder uses '{}' separator but most folders use '{}' — likely a \
+                                 typo",
                                 sep, majority_sep
                             ),
                             suggestion: Some(format!(
@@ -123,7 +126,8 @@ impl Analyzer for NamingInconsistencyAnalyzer {
                             )),
                             line_number: None,
                             context: None,
-                    is_folder: true, fix_action: None,
+                            is_folder: true,
+                            fix_action: None,
                         });
                     }
                 }

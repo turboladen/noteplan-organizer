@@ -2,12 +2,16 @@
 //! into Claude.ai or Claude Code, enabling AI-powered assessment of the user's
 //! NotePlan organizational system.
 
-use crate::analyzer::run_all_analyzers;
-use crate::dump;
-use crate::models::{Finding, FindingCategory};
-use crate::parser::NoteStore;
-use std::collections::{HashSet, VecDeque};
-use std::fmt::Write;
+use crate::{
+    analyzer::run_all_analyzers,
+    dump,
+    models::{Finding, FindingCategory},
+    parser::NoteStore,
+};
+use std::{
+    collections::{HashSet, VecDeque},
+    fmt::Write,
+};
 
 /// Maximum output size in bytes (~200KB fits comfortably in a Claude context window).
 const MAX_OUTPUT_BYTES: usize = 200_000;
@@ -98,7 +102,9 @@ fn build_guide_section(store: &NoteStore, guide_title: Option<&str>) -> String {
     let entry_idx = find_guide_entry(store, guide_title);
 
     let Some(entry_idx) = entry_idx else {
-        return "No system guide note found. Create a note with 'System Guide' in the title to include your organizational conventions in future exports.\n".to_string();
+        return "No system guide note found. Create a note with 'System Guide' in the title to \
+                include your organizational conventions in future exports.\n"
+            .to_string();
     };
 
     let linked = collect_linked_notes(store, entry_idx);
@@ -208,7 +214,9 @@ fn build_flagged_section(store: &NoteStore, findings: &[Finding]) -> String {
     flagged.truncate(MAX_FLAGGED_NOTES);
 
     if flagged.is_empty() {
-        return "No flagged notes found. All notes appear to be well-organized according to the automated checks.\n".to_string();
+        return "No flagged notes found. All notes appear to be well-organized according to the \
+                automated checks.\n"
+            .to_string();
     }
 
     let mut section = String::new();
@@ -275,8 +283,7 @@ fn enforce_budget(output: &mut String) {
     }
 
     output.push_str(
-        "\n[...output truncated to fit context window budget. \
-         Some flagged notes were omitted. Re-run with fewer findings to see all.]\n\
-         </flagged_notes>\n",
+        "\n[...output truncated to fit context window budget. Some flagged notes were omitted. \
+         Re-run with fewer findings to see all.]\n</flagged_notes>\n",
     );
 }

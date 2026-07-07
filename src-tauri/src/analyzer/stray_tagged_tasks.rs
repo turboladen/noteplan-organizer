@@ -1,8 +1,10 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, NoteKind, Severity, TaskState};
-use crate::parser::{
-    is_excluded_relative, is_under_folder, parse_project_control, resolve_context_projects,
-    tag_scoped_by, NoteStore,
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, NoteKind, Severity, TaskState},
+    parser::{
+        is_excluded_relative, is_under_folder, parse_project_control, resolve_context_projects,
+        tag_scoped_by, NoteStore,
+    },
 };
 use std::collections::HashSet;
 
@@ -87,12 +89,14 @@ impl Analyzer for StrayTaggedTaskAnalyzer {
                 category: FindingCategory::StrayTaggedTask,
                 file_path: note.relative_path.clone(),
                 description: format!(
-                    "{} tagged task(s) here match a context but this note isn't in a tracked project: {}",
+                    "{} tagged task(s) here match a context but this note isn't in a tracked \
+                     project: {}",
                     stray.len(),
                     truncate(&sample.join("; "), 100)
                 ),
                 suggestion: Some(
-                    "Add this note's folder to #np-projects so its tasks join a context.".to_string(),
+                    "Add this note's folder to #np-projects so its tasks join a context."
+                        .to_string(),
                 ),
                 line_number: Some(stray[0].0),
                 context: Some(sample.join("\n")),

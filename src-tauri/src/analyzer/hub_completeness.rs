@@ -1,6 +1,8 @@
-use crate::analyzer::{Analyzer, HUB_SECTIONS};
-use crate::models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity};
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::{Analyzer, HUB_SECTIONS},
+    models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity},
+    parser::NoteStore,
+};
 
 pub struct HubCompletenessAnalyzer;
 

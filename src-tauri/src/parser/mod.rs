@@ -38,8 +38,7 @@ pub fn is_excluded_relative(relative_path: &str) -> bool {
 }
 
 use crate::models::{Note, NoteKind};
-use std::collections::HashMap;
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 use walkdir::WalkDir;
 
 /// A collection of all parsed notes, indexed by relative path and title.

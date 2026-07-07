@@ -93,7 +93,9 @@ pub fn parse_task_line(line: &str) -> Option<ParsedTaskLine> {
 
     let (text, priority, block_id) = clean_task_text(&caps[2]);
     let scheduled_to = SCHEDULED_TO_RE.captures(&text).map(|c| c[1].to_string());
-    let rescheduled_from = RESCHEDULED_FROM_RE.captures(&text).map(|c| c[1].to_string());
+    let rescheduled_from = RESCHEDULED_FROM_RE
+        .captures(&text)
+        .map(|c| c[1].to_string());
     let tags: Vec<String> = TAG_RE
         .captures_iter(&text)
         .map(|c| c[1].to_string())
@@ -210,13 +212,19 @@ mod tests {
     fn test_priority_clamped_and_stripped() {
         let t = &parse_tasks("* !!!! Big deal")[0];
         assert_eq!(t.priority, 3, "4+ bangs clamp to 3");
-        assert_eq!(t.text, "Big deal", "priority marker stripped from display text");
+        assert_eq!(
+            t.text, "Big deal",
+            "priority marker stripped from display text"
+        );
     }
 
     #[test]
     fn test_priority_ignores_word_attached_bang() {
         let t = &parse_tasks("* Ship it! today")[0];
-        assert_eq!(t.priority, 0, "a bang glued to a word is not a priority marker");
+        assert_eq!(
+            t.priority, 0,
+            "a bang glued to a word is not a priority marker"
+        );
         assert_eq!(t.text, "Ship it! today");
     }
 
@@ -225,7 +233,10 @@ mod tests {
         let t = &parse_tasks("* Ship v2 spec !! ^a1b2c3")[0];
         assert_eq!(t.block_id.as_deref(), Some("a1b2c3"));
         assert_eq!(t.priority, 2);
-        assert_eq!(t.text, "Ship v2 spec", "both markers stripped from display text");
+        assert_eq!(
+            t.text, "Ship v2 spec",
+            "both markers stripped from display text"
+        );
     }
 
     #[test]

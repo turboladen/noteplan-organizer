@@ -1,9 +1,10 @@
-use rmcp::model::{CallToolRequestParams, CallToolResult};
-use rmcp::service::{RoleClient, RunningService, ServiceExt};
-use rmcp::transport::{ConfigureCommandExt, TokioChildProcess};
+use rmcp::{
+    model::{CallToolRequestParams, CallToolResult},
+    service::{RoleClient, RunningService, ServiceExt},
+    transport::{ConfigureCommandExt, TokioChildProcess},
+};
 use std::sync::Arc;
-use tokio::process::Command;
-use tokio::sync::Mutex;
+use tokio::{process::Command, sync::Mutex};
 
 /// The concrete type of the running MCP client service.
 /// `()` is the "no-op" client handler — we only need to call tools, not handle server requests.

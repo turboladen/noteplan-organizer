@@ -1,6 +1,8 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity};
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity},
+    parser::NoteStore,
+};
 use std::collections::HashMap;
 
 pub struct IdConsistencyAnalyzer;
@@ -44,12 +46,14 @@ impl Analyzer for IdConsistencyAnalyzer {
                         file_path: note.relative_path.clone(),
                         description: "Hub note uses bare '00' without a hub suffix".to_string(),
                         suggestion: Some(
-                            "Rename to '00.PH' (Project Hub), '00.DH' (Domain Hub), or '00.RH' (Reference Hub) for fuzzy-find clarity"
+                            "Rename to '00.PH' (Project Hub), '00.DH' (Domain Hub), or '00.RH' \
+                             (Reference Hub) for fuzzy-find clarity"
                                 .to_string(),
                         ),
                         line_number: None,
                         context: Some(format!("Note title: {}", note.title)),
-                        is_folder: false, fix_action: None,
+                        is_folder: false,
+                        fix_action: None,
                     });
                 }
 
@@ -73,12 +77,15 @@ impl Analyzer for IdConsistencyAnalyzer {
                                             note_id
                                         ),
                                         suggestion: Some(format!(
-                                            "Consider renaming to a sequential ID (e.g., '01', '02') — notes no longer need to match their parent folder's ID '{}'",
+                                            "Consider renaming to a sequential ID (e.g., '01', \
+                                             '02') — notes no longer need to match their parent \
+                                             folder's ID '{}'",
                                             parent_id
                                         )),
                                         line_number: None,
                                         context: None,
-                                        is_folder: false, fix_action: None,
+                                        is_folder: false,
+                                        fix_action: None,
                                     });
                                 }
                             }

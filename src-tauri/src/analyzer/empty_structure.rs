@@ -1,6 +1,8 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, NoteKind, Severity};
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, NoteKind, Severity},
+    parser::NoteStore,
+};
 use std::collections::HashMap;
 
 pub struct EmptyStructureAnalyzer;
@@ -64,11 +66,14 @@ impl Analyzer for EmptyStructureAnalyzer {
                         folder_name
                     ),
                     suggestion: Some(
-                        "Consider moving the note to its parent folder. Create sub-folders only when you have 3+ related notes.".to_string(),
+                        "Consider moving the note to its parent folder. Create sub-folders only \
+                         when you have 3+ related notes."
+                            .to_string(),
                     ),
                     line_number: None,
                     context: None,
-                    is_folder: true, fix_action: None,
+                    is_folder: true,
+                    fix_action: None,
                 });
             }
         }

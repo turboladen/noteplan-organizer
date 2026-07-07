@@ -1,7 +1,8 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, Severity};
-use crate::parser::hierarchy::build_hierarchy;
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, Severity},
+    parser::{hierarchy::build_hierarchy, NoteStore},
+};
 
 pub struct DepthInconsistencyAnalyzer;
 
@@ -24,11 +25,14 @@ impl Analyzer for DepthInconsistencyAnalyzer {
                         area.folder_name, area.max_depth, MAX_RECOMMENDED_DEPTH
                     ),
                     suggestion: Some(
-                        "Deep nesting makes IDs long and navigation harder. Consider flattening by merging leaf folders into their parents.".to_string(),
+                        "Deep nesting makes IDs long and navigation harder. Consider flattening \
+                         by merging leaf folders into their parents."
+                            .to_string(),
                     ),
                     line_number: None,
                     context: None,
-                    is_folder: true, fix_action: None,
+                    is_folder: true,
+                    fix_action: None,
                 });
             }
         }
@@ -54,11 +58,14 @@ impl Analyzer for DepthInconsistencyAnalyzer {
                         min, max
                     ),
                     suggestion: Some(
-                        "Consistent depth across areas makes the system more predictable and easier to navigate.".to_string(),
+                        "Consistent depth across areas makes the system more predictable and \
+                         easier to navigate."
+                            .to_string(),
                     ),
                     line_number: None,
                     context: None,
-                    is_folder: true, fix_action: None,
+                    is_folder: true,
+                    fix_action: None,
                 });
             }
         }

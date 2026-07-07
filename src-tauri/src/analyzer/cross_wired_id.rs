@@ -1,6 +1,8 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity};
-use crate::parser::{parse_jd_id, NoteStore};
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, NoteIdKind, NoteKind, Severity},
+    parser::{parse_jd_id, NoteStore},
+};
 
 pub struct CrossWiredIdAnalyzer;
 
@@ -77,12 +79,14 @@ impl Analyzer for CrossWiredIdAnalyzer {
                         note_id, area_folder, deepest_ancestor
                     ),
                     suggestion: Some(format!(
-                        "Either move this note to the folder matching ID '{}' or update its ID to start with '{}'.",
+                        "Either move this note to the folder matching ID '{}' or update its ID to \
+                         start with '{}'.",
                         note_id, deepest_ancestor
                     )),
                     line_number: None,
                     context: Some(format!("Note title: {}", note.title)),
-                    is_folder: false, fix_action: None,
+                    is_folder: false,
+                    fix_action: None,
                 });
             }
         }

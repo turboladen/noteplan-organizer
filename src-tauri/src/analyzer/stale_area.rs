@@ -1,8 +1,9 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, NoteKind, Severity};
-use crate::parser::NoteStore;
-use std::collections::HashMap;
-use std::time::SystemTime;
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, NoteKind, Severity},
+    parser::NoteStore,
+};
+use std::{collections::HashMap, time::SystemTime};
 
 pub struct StaleAreaAnalyzer;
 
@@ -69,11 +70,14 @@ impl Analyzer for StaleAreaAnalyzer {
                             area, days
                         ),
                         suggestion: Some(
-                            "Consider archiving this area if it's no longer active, or review whether its notes are still relevant.".to_string(),
+                            "Consider archiving this area if it's no longer active, or review \
+                             whether its notes are still relevant."
+                                .to_string(),
                         ),
                         line_number: None,
                         context: Some(format_system_time(*latest)),
-                    is_folder: true, fix_action: None,
+                        is_folder: true,
+                        fix_action: None,
                     });
                 } else if days > QUIET_DAYS {
                     findings.push(Finding {
@@ -85,11 +89,14 @@ impl Analyzer for StaleAreaAnalyzer {
                             area, days
                         ),
                         suggestion: Some(
-                            "This area has been quiet. Check if there are notes that should be updated or archived.".to_string(),
+                            "This area has been quiet. Check if there are notes that should be \
+                             updated or archived."
+                                .to_string(),
                         ),
                         line_number: None,
                         context: Some(format_system_time(*latest)),
-                    is_folder: true, fix_action: None,
+                        is_folder: true,
+                        fix_action: None,
                     });
                 }
             }

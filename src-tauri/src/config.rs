@@ -3,9 +3,11 @@ use std::path::PathBuf;
 /// Known NotePlan storage locations on macOS.
 const NOTEPLAN_PATHS: &[&str] = &[
     // App Store version
-    "Library/Containers/co.noteplan.NotePlan3/Data/Library/Application Support/co.noteplan.NotePlan3",
+    "Library/Containers/co.noteplan.NotePlan3/Data/Library/Application \
+     Support/co.noteplan.NotePlan3",
     // Setapp version
-    "Library/Containers/co.noteplan.NotePlan-setapp/Data/Library/Application Support/co.noteplan.NotePlan-setapp",
+    "Library/Containers/co.noteplan.NotePlan-setapp/Data/Library/Application \
+     Support/co.noteplan.NotePlan-setapp",
     // iCloud Drive
     "Library/Mobile Documents/iCloud~co~noteplan~NotePlan3/Documents",
 ];

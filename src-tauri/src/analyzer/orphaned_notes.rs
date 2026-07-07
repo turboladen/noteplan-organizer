@@ -1,6 +1,8 @@
-use crate::analyzer::Analyzer;
-use crate::models::{Finding, FindingCategory, NoteKind, Severity};
-use crate::parser::NoteStore;
+use crate::{
+    analyzer::Analyzer,
+    models::{Finding, FindingCategory, NoteKind, Severity},
+    parser::NoteStore,
+};
 use std::collections::HashSet;
 
 pub struct OrphanedNoteAnalyzer;
@@ -52,12 +54,14 @@ impl Analyzer for OrphanedNoteAnalyzer {
                     file_path: note.relative_path.clone(),
                     description: format!("Orphaned note: no other notes link to '{}'", note.title),
                     suggestion: Some(
-                        "Consider adding a [[link]] to this note from a relevant hub note or daily note"
+                        "Consider adding a [[link]] to this note from a relevant hub note or \
+                         daily note"
                             .to_string(),
                     ),
                     line_number: None,
                     context: None,
-                    is_folder: false, fix_action: None,
+                    is_folder: false,
+                    fix_action: None,
                 });
             }
         }
