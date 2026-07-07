@@ -90,7 +90,7 @@ Add these tests to the `#[cfg(test)] mod tests` block in `projects.rs`:
     }
 ```
 
-Also update the two existing tuple-based tests to the struct fields:
+Also update the two existing tuple-based tests to the struct fields. **Do NOT touch `test_context_folder_projects_ranks_and_titles`** — it reads `context_folder_projects`'s own tuple output, whose type is unchanged, so it must stay as-is:
 
 ```rust
     #[test]
