@@ -166,7 +166,10 @@ inline Reconnect affordances in write views. The string "MCP" must not appear
 in user-facing UI copy — say "NotePlan connection".
 
 **Analyzer pattern**: To add a new analyzer, create a module in `src-tauri/src/analyzer/`, implement
-the `Analyzer` trait, and register it in `run_all_analyzers()` in `analyzer/mod.rs`.
+the `Analyzer` trait, and register it in `run_all_analyzers()` in `analyzer/mod.rs`. A new
+`FindingCategory` variant also needs `types/api.ts`: the union **plus** `CATEGORY_LABELS`,
+`CATEGORY_ICONS`, and `CATEGORY_BADGE_STYLES` (the three `Record<FindingCategory, …>` maps are
+exhaustive — `tsc` fails until all three are updated).
 
 **IPC type sync**: Rust `Finding`/`Report` structs serialize to JSON via serde. The matching
 TypeScript types in `types/api.ts` must be kept in sync manually — there's no codegen step.
