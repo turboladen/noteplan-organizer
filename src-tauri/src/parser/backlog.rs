@@ -340,6 +340,7 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
             name: name.clone(),
             ranked,
             pool,
+            tags: declared_tags,
         });
     }
 

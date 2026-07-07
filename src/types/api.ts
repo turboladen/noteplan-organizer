@@ -125,6 +125,7 @@ export interface BacklogContext {
   name: string;
   ranked: RankedTask[];
   pool: PoolTask[];
+  tags: string[];
 }
 
 export interface Backlog {

@@ -65,6 +65,7 @@ pub struct BacklogContext {
     pub name: String,
     pub ranked: Vec<RankedTask>,
     pub pool: Vec<PoolTask>,
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +78,18 @@ pub struct Backlog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_backlog_context_tags_serialize() {
+        let ctx = BacklogContext {
+            name: "Work".to_string(),
+            ranked: vec![],
+            pool: vec![],
+            tags: vec!["work".to_string(), "office".to_string()],
+        };
+        let json = serde_json::to_string(&ctx).unwrap();
+        assert!(json.contains("\"tags\":[\"work\",\"office\"]"));
+    }
 
     #[test]
     fn test_backlog_serializes() {
