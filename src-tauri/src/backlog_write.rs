@@ -25,8 +25,6 @@ pub enum WriteOp {
     InsertBacklogLine { line: usize, text: String },
     /// Replace a line in the BACKLOG note (app-owned).
     ReplaceBacklogLine { line: usize, text: String },
-    /// Delete a line in the BACKLOG note (app-owned).
-    DeleteBacklogLine { line: usize },
 }
 
 impl WriteOp {
@@ -270,21 +268,54 @@ pub fn plan_reorder(
         .collect()
 }
 
+/// Text a removed ranked entry's line is overwritten WITH. Removing never
+/// deletes a line (the NotePlan MCP now rejects `delete_lines` without a
+/// confirmationToken, and upstream `dryRun`/token flow is BROKEN — see
+/// CLAUDE.md); instead we overwrite the line in place via `edit_line`
+/// (`ReplaceBacklogLine`), which needs no token. A NON-EMPTY HTML comment (not a
+/// blank line) is used so `edit_line` unconditionally replaces the line in
+/// place: it can neither reject the write as empty content nor collapse the
+/// emptied line, so the "one-line, never removes/shifts" invariant holds
+/// regardless of how the server handles empty content. IGNORED by the reader
+/// (`ENTRY_RE` needs a list-leader + `[[…^id]]`, `HEADING_RE` needs `##`, and it
+/// has no `#` so it can't be miscounted as the `#np-backlog` tag) and by reorder
+/// (`ITEM_RE`).
+const TOMBSTONE: &str = "<!-- np-backlog: removed -->";
+
+/// Remove a ranked entry from the app-owned backlog note by overwriting its line
+/// with a tombstone marker, never deleting it. Data-safety: this only ever
+/// touches the `#np-backlog` control note (ownership-gated) and is strictly a
+/// one-line, in-place overwrite. Aborts (Err) on 0 matches OR >1 matches for
+/// `block_id`, mirroring `locate_unique_task_line`'s 0/>1 posture — never guess
+/// which of two identically-id'd lines to tombstone.
 pub fn plan_remove(content: &str, context: &str, block_id: &str) -> Result<Vec<WriteOp>, String> {
     ensure_backlog_note(content)?;
     let (_hl, items) = section_item_lines(content, context)?;
     let lines: Vec<&str> = content.lines().collect();
-    for &line in &items {
-        if let Some(c) = ITEM_ID_RE.captures(lines[line - 1]) {
-            if &c[1] == block_id {
-                return Ok(vec![WriteOp::DeleteBacklogLine { line }]);
-            }
-        }
+    let matches: Vec<usize> = items
+        .iter()
+        .copied()
+        .filter(|&line| {
+            ITEM_ID_RE
+                .captures(lines[line - 1])
+                .is_some_and(|c| &c[1] == block_id)
+        })
+        .collect();
+    match matches.as_slice() {
+        [line] => Ok(vec![WriteOp::ReplaceBacklogLine {
+            line: *line,
+            text: TOMBSTONE.to_string(),
+        }]),
+        [] => Err(format!(
+            "Block ID {} not found in backlog context \"{}\".",
+            block_id, context
+        )),
+        _ => Err(format!(
+            "Ambiguous: multiple backlog entries in context \"{}\" carry block ID {} — refusing \
+             to guess which to remove.",
+            context, block_id
+        )),
     }
-    Err(format!(
-        "Block ID {} not found in backlog context \"{}\".",
-        block_id, context
-    ))
 }
 
 #[cfg(test)]
@@ -521,14 +552,31 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_deletes_matching_line() {
+    fn test_remove_tombstones_matching_line() {
+        // Remove overwrites the line in place (edit_line) rather than deleting
+        // it — no destructive `delete_lines` op, and the tombstone marker is
+        // ignored by the reader.
         let ops = plan_remove(BL, "Work", "d4e5f6").unwrap();
-        assert_eq!(ops, vec![WriteOp::DeleteBacklogLine { line: 4 }]);
+        assert_eq!(
+            ops,
+            vec![WriteOp::ReplaceBacklogLine {
+                line: 4,
+                text: TOMBSTONE.to_string()
+            }]
+        );
     }
 
     #[test]
     fn test_remove_missing_block_id_errs() {
         assert!(plan_remove(BL, "Work", "nomatch0").is_err());
+    }
+
+    #[test]
+    fn test_remove_aborts_on_ambiguous_block_id() {
+        // Two entries in the same section carry the same block id — refuse to
+        // guess which to blank (mirrors locate_unique_task_line's >1 abort).
+        let bl = "# B #np-backlog\n## Work\n- [[A^dupeid1]] first\n- [[B^dupeid1]] second\n";
+        assert!(plan_remove(bl, "Work", "dupeid1").is_err());
     }
 
     // --- Added safety-gap tests (beyond the plan) ---
@@ -639,6 +687,5 @@ mod tests {
             }
             .touches_content_note()
         );
-        assert!(!WriteOp::DeleteBacklogLine { line: 1 }.touches_content_note());
     }
 }

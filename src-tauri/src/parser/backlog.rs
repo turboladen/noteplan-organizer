@@ -502,6 +502,32 @@ mod tests {
     }
 
     #[test]
+    fn test_tombstoned_entry_ignored_by_reader() {
+        // The remove path overwrites a ranked line in place with a tombstone
+        // marker (`<!-- np-backlog: removed -->`) instead of deleting it. The
+        // reader must ignore both that marker AND a bare blank line: neither
+        // ENTRY_RE (needs a list-leader + [[…^id]]) nor HEADING_RE (needs ##)
+        // matches either, so survivors keep their order and the tombstone never
+        // ranks. (The `<!-- … -->` has no `#`, so it also can't be miscounted as
+        // the #np-backlog ownership tag.)
+        let backlog_note = parse_note(
+            "/b.md",
+            "Notes/_NotePlan Organizer/Backlog.md",
+            "# Backlog #np-backlog\n## Work\n1. [[A^aaaa11]] x\n<!-- np-backlog: removed \
+             -->\n\n1. [[C^cccc33]] z\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note(), backlog_note]);
+        let b = build_backlog(&st, &test_opts());
+        let ids: Vec<&str> = b.contexts[0]
+            .ranked
+            .iter()
+            .map(|r| r.block_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["aaaa11", "cccc33"]);
+    }
+
+    #[test]
     fn test_entry_id_is_first_ref_when_text_embeds_another() {
         // The entry's anchor is the FIRST [[…^id]]; a second block-ref embedded in
         // the entry text must not be mistaken for the id (must match the writer's
