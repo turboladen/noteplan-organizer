@@ -37,6 +37,8 @@ Notes/
   _attachments/stray.md          # EXCLUDED
 Calendar/
   20260701.md               # daily note; untagged task must NOT roll up; #home ^calh01 + #work ^calk01 drive tag-scoping test
+  20260702.md               # daily note; reschedule ghost: [>] Scheduled ^calrg1 — greyed hop, must NOT harvest
+  20260704.md               # daily note; live reschedule tail: Open ^calrl1 (<date back-ref) — must harvest
   2026-W27.md               # weekly note (YYYY-Wnn pattern); ^calw01, ^calw02
   2026-07.md                # monthly note (YYYY-MM pattern); ^calm01
   2026-Q3.md                # quarterly note (YYYY-Qn pattern); ^calq01
@@ -68,6 +70,12 @@ Calendar/
 - **Calendar-kind classification**: Weekly, Monthly, Quarterly, Yearly, and Daily
   notes classified correctly by filename pattern (YYYY-Wnn, YYYY-MM, YYYY-Qn,
   YYYY, YYYYMMDD).
+- **Reschedule ghosts**: rescheduling a task in NotePlan leaves a `[>]`
+  (`TaskState::Scheduled`) ghost in each hop's daily note and one live `Open`
+  tail. `build_backlog` harvests only live `Open` tasks from **calendar** notes,
+  so `20260702`'s ghost (`^calrg1`) must NOT surface while `20260704`'s live tail
+  (`^calrl1`) must. A `[>]` task in a project note is genuinely scheduled (not a
+  move-ghost) and is still harvested.
 
 ## Extending it
 

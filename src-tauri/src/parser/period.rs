@@ -23,7 +23,7 @@ pub fn calendar_period(kind: &NoteKind, relative_path: &str) -> Option<String> {
         NoteKind::Weekly | NoteKind::Monthly | NoteKind::Quarterly | NoteKind::Yearly => {
             Some(stem.to_string())
         }
-        _ => None,
+        NoteKind::Regular | NoteKind::Template => None,
     }
 }
 
