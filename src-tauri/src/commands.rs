@@ -495,8 +495,8 @@ async fn fetch_note_strict(
 /// Apply the line-level `ops` to `content` in memory, returning the post-write
 /// text. Used to patch the read cache locally (no MCP). Ops targeting one note
 /// are homogeneous per command (rank source = 1 replace; rank backlog = 1
-/// insert; reorder = N replaces; remove = 1 delete), so sequential 1-based
-/// application has no index-shift hazard.
+/// insert; reorder = N replaces; remove = 1 replace/tombstone), so sequential
+/// 1-based application has no index-shift hazard.
 fn content_after_ops(content: &str, ops: &[WriteOp]) -> String {
     let mut lines: Vec<String> = content.lines().map(String::from).collect();
     for op in ops {
@@ -522,11 +522,6 @@ fn content_after_ops(content: &str, ops: &[WriteOp]) -> String {
                 // it never affects disk. Confirm the server's at-line base in the
                 // manual smoke test.
                 lines.insert((line.saturating_sub(1)).min(lines.len()), text.clone());
-            }
-            WriteOp::DeleteBacklogLine { line } => {
-                if *line >= 1 && *line <= lines.len() {
-                    lines.remove(*line - 1);
-                }
             }
         }
     }
@@ -637,15 +632,6 @@ async fn apply_ops(
                     text
                 );
                 tools::replace_line(mcp, backlog_addr, line, &text).await?;
-            }
-            WriteOp::DeleteBacklogLine { line } => {
-                log::info!(
-                    "backlog[{}] via {}: delete line {}",
-                    scope,
-                    backlog_addr.mode(),
-                    line
-                );
-                tools::delete_line(mcp, backlog_addr, line).await?;
             }
         }
         // Re-arm from write COMPLETION so the trailing 2s debounce is covered even
@@ -782,6 +768,26 @@ pub async fn backlog_remove(
     let (backlog_content, backlog_addr) =
         fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
     let ops = plan_remove(&backlog_content, &context, &block_id)?;
+    // Audit the BEFORE-state: the executor only logs the tombstone marker it
+    // writes, so record the entry text being erased (with context + block id)
+    // for a complete before/after trail on the one op that removes visible
+    // content. Ops.first() is the sole ReplaceBacklogLine tombstone.
+    if let Some(WriteOp::ReplaceBacklogLine { line, .. }) = ops.first() {
+        // `line` is 1-based (section_item_lines yields `i + 1`); checked_sub keeps
+        // the audit log panic-proof even if a 0 ever reached here.
+        if let Some(removed) = line
+            .checked_sub(1)
+            .and_then(|i| backlog_content.lines().nth(i))
+        {
+            log::info!(
+                "remove: tombstoning backlog line {} (context {:?}, ^{}): {:?}",
+                line,
+                context,
+                block_id,
+                removed
+            );
+        }
+    }
     let write_result = apply_ops(
         &mcp_state,
         &suppress,
@@ -814,7 +820,7 @@ mod tests {
     };
 
     #[test]
-    fn test_content_after_ops_replace_insert_delete() {
+    fn test_content_after_ops_replace_insert() {
         // AppendBlockId = replace the located line with the additive text.
         assert_eq!(
             content_after_ops(
@@ -838,10 +844,19 @@ mod tests {
             ),
             "a\nX\nb\n"
         );
-        // Delete a line.
+        // ReplaceBacklogLine overwrites the line in place, never removing or
+        // shifting it — verified here with the degenerate empty text (the actual
+        // remove tombstone is a non-empty marker, but content_after_ops must
+        // preserve the line count for ANY replacement text).
         assert_eq!(
-            content_after_ops("a\nb\nc\n", &[WriteOp::DeleteBacklogLine { line: 2 }]),
-            "a\nc\n"
+            content_after_ops(
+                "a\nb\nc\n",
+                &[WriteOp::ReplaceBacklogLine {
+                    line: 2,
+                    text: "".into()
+                }]
+            ),
+            "a\n\nc\n"
         );
         // Reorder = replaces in place (no shift).
         assert_eq!(

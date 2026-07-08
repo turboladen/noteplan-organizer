@@ -271,19 +271,11 @@ pub async fn replace_line(
     parse_edit_response(&envelope)
 }
 
-/// Delete a single 1-based line from a note (`delete_lines`, one-line range).
-pub async fn delete_line(state: &McpState, addr: &NoteAddr, line: usize) -> McpResult<String> {
-    let mut args = json!({
-        "action": "delete_lines",
-        "startLine": line,
-        "endLine": line,
-    });
-    addr.inject(args.as_object_mut().expect("json object"));
-    let result = state.call_tool("noteplan_edit_content", args).await?;
-    let envelope = extract_text(&result);
-    assert_bridge_backend(&envelope, "delete_lines")?;
-    parse_edit_response(&envelope)
-}
+// NOTE: there is deliberately NO `delete_line` wrapper. The NotePlan MCP now
+// rejects `delete_lines` without a confirmationToken, and its `dryRun`/token
+// flow is BROKEN upstream (writes execute anyway — see CLAUDE.md), so we never
+// delete lines. The backlog "remove" path tombstones a line in place via
+// `replace_line` (`edit_line`) instead, keeping the write path non-destructive.
 
 // ---------------------------------------------------------------------------
 // noteplan_paragraphs (task operations)
