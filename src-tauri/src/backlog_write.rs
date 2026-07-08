@@ -268,8 +268,8 @@ pub fn plan_reorder(
         .collect()
 }
 
-/// Text a removed ranked entry's line is overwritten WITH. Removing never
-/// deletes a line (the NotePlan MCP now rejects `delete_lines` without a
+/// The text that a removed ranked entry's line is overwritten with. Removing
+/// never deletes a line (the NotePlan MCP now rejects `delete_lines` without a
 /// confirmationToken, and upstream `dryRun`/token flow is BROKEN — see
 /// CLAUDE.md); instead we overwrite the line in place via `edit_line`
 /// (`ReplaceBacklogLine`), which needs no token. A NON-EMPTY HTML comment (not a

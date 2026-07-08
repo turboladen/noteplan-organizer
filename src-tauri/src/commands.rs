@@ -758,7 +758,12 @@ pub async fn backlog_remove(
     // for a complete before/after trail on the one op that removes visible
     // content. Ops.first() is the sole ReplaceBacklogLine tombstone.
     if let Some(WriteOp::ReplaceBacklogLine { line, .. }) = ops.first() {
-        if let Some(removed) = backlog_content.lines().nth(line - 1) {
+        // `line` is 1-based (section_item_lines yields `i + 1`); checked_sub keeps
+        // the audit log panic-proof even if a 0 ever reached here.
+        if let Some(removed) = line
+            .checked_sub(1)
+            .and_then(|i| backlog_content.lines().nth(i))
+        {
             log::info!(
                 "remove: tombstoning backlog line {} (context {:?}, ^{}): {:?}",
                 line,
