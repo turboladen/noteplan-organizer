@@ -311,8 +311,15 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
                 continue;
             }
             for task in &note.tasks {
-                if !matches!(task.state, TaskState::Open | TaskState::Scheduled) {
-                    continue;
+                // Calendar notes: harvest only live Open tasks. Rescheduling in NotePlan leaves
+                // a `[>]` (TaskState::Scheduled) ghost in each hop's daily note; NotePlan greys
+                // those and renders only the final Open instance. Admitting Scheduled here would
+                // surface the entire reschedule chain (noteplan-organizer-vgv). A `[>]` task in a
+                // project note is genuinely scheduled, not a calendar move-ghost, so keep it.
+                match task.state {
+                    TaskState::Open => {}
+                    TaskState::Scheduled if !is_calendar => {}
+                    _ => continue,
                 }
                 if let Some(id) = &task.block_id {
                     if ranked_ids.contains(id) {
@@ -646,6 +653,40 @@ mod tests {
         // #work task in Work only; #home task in Home only; untagged in both.
         assert!(has(work, "caly01") && !has(work, "calx01") && has(work, "calz01"));
         assert!(has(home, "calx01") && !has(home, "caly01") && has(home, "calz01"));
+    }
+
+    #[test]
+    fn test_calendar_ghost_dropped_but_project_scheduled_kept() {
+        // A daily note carrying a reschedule chain: `[>]` ghost hop (^ghost1) plus
+        // the live `Open` tail (^live01). Only the live task should reach the pool.
+        // A Regular PROJECT note's `[>]` Scheduled task is genuinely scheduled work,
+        // not a calendar move-ghost, so it must still be harvested.
+        let daily = parse_note(
+            "/d.md",
+            "Calendar/20260703.md",
+            "# Day\n* [>] Fix the grill >2026-07-05 ^ghost1\n* Fix the grill <2026-07-03 ^live01\n",
+            NoteKind::Daily,
+        );
+        let work_note = parse_note(
+            "/w.md",
+            "Notes/32 - Product Ownership/32.01 - Janet.md",
+            "# Janet\n* [>] Ship v2 spec >2026-08-01 ^schd01\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note(), daily, work_note]);
+        let b = build_backlog(&st, &test_opts());
+        let work = b.contexts.iter().find(|c| c.name == "Work").unwrap();
+        let ids: Vec<&str> = work
+            .pool
+            .iter()
+            .filter_map(|t| t.block_id.as_deref())
+            .collect();
+        assert!(ids.contains(&"live01"), "live reschedule tail missing");
+        assert!(!ids.contains(&"ghost1"), "reschedule ghost leaked in");
+        assert!(
+            ids.contains(&"schd01"),
+            "project-note scheduled task must be kept"
+        );
     }
 
     #[test]

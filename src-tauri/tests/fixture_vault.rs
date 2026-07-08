@@ -42,7 +42,7 @@ fn task<'a>(n: &'a Note, text: &str) -> &'a Task {
 #[test]
 fn test_scan_note_counts_by_kind() {
     let store = load();
-    assert_eq!(store.notes.len(), 23, "total notes in fixture");
+    assert_eq!(store.notes.len(), 25, "total notes in fixture");
 
     let count = |k: fn(&NoteKind) -> bool| store.notes.iter().filter(|n| k(&n.kind)).count();
     assert_eq!(
@@ -55,7 +55,7 @@ fn test_scan_note_counts_by_kind() {
         1,
         "template note"
     );
-    assert_eq!(count(|k| matches!(k, NoteKind::Daily)), 2, "daily notes");
+    assert_eq!(count(|k| matches!(k, NoteKind::Daily)), 4, "daily notes");
     assert_eq!(count(|k| matches!(k, NoteKind::Weekly)), 1, "weekly note");
     assert_eq!(count(|k| matches!(k, NoteKind::Monthly)), 1, "monthly note");
     assert_eq!(
@@ -216,6 +216,29 @@ fn test_backlog_calendar_harvest_and_window() {
         .filter_map(|t| t.block_id.clone())
         .collect();
     assert!(pool_ids.contains(&"cald02".to_string()));
+}
+
+#[test]
+fn test_backlog_reschedule_chain_drops_scheduled_ghost() {
+    let store = load();
+    let b = build_backlog(&store, &test_opts());
+    for ctx in &b.contexts {
+        let ids: Vec<&str> = ctx
+            .pool
+            .iter()
+            .filter_map(|t| t.block_id.as_deref())
+            .collect();
+        assert!(
+            ids.contains(&"calrl1"),
+            "live reschedule tail missing from {}",
+            ctx.name
+        );
+        assert!(
+            !ids.contains(&"calrg1"),
+            "reschedule ghost leaked into {}",
+            ctx.name
+        );
+    }
 }
 
 #[test]

@@ -20,7 +20,7 @@ impl CalendarKind {
             NoteKind::Monthly => Some(Self::Monthly),
             NoteKind::Quarterly => Some(Self::Quarterly),
             NoteKind::Yearly => Some(Self::Yearly),
-            _ => None,
+            NoteKind::Regular | NoteKind::Template => None,
         }
     }
 }
