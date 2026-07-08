@@ -22,7 +22,9 @@ pub use projects::{
     Context, ProjectControl, context_folder_projects, context_folders, context_tags,
     parse_project_control,
 };
-pub(crate) use projects::{resolve_context_projects, tag_scoped_by};
+pub(crate) use projects::{
+    control_dir_sort_key, resolve_context_projects, resolve_folder_among, tag_scoped_by,
+};
 pub use task::{
     ParsedTaskLine, clean_task_text, is_task_line, parse_task_line, parse_tasks, task_display_text,
 };
@@ -38,8 +40,21 @@ pub fn is_excluded_relative(relative_path: &str) -> bool {
 }
 
 use crate::models::{Note, NoteKind};
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 use walkdir::WalkDir;
+
+/// The app's own control-note folder (holds `#np-projects` / `#np-backlog`).
+/// Matches the `_NotePlan Organizer` literal in `is_excluded_relative`.
+pub(crate) const CONTROL_DIR: &str = "Notes/_NotePlan Organizer";
+
+/// Whether a filesystem path is a NotePlan note file (`.md` or `.txt`). The one
+/// extension test shared by the full and scoped scans plus the calendar walk.
+fn is_note_file(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "md" || e == "txt")
+}
 
 /// A collection of all parsed notes, indexed by relative path and title.
 pub struct NoteStore {
@@ -115,7 +130,6 @@ impl NoteStore {
 pub fn scan_noteplan_dir(base_path: &str) -> NoteStore {
     let base = Path::new(base_path);
     let notes_dir = base.join("Notes");
-    let calendar_dir = base.join("Calendar");
 
     let mut notes = Vec::new();
 
@@ -123,7 +137,7 @@ pub fn scan_noteplan_dir(base_path: &str) -> NoteStore {
     if notes_dir.exists() {
         for entry in WalkDir::new(&notes_dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "md" || e == "txt") {
+            if is_note_file(path) {
                 if let Some(note) = parse_note_file(path, base, NoteKind::Regular) {
                     notes.push(note);
                 }
@@ -131,14 +145,27 @@ pub fn scan_noteplan_dir(base_path: &str) -> NoteStore {
         }
     }
 
-    // Parse calendar notes (daily, weekly, monthly)
+    // Parse calendar notes (daily, weekly, monthly, …).
+    notes.extend(parse_calendar_dir(base));
+
+    NoteStore::new(notes)
+}
+
+/// Parse every note file under `base/Calendar`, kind-classified. Shared by
+/// `scan_noteplan_dir` and `scan_scoped` so the two treat the calendar tree
+/// identically — no exclusion filter here (matching the full scan; excluded
+/// calendar notes are dropped later by `build_backlog`, so keeping them out of
+/// this shared helper would drift the two scans apart).
+fn parse_calendar_dir(base: &Path) -> Vec<Note> {
+    let calendar_dir = base.join("Calendar");
+    let mut notes = Vec::new();
     if calendar_dir.exists() {
         for entry in WalkDir::new(&calendar_dir)
             .into_iter()
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "md" || e == "txt") {
+            if is_note_file(path) {
                 let kind = classify_calendar_note(path);
                 if let Some(note) = parse_note_file(path, base, kind) {
                     notes.push(note);
@@ -146,8 +173,99 @@ pub fn scan_noteplan_dir(base_path: &str) -> NoteStore {
             }
         }
     }
+    notes
+}
 
-    NoteStore::new(notes)
+/// Scoped counterpart to `scan_noteplan_dir` for the cold-cache Board/Backlog
+/// read: parse only the notes those views can possibly surface — the control
+/// folder, every resolved project folder, and ALL of `Calendar/` — instead of
+/// the whole vault. Returns `None` when no `#np-projects` control note is found
+/// under `CONTROL_DIR`, so the caller can fall back to a full scan.
+///
+/// One known cold-path divergence vs a full scan (read-only display, self-
+/// correcting after a manual Rescan warms the cache into a full build; see bead
+/// noteplan-organizer-486):
+/// - D1: a ranked block-id whose task lives OUTSIDE every resolved project folder
+///   and outside `Calendar/` shows as stale under the scoped path (its note is
+///   never parsed). Unreachable via the app's own ranking flow — the app only
+///   ranks tasks it harvested from those same folders.
+///
+/// A stray second `#np-projects` note outside `CONTROL_DIR` is NOT a divergence:
+/// `parse_project_control` prefers the `CONTROL_DIR` note, so the scoped locate,
+/// the scoped build, and the full build all converge on the same control note.
+pub fn scan_scoped(base_path: &str) -> Option<NoteStore> {
+    let base = Path::new(base_path);
+    let notes_dir = base.join("Notes");
+
+    // 1. Collect note-file relative paths under Notes/ — paths only, no reads.
+    let mut note_paths: Vec<(std::path::PathBuf, String)> = Vec::new();
+    if notes_dir.exists() {
+        for entry in WalkDir::new(&notes_dir).into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if is_note_file(path) {
+                if let Ok(rel) = path.strip_prefix(base) {
+                    note_paths.push((path.to_path_buf(), rel.to_string_lossy().to_string()));
+                }
+            }
+        }
+    }
+
+    // 2. folder_universe: ancestor dirs of every NON-excluded note file (R1),
+    // reusing the same ancestor walk `resolve_folder` feeds its ranking core.
+    let mut folder_universe: HashSet<String> = HashSet::new();
+    for (_, rel) in &note_paths {
+        if is_excluded_relative(rel) {
+            continue;
+        }
+        folder_universe.extend(projects::ancestor_dirs(rel).map(str::to_string));
+    }
+
+    // 3. Parse just the control folder into a mini store; require #np-projects.
+    // CONTROL_DIR itself matches `is_excluded_relative` (via `_NotePlan
+    // Organizer`), so the exclusion filter is NOT applied here — the control
+    // notes must be parsed. R1's exclusion filter applies to the project-folder
+    // and calendar buckets below, not to the control folder.
+    let control_notes: Vec<Note> = note_paths
+        .iter()
+        .filter(|(_, rel)| is_under_folder(rel, CONTROL_DIR))
+        .filter_map(|(path, _)| parse_note_file(path, base, NoteKind::Regular))
+        .collect();
+    let control_store = NoteStore::new(control_notes);
+    let control = parse_project_control(&control_store)?;
+
+    // 4. Resolve every context ref to a folder within the known universe.
+    let mut resolved: HashSet<String> = HashSet::new();
+    for ctx in &control.contexts {
+        for r in &ctx.refs {
+            if let Some(folder) =
+                resolve_folder_among(folder_universe.iter().map(String::as_str), r)
+            {
+                resolved.insert(folder);
+            }
+        }
+    }
+
+    // 5. Final parse set: the already-parsed control notes (reused from step 3,
+    // not re-read) ∪ resolved project folders (Notes side), plus ALL of
+    // Calendar/. The project-folder bucket applies the R1 exclusion filter so a
+    // nested @Archive/@Trash note under a resolved folder is dropped — matching
+    // how build_backlog skips it anyway.
+    let mut notes: Vec<Note> = control_store.notes;
+    for (path, rel) in &note_paths {
+        if is_under_folder(rel, CONTROL_DIR) {
+            continue; // already parsed into the mini store above
+        }
+        let keep = !is_excluded_relative(rel) && resolved.iter().any(|f| is_under_folder(rel, f));
+        if keep {
+            if let Some(note) = parse_note_file(path, base, NoteKind::Regular) {
+                notes.push(note);
+            }
+        }
+    }
+    // Calendar side — parsed exactly as scan_noteplan_dir does (kind-classified).
+    notes.extend(parse_calendar_dir(base));
+
+    Some(NoteStore::new(notes))
 }
 
 /// Classify a Calendar/ note by its filename stem. NotePlan's conventions:

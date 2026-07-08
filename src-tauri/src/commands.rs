@@ -8,6 +8,7 @@ use crate::{
     parser::{
         BacklogOptions, NoteStore, build_backlog, build_filing_targets, extract_content_blocks,
         match_blocks_to_targets, matcher::FilingSuggestion, parse_note, scan_noteplan_dir,
+        scan_scoped,
     },
 };
 use std::{
@@ -246,11 +247,25 @@ fn read_from_cache<T>(
     if !std::path::Path::new(path).exists() {
         return Err(format!("Path does not exist: {}", path));
     }
-    log::info!("read cache empty — scanning {path} to populate");
-    let store = scan_noteplan_dir(path);
-    let out = build(&store);
-    cache.set(store);
-    Ok(out)
+    // COLD cache: prefer a SCOPED scan (control folder + resolved project folders
+    // + all of Calendar/) over a full-vault scan when the control note is present.
+    // DATA SAFETY: the scoped store is NOT written into the cache. The write
+    // path's block-id collision set (`existing_ids_from_cache`) is seeded from
+    // this same cache, and a partial scoped store there could under-populate it
+    // and risk minting a DUPLICATE block-id. Only a FULL store may be cached.
+    match scan_scoped(path) {
+        Some(scoped) => {
+            log::info!("read cache empty — scoped scan of {path} (not cached)");
+            Ok(build(&scoped))
+        }
+        None => {
+            log::info!("read cache empty — full scan {path} to populate");
+            let store = scan_noteplan_dir(path);
+            let out = build(&store);
+            cache.set(store);
+            Ok(out)
+        }
+    }
 }
 
 /// Ranked backlog + unranked inventory per context, feeding Board and Backlog views.

@@ -1,8 +1,8 @@
 use crate::{
     models::{Backlog, BacklogContext, CalendarKind, NoteKind, PoolTask, RankedTask, TaskState},
     parser::{
-        NoteStore, is_excluded_relative, parse_project_control, period, resolve_context_projects,
-        tag_scoped_by,
+        NoteStore, control_dir_sort_key, is_excluded_relative, parse_project_control, period,
+        resolve_context_projects, tag_scoped_by,
     },
 };
 use regex::Regex;
@@ -46,7 +46,10 @@ fn parse_backlog_control(store: &NoteStore) -> Option<BacklogControl> {
         .filter(|n| matches!(n.kind, NoteKind::Regular))
         .filter(|n| n.tags.iter().any(|t| t == BACKLOG_TAG))
         .collect();
-    matches.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    // A note under CONTROL_DIR always wins (app-owned folder), then by relative
+    // path — mirrors `#np-projects` selection so a stray/archived `#np-backlog`
+    // can't hijack the ranked lists.
+    matches.sort_by(|a, b| control_dir_sort_key(a).cmp(&control_dir_sort_key(b)));
     let note = matches.first()?;
 
     let mut warnings = Vec::new();
@@ -573,6 +576,32 @@ mod tests {
             "expected a #np-projects ambiguity warning, got {:?}",
             b.warnings
         );
+    }
+
+    #[test]
+    fn test_backlog_control_dir_note_wins_over_stray_sorting_earlier() {
+        // A stray note tagged #np-backlog under @Archive sorts BEFORE the real
+        // control note by relative_path, yet the CONTROL_DIR note must win — same
+        // guarantee as #np-projects selection.
+        let stray = parse_note(
+            "/s.md",
+            "Notes/@Archive/old.md",
+            "# Old Backlog #np-backlog\n## Stale\n1. [[Ghost^dead111]]\n",
+            NoteKind::Regular,
+        );
+        let real = parse_note(
+            "/r.md",
+            "Notes/_NotePlan Organizer/Backlog.md",
+            "# Real Backlog #np-backlog\n## Work\n1. [[Janet^a1b2c3]]\n",
+            NoteKind::Regular,
+        );
+        // stray first in scan order to prove CONTROL_DIR, not order, decides.
+        let st = store(vec![stray, real]);
+        let ctrl = parse_backlog_control(&st).expect("backlog control found");
+        assert_eq!(ctrl.note_title, "Real Backlog");
+        assert_eq!(ctrl.contexts[0].0, "Work");
+        assert_eq!(ctrl.contexts[0].1, vec!["a1b2c3".to_string()]);
+        assert_eq!(ctrl.warnings.len(), 1);
     }
 
     #[test]
