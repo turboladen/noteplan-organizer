@@ -336,6 +336,188 @@ pub fn get_filing_suggestions(
 // locate — it is now the sole wrong-line guard.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Writer seam: a concrete enum over the MCP write surface, so the rank path can
+// be unit-tested against an in-memory mock. The `Real` arm is a PURE
+// pass-through to the exact `tools::*` functions (which keep their
+// `assert_bridge_backend` + `parse_edit_response` data-safety guards) — the
+// production write path is behaviour-identical to calling `tools::` directly.
+// There is deliberately NO delete method (the only destructive op was removed).
+// A concrete enum (rather than a generic `trait`) sidesteps async-fn-in-trait
+// `Send` friction on the Tauri command futures.
+// ---------------------------------------------------------------------------
+enum Writer<'a> {
+    Real(&'a McpState),
+    #[cfg(test)]
+    Mock(MockMcp),
+}
+
+impl Writer<'_> {
+    async fn get_note(&self, addr: &NoteAddr) -> Result<String, String> {
+        match self {
+            Writer::Real(m) => tools::get_note(m, addr).await,
+            #[cfg(test)]
+            Writer::Mock(k) => k.get_note(addr),
+        }
+    }
+
+    async fn replace_line(&self, addr: &NoteAddr, line: usize, text: &str) -> Result<(), String> {
+        match self {
+            Writer::Real(m) => tools::replace_line(m, addr, line, text).await.map(|_| ()),
+            #[cfg(test)]
+            Writer::Mock(k) => k.replace_line(addr, line, text),
+        }
+    }
+
+    async fn insert_in_note(&self, addr: &NoteAddr, text: &str, line: usize) -> Result<(), String> {
+        match self {
+            Writer::Real(m) => tools::insert_in_note(m, addr, text, line).await.map(|_| ()),
+            #[cfg(test)]
+            Writer::Mock(k) => k.insert_in_note(addr, text, line),
+        }
+    }
+}
+
+// --- Test-only in-memory MCP write surface (used by the rank unit tests) -----
+// Records every call (for ordering assertions) and can be told to fail a
+// specific op so the partial-failure paths (round-2(b), stamp-fail-aborts) are
+// exercised without a live vault. Interior `Mutex` so the `Writer` methods can
+// stay `&self` like the real path.
+
+#[cfg(test)]
+#[derive(Debug, Clone)]
+// Fields are recorded for the Debug trail / future assertions even where a given
+// test only inspects a subset; keep the full call shape rather than pruning.
+#[allow(dead_code)]
+enum MockCall {
+    GetNote(NoteAddr),
+    ReplaceLine(NoteAddr, usize, String),
+    InsertInNote(NoteAddr, usize, String),
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct MockInner {
+    bodies: std::collections::HashMap<String, Vec<String>>,
+    calls: Vec<MockCall>,
+    fail_next_replace: bool,
+    fail_next_insert: bool,
+}
+
+#[cfg(test)]
+struct MockMcp {
+    inner: std::sync::Mutex<MockInner>,
+}
+
+#[cfg(test)]
+impl MockMcp {
+    fn addr_key(addr: &NoteAddr) -> String {
+        match addr {
+            NoteAddr::Filename(f) => format!("file:{f}"),
+            NoteAddr::Title(t) => format!("title:{t}"),
+        }
+    }
+
+    /// Fresh mock seeded with one note body at `addr`.
+    fn with_note(addr: &NoteAddr, body: &str) -> Self {
+        let mock = Self {
+            inner: std::sync::Mutex::new(MockInner::default()),
+        };
+        mock.seed(addr, body);
+        mock
+    }
+
+    fn seed(&self, addr: &NoteAddr, body: &str) {
+        self.inner.lock().unwrap().bodies.insert(
+            Self::addr_key(addr),
+            body.lines().map(String::from).collect(),
+        );
+    }
+
+    fn set_fail_replace(&self) {
+        self.inner.lock().unwrap().fail_next_replace = true;
+    }
+
+    fn set_fail_insert(&self) {
+        self.inner.lock().unwrap().fail_next_insert = true;
+    }
+
+    fn body(&self, addr: &NoteAddr) -> String {
+        self.inner
+            .lock()
+            .unwrap()
+            .bodies
+            .get(&Self::addr_key(addr))
+            .map(|l| l.join("\n"))
+            .unwrap_or_default()
+    }
+
+    fn calls(&self) -> Vec<MockCall> {
+        self.inner.lock().unwrap().calls.clone()
+    }
+
+    fn get_note(&self, addr: &NoteAddr) -> Result<String, String> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.calls.push(MockCall::GetNote(addr.clone()));
+        inner
+            .bodies
+            .get(&Self::addr_key(addr))
+            .map(|l| l.join("\n"))
+            .ok_or_else(|| format!("mock: no note at {}", Self::addr_key(addr)))
+    }
+
+    fn replace_line(&self, addr: &NoteAddr, line: usize, text: &str) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap();
+        inner
+            .calls
+            .push(MockCall::ReplaceLine(addr.clone(), line, text.to_string()));
+        if inner.fail_next_replace {
+            inner.fail_next_replace = false;
+            return Err("mock: forced replace_line failure".to_string());
+        }
+        let key = Self::addr_key(addr);
+        let lines = inner
+            .bodies
+            .get_mut(&key)
+            .ok_or_else(|| format!("mock: no note at {key}"))?;
+        if line < 1 || line > lines.len() {
+            return Err(format!("mock: replace line {line} out of range"));
+        }
+        lines[line - 1] = text.to_string();
+        Ok(())
+    }
+
+    fn insert_in_note(&self, addr: &NoteAddr, text: &str, line: usize) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap();
+        inner
+            .calls
+            .push(MockCall::InsertInNote(addr.clone(), line, text.to_string()));
+        if inner.fail_next_insert {
+            inner.fail_next_insert = false;
+            return Err("mock: forced insert failure".to_string());
+        }
+        let key = Self::addr_key(addr);
+        let lines = inner
+            .bodies
+            .get_mut(&key)
+            .ok_or_else(|| format!("mock: no note at {key}"))?;
+        let idx = line.saturating_sub(1).min(lines.len());
+        lines.insert(idx, text.to_string());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl Writer<'_> {
+    /// Borrow the mock behind a `Writer::Mock` for post-run assertions.
+    fn mock(&self) -> &MockMcp {
+        match self {
+            Writer::Mock(m) => m,
+            _ => panic!("Writer::mock() called on a non-mock writer"),
+        }
+    }
+}
+
 /// Gather every block ID already present in the vault (for collision-free gen).
 fn existing_block_ids(store: &NoteStore) -> HashSet<String> {
     let mut ids = HashSet::new();
@@ -456,16 +638,16 @@ fn resolve_note_by_path(cache: &NoteStoreCache, relative_path: &str) -> Resolved
 /// Returns the content AND the addr that worked, so the subsequent writes use
 /// the same known-good addressing.
 async fn fetch_note_resilient(
-    mcp: &McpState,
+    writer: &Writer<'_>,
     resolved: &ResolvedNote,
     title: &str,
 ) -> Result<(String, NoteAddr), String> {
-    match tools::get_note(mcp, &resolved.addr).await {
+    match writer.get_note(&resolved.addr).await {
         Ok(content) => Ok((content, resolved.addr.clone())),
         Err(e) if matches!(resolved.addr, NoteAddr::Filename(_)) => {
             log::warn!("filename addressing failed for {title:?} ({e}); retrying by title");
             let addr = NoteAddr::Title(title.to_string());
-            let content = tools::get_note(mcp, &addr).await?;
+            let content = writer.get_note(&addr).await?;
             Ok((content, addr))
         }
         Err(e) => Err(e),
@@ -479,10 +661,10 @@ async fn fetch_note_resilient(
 /// systematically) — a wrong-note write, the one failure mode worse than a
 /// failed rank. If the path fetch fails, abort and let the user rescan/retry.
 async fn fetch_note_strict(
-    mcp: &McpState,
+    writer: &Writer<'_>,
     resolved: &ResolvedNote,
 ) -> Result<(String, NoteAddr), String> {
-    match tools::get_note(mcp, &resolved.addr).await {
+    match writer.get_note(&resolved.addr).await {
         Ok(content) => Ok((content, resolved.addr.clone())),
         Err(e) => Err(format!(
             "could not fetch the task's source note at {:?}: {} — the note may have moved since \
@@ -583,7 +765,7 @@ const WRITE_SUPPRESS_WINDOW: Duration = Duration::from_secs(10);
 /// model) — no per-op re-fetch. The suppression window is extended before EVERY
 /// write so a slow multi-write op can't let the watcher wake mid-flight.
 async fn apply_ops(
-    mcp: &McpState,
+    writer: &Writer<'_>,
     suppress: &WriteSuppression,
     content_addr: &NoteAddr,
     backlog_addr: &NoteAddr,
@@ -611,7 +793,9 @@ async fn apply_ops(
                     line,
                     new_line_text
                 );
-                tools::replace_line(mcp, content_addr, line, &new_line_text).await?;
+                writer
+                    .replace_line(content_addr, line, &new_line_text)
+                    .await?;
             }
             WriteOp::InsertBacklogLine { line, text } => {
                 log::info!(
@@ -621,7 +805,7 @@ async fn apply_ops(
                     line,
                     text
                 );
-                tools::insert_in_note(mcp, backlog_addr, &text, line).await?;
+                writer.insert_in_note(backlog_addr, &text, line).await?;
             }
             WriteOp::ReplaceBacklogLine { line, text } => {
                 log::info!(
@@ -631,7 +815,7 @@ async fn apply_ops(
                     line,
                     text
                 );
-                tools::replace_line(mcp, backlog_addr, line, &text).await?;
+                writer.replace_line(backlog_addr, line, &text).await?;
             }
         }
         // Re-arm from write COMPLETION so the trailing 2s debounce is covered even
@@ -658,61 +842,114 @@ pub async fn backlog_rank_task(
     context: String,
     backlog_note_title: String,
 ) -> Result<(), String> {
+    let writer = Writer::Real(mcp_state.inner());
+    rank_task_inner(
+        &writer,
+        cache.inner(),
+        suppress.inner(),
+        &path,
+        &source_note_title,
+        &source_relative_path,
+        &expected_text,
+        &context,
+        &backlog_note_title,
+    )
+    .await
+}
+
+/// The testable rank body, driving a `Writer` (real or mock) over plain refs so
+/// unit tests can exercise it with `NoteStoreCache::default()` + a mock MCP.
+///
+/// ROUND-2(b) SPLIT — the stamp and the backlog insert are TWO success-scoped
+/// steps rather than one combined `apply_ops`:
+///  1. Apply the source stamp op(s) ALONE. On success, patch the SOURCE cache
+///     immediately — REGARDLESS of what the backlog insert does next. This is
+///     the fix: if the stamp lands (`^id` on disk) but the insert then fails,
+///     the block-id collision set must still learn `^id`, or a later rank of a
+///     DIFFERENT task could regenerate it (a duplicate id — non-corrupting, but
+///     a read-side mis-resolution in the app-owned backlog). If the stamp
+///     itself fails, we abort (`?`) and NEVER touch the backlog note.
+///  2. Build the backlog entry from the `block_id` the stamp actually
+///     established (correct-by-construction: the entry references the id now on
+///     disk), plan + apply the insert, then patch the BACKLOG cache on success.
+///
+/// Data-safety: the content note still only ever receives an `AppendBlockId`
+/// (strict append to the located line); the backlog note is app-owned; the
+/// entry is inserted only after the stamp is confirmed.
+///
+/// RESIDUAL (round-2(a), DEFERRED): between fetching the source and writing the
+/// stamp there is a sub-millisecond in-memory planning window; a concurrent
+/// same-user stamp of the EXACT same line inside it could overwrite the `^id`
+/// (non-corrupting — the write stays additive; the backlog entry would just go
+/// stale). Closing it would require a 2-6s write-time re-fetch/relocate or a
+/// backend compare-and-swap the MCP does not offer, so it is intentionally not
+/// addressed here.
+#[allow(clippy::too_many_arguments)]
+async fn rank_task_inner(
+    writer: &Writer<'_>,
+    cache: &NoteStoreCache,
+    suppress: &WriteSuppression,
+    path: &str,
+    source_note_title: &str,
+    source_relative_path: &str,
+    expected_text: &str,
+    context: &str,
+    backlog_note_title: &str,
+) -> Result<(), String> {
     let t0 = Instant::now();
-    // Phase 1: collision-id set from the warm cache (no full rescan).
-    let existing = existing_ids_from_cache(&cache, &path);
+    // Collision-id set from the warm cache (no full rescan).
+    let existing = existing_ids_from_cache(cache, path);
     // Resolve addressing + cache-patch identity. Source is addressed by its
     // relative path (filename addressing; titles can collide — e.g.
     // template-stamped daily notes), never by title, and its fetch below uses
     // `fetch_note_strict` (no title fallback) for the same reason.
-    // `source_note_title` is still needed below for the `[[title^id]]` backlog
-    // entry text.
-    let source = resolve_note_by_path(&cache, &source_relative_path);
-    let backlog = resolve_note(&cache, &backlog_note_title);
-    let t_ids = t0.elapsed();
+    // `source_note_title` is still needed below for the `[[title^id]]` entry.
+    let source = resolve_note_by_path(cache, source_relative_path);
+    let backlog = resolve_note(cache, backlog_note_title);
 
-    // Phase 2: fetch backlog then source; plan on those SINGLE fresh contents
+    // Fetch backlog then source; plan on those SINGLE fresh contents
     // (verify-before-write: locate on the same content we write against).
-    let t1 = Instant::now();
     let (backlog_content, backlog_addr) =
-        fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
-    let (source_content, source_addr) = fetch_note_strict(&mcp_state, &source).await?;
-    let (block_id, source_ops) = plan_stamp_block_id(
-        &source_content,
-        &source_note_title,
-        &expected_text,
-        &existing,
-    )?;
+        fetch_note_resilient(writer, &backlog, backlog_note_title).await?;
+    let (source_content, source_addr) = fetch_note_strict(writer, &source).await?;
+    let (block_id, source_ops) =
+        plan_stamp_block_id(&source_content, source_note_title, expected_text, &existing)?;
+
+    // Step 1: source stamp ALONE. On success, patch the source cache before the
+    // insert can fail (round-2(b)). Abort without touching the backlog on a
+    // stamp failure.
+    apply_ops(
+        writer,
+        suppress,
+        &source_addr,
+        &backlog_addr,
+        source_ops.clone(),
+    )
+    .await?;
+    patch_cache_after_ops(cache, &source, &source_content, &source_ops);
+
+    // Step 2: backlog insert built from the id the stamp established.
     let entry = format!("- [[{}^{}]] {}", source_note_title, block_id, expected_text);
-    let backlog_ops = plan_append_entry(&backlog_content, &context, &entry)?;
-    let t_plan = t1.elapsed();
-
-    // Phase 3: apply — source stamp (if any) first (right after its fetch), then
-    // the backlog insert. apply_ops extends the suppression window per write.
-    // Writes use the addr that worked for the read (known-good addressing).
-    let t2 = Instant::now();
-    let mut all_ops = source_ops.clone();
-    all_ops.extend(backlog_ops.clone());
-    let write_result = apply_ops(&mcp_state, &suppress, &source_addr, &backlog_addr, all_ops).await;
+    let backlog_ops = plan_append_entry(&backlog_content, context, &entry)?;
+    let insert_result = apply_ops(
+        writer,
+        suppress,
+        &source_addr,
+        &backlog_addr,
+        backlog_ops.clone(),
+    )
+    .await;
     suppress.suppress(WRITE_SUPPRESS_WINDOW); // cover the trailing debounce
-    let t_write = t2.elapsed();
-
-    // Phase 4: patch the cache locally from computed post-write content (no MCP).
-    // Only on success — a partial failure's computed content wouldn't match disk.
-    let t3 = Instant::now();
-    if write_result.is_ok() {
-        patch_cache_after_ops(&cache, &source, &source_content, &source_ops);
-        patch_cache_after_ops(&cache, &backlog, &backlog_content, &backlog_ops);
+    if insert_result.is_ok() {
+        patch_cache_after_ops(cache, &backlog, &backlog_content, &backlog_ops);
     }
     log::info!(
-        "rank timing: ids {t_ids:?}, mcp+plan {t_plan:?}, writes {t_write:?}, patch {:?}, total \
-         {:?} (source via {}, backlog via {})",
-        t3.elapsed(),
+        "rank total {:?} (source via {}, backlog via {})",
         t0.elapsed(),
         source_addr.mode(),
         backlog_addr.mode()
     );
-    write_result
+    insert_result
 }
 
 /// Reorder a backlog context: `ordered_block_ids` is the section's current
@@ -729,12 +966,13 @@ pub async fn backlog_reorder(
     backlog_note_title: String,
 ) -> Result<(), String> {
     let t0 = Instant::now();
+    let writer = Writer::Real(mcp_state.inner());
     let backlog = resolve_note(&cache, &backlog_note_title);
     let (backlog_content, backlog_addr) =
-        fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
+        fetch_note_resilient(&writer, &backlog, &backlog_note_title).await?;
     let ops = plan_reorder(&backlog_content, &context, &ordered_block_ids)?;
     let write_result = apply_ops(
-        &mcp_state,
+        &writer,
         &suppress,
         &backlog_addr,
         &backlog_addr,
@@ -764,9 +1002,10 @@ pub async fn backlog_remove(
     backlog_note_title: String,
 ) -> Result<(), String> {
     let t0 = Instant::now();
+    let writer = Writer::Real(mcp_state.inner());
     let backlog = resolve_note(&cache, &backlog_note_title);
     let (backlog_content, backlog_addr) =
-        fetch_note_resilient(&mcp_state, &backlog, &backlog_note_title).await?;
+        fetch_note_resilient(&writer, &backlog, &backlog_note_title).await?;
     let ops = plan_remove(&backlog_content, &context, &block_id)?;
     // Audit the BEFORE-state: the executor only logs the tombstone marker it
     // writes, so record the entry text being erased (with context + block id)
@@ -789,7 +1028,7 @@ pub async fn backlog_remove(
         }
     }
     let write_result = apply_ops(
-        &mcp_state,
+        &writer,
         &suppress,
         &backlog_addr,
         &backlog_addr,
@@ -810,9 +1049,12 @@ pub async fn backlog_remove(
 
 #[cfg(test)]
 mod tests {
-    use super::{content_after_ops, resolve_note_by_path, title_matches};
+    use super::{
+        MockCall, MockMcp, Writer, content_after_ops, existing_ids_from_cache, rank_task_inner,
+        resolve_note_by_path, title_matches,
+    };
     use crate::{
-        app_state::NoteStoreCache,
+        app_state::{NoteStoreCache, WriteSuppression},
         backlog_write::WriteOp,
         mcp::tools::NoteAddr,
         models::NoteKind,
@@ -944,5 +1186,294 @@ mod tests {
             resolved.addr
         );
         assert!(resolved.patch.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // rank_task_inner mock-driven tests (Writer::Mock + NoteStoreCache::default)
+    // -----------------------------------------------------------------------
+
+    const SRC_REL: &str = "Notes/design.md";
+    const BL_REL: &str = "Notes/_NotePlan Organizer/backlog.md";
+    const BL_BODY: &str = "# Backlog #np-backlog\n## Work\n";
+
+    /// Seed a warm cache + a mock MCP with a source note and the backlog control
+    /// note, returning both plus the (filename) addrs the resolvers will produce.
+    fn seed(
+        source_body: &str,
+        source_kind: NoteKind,
+    ) -> (NoteStoreCache, MockMcp, NoteAddr, NoteAddr) {
+        let source_abs = format!("/abs/{SRC_REL}");
+        let backlog_abs = format!("/abs/{BL_REL}");
+        let store = NoteStore::new(vec![
+            parse_note(&source_abs, SRC_REL, source_body, source_kind),
+            parse_note(&backlog_abs, BL_REL, BL_BODY, NoteKind::Regular),
+        ]);
+        let cache = NoteStoreCache::default();
+        cache.set(store);
+
+        let source_addr = NoteAddr::Filename(SRC_REL.to_string());
+        let backlog_addr = NoteAddr::Filename(BL_REL.to_string());
+        let mock = MockMcp::with_note(&source_addr, source_body);
+        mock.seed(&backlog_addr, BL_BODY);
+        (cache, mock, source_addr, backlog_addr)
+    }
+
+    fn call_addr_key(c: &MockCall) -> String {
+        match c {
+            MockCall::GetNote(a) | MockCall::ReplaceLine(a, ..) | MockCall::InsertInNote(a, ..) => {
+                MockMcp::addr_key(a)
+            }
+        }
+    }
+
+    /// Extract the trailing `^id` from a stamped source task line.
+    fn trailing_id(body: &str) -> String {
+        body.lines()
+            .find_map(|l| l.rsplit_once(" ^").map(|(_, id)| id.trim().to_string()))
+            .expect("expected a stamped ^id in the source body")
+    }
+
+    /// Extract the `^id` inside the backlog `[[title^id]]` entry.
+    fn entry_id(body: &str) -> String {
+        body.lines()
+            .find_map(|l| {
+                let start = l.find("^")?;
+                let rest = &l[start + 1..];
+                let end = rest.find("]]")?;
+                Some(rest[..end].to_string())
+            })
+            .expect("expected a [[..^id]] backlog entry")
+    }
+
+    async fn run_rank(writer: &Writer<'_>, cache: &NoteStoreCache) -> Result<(), String> {
+        let suppress = WriteSuppression::default();
+        rank_task_inner(
+            writer,
+            cache,
+            &suppress,
+            "/abs",
+            "Design",
+            SRC_REL,
+            "Ship v2 spec",
+            "Work",
+            "Backlog",
+        )
+        .await
+    }
+
+    // (c) verify-before-write ordering: get_note(source) precedes the source
+    // mutation, and the stamped line is the located line + " ^id".
+    #[tokio::test]
+    async fn test_rank_verifies_source_before_write() {
+        let (cache, mock, source_addr, bl) =
+            seed("# Design\n* Ship v2 spec !!\n", NoteKind::Regular);
+        let writer = Writer::Mock(mock);
+        run_rank(&writer, &cache)
+            .await
+            .expect("rank should succeed");
+
+        let calls = writer.mock().calls();
+        // verify-before-write must hold for EVERY mutation (CLAUDE.md): the source
+        // stamp AND the backlog insert must each be preceded by a get_note of the
+        // note they mutate.
+        let src_key = MockMcp::addr_key(&source_addr);
+        let get_pos = calls
+            .iter()
+            .position(|c| matches!(c, MockCall::GetNote(_)) && call_addr_key(c) == src_key)
+            .expect("source was fetched");
+        let write_pos = calls
+            .iter()
+            .position(|c| matches!(c, MockCall::ReplaceLine(..)) && call_addr_key(c) == src_key)
+            .expect("source line was stamped");
+        assert!(
+            get_pos < write_pos,
+            "must get_note(source) before mutating it: {calls:?}"
+        );
+        let bl_key = MockMcp::addr_key(&bl);
+        let bl_get = calls
+            .iter()
+            .position(|c| matches!(c, MockCall::GetNote(_)) && call_addr_key(c) == bl_key)
+            .expect("backlog was fetched");
+        let bl_insert = calls
+            .iter()
+            .position(|c| matches!(c, MockCall::InsertInNote(..)) && call_addr_key(c) == bl_key)
+            .expect("backlog entry was inserted");
+        assert!(
+            bl_get < bl_insert,
+            "must get_note(backlog) before inserting into it: {calls:?}"
+        );
+
+        // The stamp is a strict append to the located line.
+        let id = trailing_id(&writer.mock().body(&source_addr));
+        assert!(
+            writer
+                .mock()
+                .body(&source_addr)
+                .contains(&format!("* Ship v2 spec !! ^{id}")),
+            "stamped line must be the located line + \" ^id\""
+        );
+    }
+
+    // (additive-edit) the AppendBlockId edit replaces the line with old_line + " ^id".
+    #[tokio::test]
+    async fn test_rank_stamp_is_strictly_additive() {
+        let (cache, mock, source_addr, _bl) =
+            seed("# Design\n* Ship v2 spec !!\n", NoteKind::Regular);
+        let writer = Writer::Mock(mock);
+        run_rank(&writer, &cache).await.unwrap();
+
+        let src_key = MockMcp::addr_key(&source_addr);
+        let replaced = writer
+            .mock()
+            .calls()
+            .into_iter()
+            .find_map(|c| match c {
+                MockCall::ReplaceLine(a, line, text) if MockMcp::addr_key(&a) == src_key => {
+                    Some((line, text))
+                }
+                _ => None,
+            })
+            .expect("a source ReplaceLine op");
+        assert_eq!(replaced.0, 2, "task is on line 2");
+        assert!(
+            replaced.1.starts_with("* Ship v2 spec !! ^"),
+            "additive: original line prefix retained, id appended: {:?}",
+            replaced.1
+        );
+    }
+
+    // (d) coupling: the [[..^id]] inserted into the backlog equals the ^id now
+    // on the source line (built from the id the stamp actually established).
+    #[tokio::test]
+    async fn test_rank_backlog_entry_matches_stamped_id() {
+        let (cache, mock, source_addr, backlog_addr) =
+            seed("# Design\n* Ship v2 spec !!\n", NoteKind::Regular);
+        let writer = Writer::Mock(mock);
+        run_rank(&writer, &cache).await.unwrap();
+
+        let source_id = trailing_id(&writer.mock().body(&source_addr));
+        let backlog_id = entry_id(&writer.mock().body(&backlog_addr));
+        assert_eq!(
+            source_id, backlog_id,
+            "backlog entry id must equal the id stamped on the source"
+        );
+    }
+
+    // (e) idempotent re-stamp: an already-stamped source produces ZERO source
+    // mutations and a backlog entry referencing the existing id.
+    #[tokio::test]
+    async fn test_rank_idempotent_when_already_stamped() {
+        let (cache, mock, source_addr, backlog_addr) =
+            seed("# Design\n* Ship v2 spec !! ^abc123\n", NoteKind::Regular);
+        let writer = Writer::Mock(mock);
+        run_rank(&writer, &cache).await.unwrap();
+
+        let src_key = MockMcp::addr_key(&source_addr);
+        assert!(
+            !writer
+                .mock()
+                .calls()
+                .iter()
+                .any(|c| matches!(c, MockCall::ReplaceLine(..)) && call_addr_key(c) == src_key),
+            "no source mutation when already stamped"
+        );
+        assert_eq!(
+            writer.mock().body(&source_addr),
+            "# Design\n* Ship v2 spec !! ^abc123"
+        );
+        assert_eq!(entry_id(&writer.mock().body(&backlog_addr)), "abc123");
+    }
+
+    // (f) ROUND-2(b): the backlog insert FAILS but the stamp succeeds. Rank must
+    // return Err, yet the SOURCE cache must be patched so the collision set
+    // learns the stamped id — and a later rank of a DIFFERENT task must not
+    // regenerate it.
+    #[tokio::test]
+    async fn test_rank_insert_failure_still_registers_stamped_id() {
+        let (cache, mock, source_addr, _bl) =
+            seed("# Design\n* Ship v2 spec !!\n", NoteKind::Regular);
+        mock.set_fail_insert();
+        let writer = Writer::Mock(mock);
+
+        let result = run_rank(&writer, &cache).await;
+        assert!(result.is_err(), "rank must surface the insert failure");
+
+        // (i) the stamp landed on the source note.
+        let stamped_id = trailing_id(&writer.mock().body(&source_addr));
+        // (ii) the SOURCE cache was patched → the collision set now knows the id.
+        assert!(
+            existing_ids_from_cache(&cache, "/abs").contains(&stamped_id),
+            "source cache must be patched with the stamped id even though the insert failed"
+        );
+
+        // (iii) a second rank of a DIFFERENT task does not reuse the id. Seed a
+        // second source note into cache + mock and rank it (insert succeeds).
+        let other_rel = "Notes/other.md";
+        let other_body = "# Other\n* Write the runbook !!\n";
+        {
+            let mut g = cache.0.write().unwrap();
+            let store = g.as_mut().unwrap();
+            store.update_note(parse_note(
+                &format!("/abs/{other_rel}"),
+                other_rel,
+                other_body,
+                NoteKind::Regular,
+            ));
+        }
+        writer
+            .mock()
+            .seed(&NoteAddr::Filename(other_rel.to_string()), other_body);
+        let suppress = WriteSuppression::default();
+        rank_task_inner(
+            &writer,
+            &cache,
+            &suppress,
+            "/abs",
+            "Other",
+            other_rel,
+            "Write the runbook",
+            "Work",
+            "Backlog",
+        )
+        .await
+        .expect("second rank should succeed");
+
+        let other_id = trailing_id(
+            &writer
+                .mock()
+                .body(&NoteAddr::Filename(other_rel.to_string())),
+        );
+        // Supplementary: a different task hashes to a different id via its own
+        // seed (note_title:expected_text) regardless of the collision set, so
+        // this can't fail here; assertion (ii) above is what actually proves the
+        // source cache learned ^X on the partial failure.
+        assert_ne!(
+            other_id, stamped_id,
+            "a different task must not regenerate the already-registered id"
+        );
+    }
+
+    // (g) stamp-fail-aborts-backlog: the stamp FAILS → no insert is ever called
+    // (no orphan backlog entry) and the backlog note is untouched.
+    #[tokio::test]
+    async fn test_rank_stamp_failure_never_touches_backlog() {
+        let (cache, mock, _src, backlog_addr) =
+            seed("# Design\n* Ship v2 spec !!\n", NoteKind::Regular);
+        mock.set_fail_replace();
+        let writer = Writer::Mock(mock);
+
+        let result = run_rank(&writer, &cache).await;
+        assert!(result.is_err(), "rank must abort on stamp failure");
+
+        assert!(
+            !writer
+                .mock()
+                .calls()
+                .iter()
+                .any(|c| matches!(c, MockCall::InsertInNote(..))),
+            "no backlog insert may run after a stamp failure (no orphan entry)"
+        );
+        // Backlog note is unchanged (no entry appended, cache unpatched).
+        assert_eq!(writer.mock().body(&backlog_addr), BL_BODY.trim_end());
     }
 }
