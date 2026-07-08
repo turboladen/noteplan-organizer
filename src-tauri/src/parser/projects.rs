@@ -41,8 +41,12 @@ pub fn parse_project_control(store: &NoteStore) -> Option<ProjectControl> {
         .filter(|n| matches!(n.kind, NoteKind::Regular))
         .filter(|n| n.tags.iter().any(|t| t == PROJECTS_TAG))
         .collect();
-    // Deterministic pick when multiple carry the tag: first by relative path.
-    matches.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    // Deterministic pick when multiple carry the tag: a note under CONTROL_DIR
+    // always wins (the app owns that folder), then by relative path. Preferring
+    // CONTROL_DIR keeps the scoped locate (which only parses CONTROL_DIR) and the
+    // full build converging on the same note, and stops a stray/archived
+    // `#np-projects` from hijacking the board.
+    matches.sort_by(|a, b| control_dir_sort_key(a).cmp(&control_dir_sort_key(b)));
     let note = matches.first()?;
 
     let mut warnings = Vec::new();
@@ -111,7 +115,18 @@ fn parse_contexts(content: &str) -> Vec<Context> {
     contexts
 }
 
-use crate::parser::is_excluded_relative;
+use crate::parser::{CONTROL_DIR, is_excluded_relative, is_under_folder};
+
+/// Sort key that ranks a control-note candidate: CONTROL_DIR notes first (the
+/// app-owned folder always wins), then by relative path for a deterministic tie
+/// break. Shared by `#np-projects` selection here and `#np-backlog` selection in
+/// backlog.rs.
+pub(crate) fn control_dir_sort_key(note: &crate::models::Note) -> (bool, &str) {
+    (
+        !is_under_folder(&note.relative_path, CONTROL_DIR),
+        note.relative_path.as_str(),
+    )
+}
 
 /// Leading JD id of a name: the run of chars before the first space, if it
 /// starts with a digit (e.g. "32 - Product Ownership" -> Some("32")).
@@ -138,45 +153,75 @@ fn leading_jd(name: &str) -> Option<String> {
 /// notes are skipped so a `Calendar` reference can never claim the `Calendar/`
 /// tree and mislabel calendar tasks with project metadata.
 fn resolve_folder(store: &NoteStore, reference: &str) -> Option<String> {
+    // Feed the ranking core the ancestor folders of every note that could host a
+    // project: skip excluded notes and calendar-kind notes so a project reference
+    // never resolves into the calendar tree (dz4; kind-based, so a Regular note
+    // under a `Calendar`-named folder still resolves). Each ancestor folder is
+    // yielded once per note under it; `resolve_folder_among` picks the same winner
+    // regardless of duplicates since `folder_rank` is deterministic.
+    let candidates = store
+        .notes
+        .iter()
+        .filter(|note| !is_excluded_relative(&note.relative_path))
+        .filter(|note| CalendarKind::from_note_kind(&note.kind).is_none())
+        .flat_map(|note| ancestor_dirs(&note.relative_path));
+    resolve_folder_among(candidates, reference)
+}
+
+/// Yield the ancestor directory paths of a note's relative path, deepest first
+/// (`a/b/c/file.md` -> `a/b/c`, `a/b`, `a`). Relative paths use `/` separators,
+/// so each ancestor is a prefix slice of the original string — no allocation.
+/// `pub(crate)` so `scan_scoped` can build its folder universe from the same
+/// walk rather than re-implementing the `rfind('/')` loop.
+pub(crate) fn ancestor_dirs(relative_path: &str) -> impl Iterator<Item = &str> {
+    let mut current = relative_path;
+    std::iter::from_fn(move || {
+        let idx = current.rfind('/')?;
+        current = &current[..idx];
+        Some(current)
+    })
+}
+
+/// Ranking core of `resolve_folder`, decoupled from the note store so it can rank
+/// an arbitrary set of candidate FOLDER PATHS (directory strings). A folder's
+/// FINAL segment matches the reference by full case-insensitive equality (an
+/// EXACT match) or merely by a shared leading JD id (a weaker JD-only match).
+/// Among candidates, an exact match always beats a JD-only match; ties break to
+/// the shallowest folder, then lexicographically — deterministic and independent
+/// of candidate order.
+pub(crate) fn resolve_folder_among<'a>(
+    candidates: impl Iterator<Item = &'a str>,
+    reference: &str,
+) -> Option<String> {
     let ref_lower = reference.to_lowercase();
     let ref_jd = leading_jd(reference);
 
     // (match_quality, folder): quality 0 = exact segment name, 1 = JD-id only.
     let mut best: Option<(u8, String)> = None;
-    for note in &store.notes {
-        if is_excluded_relative(&note.relative_path) {
+    for cand in candidates {
+        let Some(seg) = std::path::Path::new(cand)
+            .file_name()
+            .and_then(|s| s.to_str())
+        else {
             continue;
-        }
-        // A project reference must never resolve into the calendar tree (dz4);
-        // kind-based so a Regular note under a `Calendar`-named folder still resolves.
-        if CalendarKind::from_note_kind(&note.kind).is_some() {
-            continue;
-        }
-        // Walk each ancestor folder of this note.
-        let mut dir = std::path::Path::new(&note.relative_path).parent();
-        while let Some(d) = dir {
-            if let Some(seg) = d.file_name().and_then(|s| s.to_str()) {
-                let exact = seg.to_lowercase() == ref_lower;
-                let jd_only = !exact
-                    && ref_jd
-                        .as_deref()
-                        .zip(leading_jd(seg).as_deref())
-                        .map_or(false, |(a, b)| a == b);
-                if exact || jd_only {
-                    let quality: u8 = if exact { 0 } else { 1 };
-                    let cand = d.to_string_lossy().to_string();
-                    // Rank (quality, then shallowest, then lexicographic); a
-                    // lower tuple wins. An exact match (quality 0) can never be
-                    // displaced by a JD-only match (quality 1), regardless of depth.
-                    let better = best.as_ref().map_or(true, |(bq, bp)| {
-                        (quality, folder_rank(&cand)) < (*bq, folder_rank(bp))
-                    });
-                    if better {
-                        best = Some((quality, cand));
-                    }
-                }
+        };
+        let exact = seg.to_lowercase() == ref_lower;
+        let jd_only = !exact
+            && ref_jd
+                .as_deref()
+                .zip(leading_jd(seg).as_deref())
+                .map_or(false, |(a, b)| a == b);
+        if exact || jd_only {
+            let quality: u8 = if exact { 0 } else { 1 };
+            // Rank (quality, then shallowest, then lexicographic); a lower tuple
+            // wins. An exact match (quality 0) can never be displaced by a JD-only
+            // match (quality 1), regardless of depth.
+            let better = best.as_ref().map_or(true, |(bq, bp)| {
+                (quality, folder_rank(cand)) < (*bq, folder_rank(bp))
+            });
+            if better {
+                best = Some((quality, cand.to_string()));
             }
-            dir = d.parent();
         }
     }
     best.map(|(_, folder)| folder)
@@ -463,6 +508,39 @@ mod tests {
         );
         let store = NoteStore::new(vec![control, cal]);
         assert!(context_folder_projects(&store)[0].1.is_empty());
+    }
+
+    #[test]
+    fn test_control_dir_note_wins_over_stray_sorting_earlier() {
+        // A stray note tagged #np-projects under @Archive sorts BEFORE the real
+        // control note by relative_path (`@`=0x40 < `_`=0x5F), yet the CONTROL_DIR
+        // note must be selected — otherwise the scoped locate (CONTROL_DIR-only)
+        // and the full build would diverge, and an archived control note could
+        // hijack the board.
+        let stray = parse_note(
+            "/s.md",
+            "Notes/@Archive/old.md",
+            "# Old Board #np-projects\n## Stale\n1. [[99 - Ghost]]\n",
+            NoteKind::Regular,
+        );
+        let real = parse_note(
+            "/r.md",
+            "Notes/_NotePlan Organizer/Projects.md",
+            "# Real Board #np-projects\n## Work\n1. [[32 - Product Ownership]]\n",
+            NoteKind::Regular,
+        );
+        // stray first in scan order to prove CONTROL_DIR, not order, decides.
+        let store = NoteStore::new(vec![stray, real]);
+        let ctrl = parse_project_control(&store).expect("control note found");
+        assert_eq!(ctrl.note_title, "Real Board");
+        assert_eq!(ctrl.contexts[0].name, "Work");
+        // Ambiguity is still surfaced, now naming the CONTROL_DIR winner.
+        assert_eq!(ctrl.warnings.len(), 1);
+        assert!(
+            ctrl.warnings[0].contains("Real Board"),
+            "warning should name the winner, got {:?}",
+            ctrl.warnings
+        );
     }
 
     #[test]

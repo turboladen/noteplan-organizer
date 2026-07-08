@@ -5,7 +5,7 @@
 
 use app_lib::{
     models::{Note, NoteKind, Task, TaskState},
-    parser::{NoteStore, build_backlog, scan_noteplan_dir},
+    parser::{NoteStore, build_backlog, scan_noteplan_dir, scan_scoped},
 };
 use std::path::{Path, PathBuf};
 
@@ -276,6 +276,106 @@ fn test_backlog_tag_scoped_calendar_tasks() {
     // Declared tags are exposed on the context.
     assert_eq!(ctx("Work").tags, vec!["work".to_string()]);
     assert!(ctx("Reading").tags.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// 3b. scan_scoped — parity with the full scan, narrower parse set, fallback
+// ---------------------------------------------------------------------------
+
+/// The scoped read must produce a byte-for-byte identical backlog to the full
+/// scan (the parity bar). Checked for BOTH `include_older_dailies` values so the
+/// 30-day daily window and the calendar harvest both agree.
+#[test]
+fn test_scoped_backlog_matches_full() {
+    let full = load();
+    let fp = fixture_path();
+    let scoped = scan_scoped(fp.to_str().expect("fixture path is valid UTF-8"))
+        .expect("fixture has a #np-projects control note");
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap();
+
+    for include_older_dailies in [false, true] {
+        let opts = app_lib::parser::BacklogOptions {
+            include_older_dailies,
+            today,
+        };
+        let full_b = build_backlog(&full, &opts);
+        let scoped_b = build_backlog(&scoped, &opts);
+
+        // The dead999 stale ranked entry must be present-and-stale in BOTH, so a
+        // regression that made the scoped path diverge on stale entries is caught
+        // here (not just papered over by the whole-value equality below).
+        for (label, b) in [("full", &full_b), ("scoped", &scoped_b)] {
+            let work = b
+                .contexts
+                .iter()
+                .find(|c| c.name == "Work")
+                .expect("Work context");
+            let dead = work
+                .ranked
+                .iter()
+                .find(|r| r.block_id == "dead999")
+                .unwrap_or_else(|| panic!("dead999 stale entry missing from {label}"));
+            assert!(!dead.resolved, "dead999 must be stale in {label}");
+        }
+
+        assert_eq!(
+            serde_json::to_value(&full_b).unwrap(),
+            serde_json::to_value(&scoped_b).unwrap(),
+            "scoped backlog must match full (include_older_dailies={include_older_dailies})"
+        );
+    }
+}
+
+#[test]
+fn test_scoped_scans_fewer_notes() {
+    let fp = fixture_path();
+    let base = fp.to_str().expect("fixture path is valid UTF-8");
+    let full = scan_noteplan_dir(base);
+    let scoped = scan_scoped(base).expect("fixture has a #np-projects control note");
+    assert!(
+        scoped.notes.len() < full.notes.len(),
+        "scoped ({}) should parse fewer notes than full ({})",
+        scoped.notes.len(),
+        full.notes.len()
+    );
+
+    // The non-referenced sibling (directly under `2x - Projects [Personal]`, not
+    // under the resolved `21 - Home Reno` folder) is present in the full scan but
+    // absent from the scoped one.
+    let loose = "2x - Projects [Personal]/Loose Ideas.md";
+    let has_loose = |s: &NoteStore| s.notes.iter().any(|n| n.relative_path.ends_with(loose));
+    assert!(has_loose(&full), "Loose Ideas.md present in full scan");
+    assert!(
+        !has_loose(&scoped),
+        "Loose Ideas.md absent from scoped scan"
+    );
+}
+
+#[test]
+fn test_scoped_falls_back_when_no_control_note() {
+    // A vault whose control folder holds no #np-projects note ⇒ scan_scoped
+    // returns None so the caller falls back to a full scan.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("np-scoped-fallback-{nanos}"));
+    let control = dir.join("Notes/_NotePlan Organizer");
+    std::fs::create_dir_all(&control).unwrap();
+    std::fs::write(control.join("Readme.md"), "# Readme\nno control tag here\n").unwrap();
+    std::fs::create_dir_all(dir.join("Notes/12 - Alpha Project")).unwrap();
+    std::fs::write(
+        dir.join("Notes/12 - Alpha Project/task.md"),
+        "# Alpha\n* do a thing\n",
+    )
+    .unwrap();
+
+    let got = scan_scoped(dir.to_str().unwrap());
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(
+        got.is_none(),
+        "no #np-projects control note ⇒ fall back to full scan"
+    );
 }
 
 // ---------------------------------------------------------------------------
