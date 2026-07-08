@@ -1,4 +1,7 @@
-use crate::{models::NoteKind, parser::NoteStore};
+use crate::{
+    models::{CalendarKind, NoteKind},
+    parser::NoteStore,
+};
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -122,33 +125,67 @@ fn leading_jd(name: &str) -> Option<String> {
 }
 
 /// Resolve a control-note reference to a folder relative path (the directory
-/// portion, ending without a trailing slash). Matches by final path segment
-/// (case-insensitive) or leading JD id.
+/// portion, ending without a trailing slash). A folder segment matches by full
+/// case-insensitive equality (an EXACT match) or merely by a shared leading JD
+/// id (a weaker JD-only match).
+///
+/// Among candidates, an exact-name match always beats a JD-only match; ties then
+/// break to the shallowest folder (fewest path segments), then lexicographically
+/// — so the result is deterministic and independent of note-scan order. (A bare,
+/// non-JD ref that collides with a nested subfolder name is the ambiguity 241
+/// makes deterministic; a documented JD-prefixed ref resolves to its exact-named
+/// folder even when an unrelated folder shares the same JD id.) Calendar-kind
+/// notes are skipped so a `Calendar` reference can never claim the `Calendar/`
+/// tree and mislabel calendar tasks with project metadata.
 fn resolve_folder(store: &NoteStore, reference: &str) -> Option<String> {
     let ref_lower = reference.to_lowercase();
     let ref_jd = leading_jd(reference);
 
+    // (match_quality, folder): quality 0 = exact segment name, 1 = JD-id only.
+    let mut best: Option<(u8, String)> = None;
     for note in &store.notes {
         if is_excluded_relative(&note.relative_path) {
+            continue;
+        }
+        // A project reference must never resolve into the calendar tree (dz4);
+        // kind-based so a Regular note under a `Calendar`-named folder still resolves.
+        if CalendarKind::from_note_kind(&note.kind).is_some() {
             continue;
         }
         // Walk each ancestor folder of this note.
         let mut dir = std::path::Path::new(&note.relative_path).parent();
         while let Some(d) = dir {
             if let Some(seg) = d.file_name().and_then(|s| s.to_str()) {
-                let seg_matches = seg.to_lowercase() == ref_lower
-                    || ref_jd
+                let exact = seg.to_lowercase() == ref_lower;
+                let jd_only = !exact
+                    && ref_jd
                         .as_deref()
                         .zip(leading_jd(seg).as_deref())
                         .map_or(false, |(a, b)| a == b);
-                if seg_matches {
-                    return Some(d.to_string_lossy().to_string());
+                if exact || jd_only {
+                    let quality: u8 = if exact { 0 } else { 1 };
+                    let cand = d.to_string_lossy().to_string();
+                    // Rank (quality, then shallowest, then lexicographic); a
+                    // lower tuple wins. An exact match (quality 0) can never be
+                    // displaced by a JD-only match (quality 1), regardless of depth.
+                    let better = best.as_ref().map_or(true, |(bq, bp)| {
+                        (quality, folder_rank(&cand)) < (*bq, folder_rank(bp))
+                    });
+                    if better {
+                        best = Some((quality, cand));
+                    }
                 }
             }
             dir = d.parent();
         }
     }
-    None
+    best.map(|(_, folder)| folder)
+}
+
+/// Sort key among folders that match a reference the SAME way: shallower (fewer
+/// path segments) first, then lexicographic for a total, deterministic order.
+fn folder_rank(path: &str) -> (usize, &str) {
+    (path.matches('/').count(), path)
 }
 
 /// Public: map each control-note context to its resolved project folders.
@@ -343,5 +380,106 @@ mod tests {
                 "32 - Product Ownership".to_string()
             )]
         );
+    }
+
+    #[test]
+    fn test_bare_ref_collision_resolves_to_shallowest_folder() {
+        let control = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/P.md",
+            "# P #np-projects\n## Work\n1. [[Shared]]\n",
+            NoteKind::Regular,
+        );
+        let top = parse_note(
+            "/t.md",
+            "Notes/Shared/t.md",
+            "# T\n* x\n",
+            NoteKind::Regular,
+        );
+        let nested = parse_note(
+            "/n.md",
+            "Notes/12 - Alpha Project/Shared/n.md",
+            "# N\n* y\n",
+            NoteKind::Regular,
+        );
+        // nested first: old code returned the nested folder; new code must not.
+        let store = NoteStore::new(vec![control.clone(), nested.clone(), top.clone()]);
+        let got = context_folder_projects(&store);
+        assert_eq!(
+            got[0].1,
+            vec![("Notes/Shared".to_string(), 1, "Shared".to_string())]
+        );
+        // opposite insertion order → same result.
+        let store2 = NoteStore::new(vec![control, top, nested]);
+        assert_eq!(context_folder_projects(&store2)[0].1[0].0, "Notes/Shared");
+    }
+
+    #[test]
+    fn test_exact_name_match_beats_shallower_jd_only_match() {
+        // Ref `12 - Alpha Project` (JD id "12"). A decoy folder shares the JD id
+        // but a different name, at a SHALLOWER depth; the real folder is an exact
+        // name match nested deeper. Exact match must win over the shallower
+        // JD-only match, so depth never overrides match quality.
+        let control = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/P.md",
+            "# P #np-projects\n## Work\n1. [[12 - Alpha Project]]\n",
+            NoteKind::Regular,
+        );
+        let decoy = parse_note(
+            "/d.md",
+            "Notes/12 - Old Alpha Archive/d.md",
+            "# D\n* x\n",
+            NoteKind::Regular,
+        );
+        let real = parse_note(
+            "/r.md",
+            "Notes/1x - Domains [Work]/12 - Alpha Project/r.md",
+            "# R\n* y\n",
+            NoteKind::Regular,
+        );
+        // decoy first in scan order to prove quality, not order, decides.
+        let store = NoteStore::new(vec![control, decoy, real]);
+        let got = context_folder_projects(&store);
+        assert_eq!(
+            got[0].1[0].0,
+            "Notes/1x - Domains [Work]/12 - Alpha Project"
+        );
+    }
+
+    #[test]
+    fn test_calendar_ref_does_not_claim_calendar_folder() {
+        let control = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/P.md",
+            "# P #np-projects\n## Work\n1. [[Calendar]]\n",
+            NoteKind::Regular,
+        );
+        let cal = parse_note(
+            "/c.md",
+            "Calendar/20260701.md",
+            "# 20260701\n* t\n",
+            NoteKind::Daily,
+        );
+        let store = NoteStore::new(vec![control, cal]);
+        assert!(context_folder_projects(&store)[0].1.is_empty());
+    }
+
+    #[test]
+    fn test_calendar_named_project_folder_still_resolves() {
+        let control = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/P.md",
+            "# P #np-projects\n## Work\n1. [[Calendar]]\n",
+            NoteKind::Regular,
+        );
+        let proj = parse_note(
+            "/m.md",
+            "Notes/Calendar/note.md",
+            "# N\n* t\n",
+            NoteKind::Regular,
+        );
+        let store = NoteStore::new(vec![control, proj]);
+        assert_eq!(context_folder_projects(&store)[0].1[0].0, "Notes/Calendar");
     }
 }
