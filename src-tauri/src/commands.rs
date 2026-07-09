@@ -968,6 +968,51 @@ async fn rank_task_inner(
     insert_result
 }
 
+/// Shared single-note backlog write protocol: resolve the app-owned note by
+/// title, fetch it fresh (verify-before-write: we plan and write against the SAME
+/// content), plan the ops via `plan` on that fresh content, apply them, extend the
+/// watcher suppression, and patch the read cache ONLY on success. `op_label` names
+/// the operation in the timing log ("reorder"/"remove"). The `plan` closure runs
+/// synchronously between the fetch and the write so ops can never target stale
+/// content. Errors from fetch, plan, or apply abort before/without a partial patch.
+///
+/// This captures the two IDENTICAL single-note copies of the protocol (reorder,
+/// remove). `rank_task_inner` deliberately does NOT route through it: rank fetches
+/// the backlog note once at the top and reuses that content, and uses a distinct
+/// two-note (source + backlog) shape with a combined timing log — routing it here
+/// would force a second `get_note(backlog)`, changing the MCP call sequence.
+///
+/// Both `apply_ops` addr params receive `&backlog_addr` (the only writes are
+/// backlog-note ops), matching what reorder and remove did inline.
+async fn run_backlog_write<F>(
+    writer: &Writer<'_>,
+    cache: &NoteStoreCache,
+    suppress: &WriteSuppression,
+    backlog_note_title: &str,
+    op_label: &str,
+    plan: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&str) -> Result<Vec<WriteOp>, String>,
+{
+    let t0 = Instant::now();
+    let backlog = resolve_note(cache, backlog_note_title);
+    let (backlog_content, backlog_addr) =
+        fetch_note_resilient(writer, &backlog, backlog_note_title).await?;
+    let ops = plan(&backlog_content)?;
+    let write_result = apply_ops(writer, suppress, &backlog_addr, &backlog_addr, ops.clone()).await;
+    suppress.suppress(WRITE_SUPPRESS_WINDOW);
+    if write_result.is_ok() {
+        patch_cache_after_ops(cache, &backlog, &backlog_content, &ops);
+    }
+    log::info!(
+        "{op_label} total {:?} (backlog via {})",
+        t0.elapsed(),
+        backlog_addr.mode()
+    );
+    write_result
+}
+
 /// Reorder a backlog context: `ordered_block_ids` is the section's current
 /// entries in their new order. The planner repositions the existing lines
 /// verbatim (never rewrites entry text) and aborts unless the ids are an exact
@@ -981,30 +1026,38 @@ pub async fn backlog_reorder(
     ordered_block_ids: Vec<String>,
     backlog_note_title: String,
 ) -> Result<(), String> {
-    let t0 = Instant::now();
     let writer = Writer::Real(mcp_state.inner());
-    let backlog = resolve_note(&cache, &backlog_note_title);
-    let (backlog_content, backlog_addr) =
-        fetch_note_resilient(&writer, &backlog, &backlog_note_title).await?;
-    let ops = plan_reorder(&backlog_content, &context, &ordered_block_ids)?;
-    let write_result = apply_ops(
+    reorder_inner(
         &writer,
-        &suppress,
-        &backlog_addr,
-        &backlog_addr,
-        ops.clone(),
+        cache.inner(),
+        suppress.inner(),
+        &context,
+        &ordered_block_ids,
+        &backlog_note_title,
     )
-    .await;
-    suppress.suppress(WRITE_SUPPRESS_WINDOW);
-    if write_result.is_ok() {
-        patch_cache_after_ops(&cache, &backlog, &backlog_content, &ops);
-    }
-    log::info!(
-        "reorder total {:?} (backlog via {})",
-        t0.elapsed(),
-        backlog_addr.mode()
-    );
-    write_result
+    .await
+}
+
+/// Testable reorder body (drives a real or mock `Writer`). Delegates the
+/// single-note fetch→plan→apply→patch protocol to `run_backlog_write`; the only
+/// reorder-specific piece is the `plan_reorder` closure.
+async fn reorder_inner(
+    writer: &Writer<'_>,
+    cache: &NoteStoreCache,
+    suppress: &WriteSuppression,
+    context: &str,
+    ordered_block_ids: &[String],
+    backlog_note_title: &str,
+) -> Result<(), String> {
+    run_backlog_write(
+        writer,
+        cache,
+        suppress,
+        backlog_note_title,
+        "reorder",
+        |content| plan_reorder(content, context, ordered_block_ids),
+    )
+    .await
 }
 
 /// Remove a task from the backlog (backlog note only; source task untouched).
@@ -1017,57 +1070,67 @@ pub async fn backlog_remove(
     block_id: String,
     backlog_note_title: String,
 ) -> Result<(), String> {
-    let t0 = Instant::now();
     let writer = Writer::Real(mcp_state.inner());
-    let backlog = resolve_note(&cache, &backlog_note_title);
-    let (backlog_content, backlog_addr) =
-        fetch_note_resilient(&writer, &backlog, &backlog_note_title).await?;
-    let ops = plan_remove(&backlog_content, &context, &block_id)?;
-    // Audit the BEFORE-state: the executor only logs the tombstone marker it
-    // writes, so record the entry text being erased (with context + block id)
-    // for a complete before/after trail on the one op that removes visible
-    // content. Ops.first() is the sole ReplaceBacklogLine tombstone.
-    if let Some(WriteOp::ReplaceBacklogLine { line, .. }) = ops.first() {
-        // `line` is 1-based (section_item_lines yields `i + 1`); checked_sub keeps
-        // the audit log panic-proof even if a 0 ever reached here.
-        if let Some(removed) = line
-            .checked_sub(1)
-            .and_then(|i| backlog_content.lines().nth(i))
-        {
-            log::info!(
-                "remove: tombstoning backlog line {} (context {:?}, ^{}): {:?}",
-                line,
-                context,
-                block_id,
-                removed
-            );
-        }
-    }
-    let write_result = apply_ops(
+    remove_inner(
         &writer,
-        &suppress,
-        &backlog_addr,
-        &backlog_addr,
-        ops.clone(),
+        cache.inner(),
+        suppress.inner(),
+        &context,
+        &block_id,
+        &backlog_note_title,
     )
-    .await;
-    suppress.suppress(WRITE_SUPPRESS_WINDOW);
-    if write_result.is_ok() {
-        patch_cache_after_ops(&cache, &backlog, &backlog_content, &ops);
-    }
-    log::info!(
-        "remove total {:?} (backlog via {})",
-        t0.elapsed(),
-        backlog_addr.mode()
-    );
-    write_result
+    .await
+}
+
+/// Testable remove body (drives a real or mock `Writer`). Delegates the
+/// single-note protocol to `run_backlog_write`; the plan closure additionally
+/// emits the BEFORE-state tombstone audit log before the write.
+async fn remove_inner(
+    writer: &Writer<'_>,
+    cache: &NoteStoreCache,
+    suppress: &WriteSuppression,
+    context: &str,
+    block_id: &str,
+    backlog_note_title: &str,
+) -> Result<(), String> {
+    run_backlog_write(
+        writer,
+        cache,
+        suppress,
+        backlog_note_title,
+        "remove",
+        |content| {
+            let ops = plan_remove(content, context, block_id)?;
+            // Audit the BEFORE-state: the executor only logs the tombstone marker
+            // it writes, so record the entry text being erased (with context +
+            // block id) for a complete before/after trail on the one op that
+            // removes visible content. Ops.first() is the sole ReplaceBacklogLine
+            // tombstone. This closure runs before apply_ops, so the ordering
+            // (plan → audit → apply) is unchanged from the prior inline code.
+            if let Some(WriteOp::ReplaceBacklogLine { line, .. }) = ops.first() {
+                // `line` is 1-based (section_item_lines yields `i + 1`); checked_sub
+                // keeps the audit log panic-proof even if a 0 ever reached here.
+                if let Some(removed) = line.checked_sub(1).and_then(|i| content.lines().nth(i)) {
+                    log::info!(
+                        "remove: tombstoning backlog line {} (context {:?}, ^{}): {:?}",
+                        line,
+                        context,
+                        block_id,
+                        removed
+                    );
+                }
+            }
+            Ok(ops)
+        },
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         MockCall, MockMcp, Writer, content_after_ops, existing_ids_from_cache, rank_task_inner,
-        resolve_note_by_path, title_matches,
+        remove_inner, reorder_inner, resolve_note_by_path, title_matches,
     };
     use crate::{
         app_state::{NoteStoreCache, WriteSuppression},
@@ -1530,5 +1593,330 @@ mod tests {
         );
         // Backlog note is unchanged (no entry appended, cache unpatched).
         assert_eq!(writer.mock().body(&backlog_addr), BL_BODY.trim_end());
+    }
+
+    // -----------------------------------------------------------------------
+    // reorder_inner / remove_inner mock-driven tests
+    // -----------------------------------------------------------------------
+
+    // Backlog control note with a "Work" section holding two ranked entries.
+    // These are bare `-` bullets carrying a `[[title^id]]` wikilink — NOT checkbox
+    // tasks, so the tokenizer never parses them into `note.tasks` and the trailing
+    // BLOCK_ID_RE never sees the wikilink-internal `^id`. We therefore verify cache
+    // state by scanning the cached note's `content` for the wikilink ids (the same
+    // regex shape the planners' `ITEM_ID_RE` uses), never via `note.tasks`.
+    const BL_ENTRIES: &str = "# Backlog #np-backlog\n## Work\n- [[Janet^a1b2c3]] Ship v2 spec\n- \
+                              [[Ops^d4e5f6]] Review tix\n";
+
+    /// Seed a warm cache + a mock MCP with ONLY the backlog control note (title
+    /// "Backlog #np-backlog", so `resolve_note("Backlog")` yields Filename(BL_REL)
+    /// via `title_matches`). Returns the cache, mock, and the (filename) addr.
+    fn seed_backlog(body: &str) -> (NoteStoreCache, MockMcp, NoteAddr) {
+        let backlog_abs = format!("/abs/{BL_REL}");
+        let store = NoteStore::new(vec![parse_note(
+            &backlog_abs,
+            BL_REL,
+            body,
+            NoteKind::Regular,
+        )]);
+        let cache = NoteStoreCache::default();
+        cache.set(store);
+        let backlog_addr = NoteAddr::Filename(BL_REL.to_string());
+        let mock = MockMcp::with_note(&backlog_addr, body);
+        (cache, mock, backlog_addr)
+    }
+
+    /// Ordered wikilink ids parsed from the CACHED backlog note's `content`
+    /// (`patch_cache_after_ops` re-parses post-write content into it). Backlog
+    /// entries are bare `-` bullets, not checkbox tasks, so `note.tasks` is empty
+    /// for them — we scan `content` with the planners' `[[…^id]]` regex shape to
+    /// see what order/set of entries the cache holds after a write.
+    fn cached_backlog_ids(cache: &NoteStoreCache) -> Vec<String> {
+        let re = regex::Regex::new(r"\[\[[^\]^]*\^([A-Za-z0-9]{4,})\]\]").unwrap();
+        let guard = cache.0.read().unwrap();
+        let store = guard.as_ref().expect("cache seeded");
+        let idx = *store.path_index.get(BL_REL).expect("backlog note in cache");
+        store.notes[idx]
+            .content
+            .lines()
+            .filter_map(|l| re.captures(l).map(|c| c[1].to_string()))
+            .collect()
+    }
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    async fn run_reorder(
+        writer: &Writer<'_>,
+        cache: &NoteStoreCache,
+        context: &str,
+        ordered_block_ids: &[String],
+    ) -> Result<(), String> {
+        let suppress = WriteSuppression::default();
+        reorder_inner(
+            writer,
+            cache,
+            &suppress,
+            context,
+            ordered_block_ids,
+            "Backlog",
+        )
+        .await
+    }
+
+    async fn run_remove(
+        writer: &Writer<'_>,
+        cache: &NoteStoreCache,
+        context: &str,
+        block_id: &str,
+    ) -> Result<(), String> {
+        let suppress = WriteSuppression::default();
+        remove_inner(writer, cache, &suppress, context, block_id, "Backlog").await
+    }
+
+    // --- reorder ---
+
+    // verify-before-write ordering + verbatim repositioning: the backlog is
+    // fetched before any write, and the two ReplaceLine ops carry the ORIGINAL
+    // entry texts moved to their new positions (reorder never rewrites text).
+    #[tokio::test]
+    async fn test_reorder_verifies_before_write() {
+        let (cache, mock, bl) = seed_backlog(BL_ENTRIES);
+        let writer = Writer::Mock(mock);
+        run_reorder(&writer, &cache, "Work", &ids(&["d4e5f6", "a1b2c3"]))
+            .await
+            .expect("reorder should succeed");
+
+        let calls = writer.mock().calls();
+        let bl_key = MockMcp::addr_key(&bl);
+        let get_pos = calls
+            .iter()
+            .position(|c| matches!(c, MockCall::GetNote(_)) && call_addr_key(c) == bl_key)
+            .expect("backlog was fetched");
+        let first_write = calls
+            .iter()
+            .position(|c| matches!(c, MockCall::ReplaceLine(..)) && call_addr_key(c) == bl_key)
+            .expect("backlog line was rewritten");
+        assert!(
+            get_pos < first_write,
+            "must get_note(backlog) before rewriting it: {calls:?}"
+        );
+
+        // Original entry texts repositioned verbatim: line 3 now holds the Ops
+        // entry, line 4 the Janet entry.
+        let replaces: Vec<(usize, String)> = calls
+            .iter()
+            .filter_map(|c| match c {
+                MockCall::ReplaceLine(a, line, text) if MockMcp::addr_key(a) == bl_key => {
+                    Some((*line, text.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            replaces,
+            vec![
+                (3, "- [[Ops^d4e5f6]] Review tix".to_string()),
+                (4, "- [[Janet^a1b2c3]] Ship v2 spec".to_string()),
+            ],
+            "reorder repositions the existing lines verbatim"
+        );
+
+        let body = writer.mock().body(&bl);
+        let ops_pos = body.find("d4e5f6").expect("Ops entry present");
+        let janet_pos = body.find("a1b2c3").expect("Janet entry present");
+        assert!(
+            ops_pos < janet_pos,
+            "Ops entry now precedes Janet: {body:?}"
+        );
+    }
+
+    // patch-on-success: after a successful reorder the cached content reflects the
+    // new entry order.
+    #[tokio::test]
+    async fn test_reorder_patches_cache_on_success() {
+        let (cache, mock, _bl) = seed_backlog(BL_ENTRIES);
+        let writer = Writer::Mock(mock);
+        run_reorder(&writer, &cache, "Work", &ids(&["d4e5f6", "a1b2c3"]))
+            .await
+            .expect("reorder should succeed");
+        assert_eq!(
+            cached_backlog_ids(&cache),
+            ids(&["d4e5f6", "a1b2c3"]),
+            "cache content must reflect the new entry order"
+        );
+    }
+
+    // patch-only-on-success: a failed write leaves the cached content UNCHANGED
+    // (original order), never a half-applied order.
+    #[tokio::test]
+    async fn test_reorder_does_not_patch_on_failure() {
+        let (cache, mock, _bl) = seed_backlog(BL_ENTRIES);
+        mock.set_fail_replace();
+        let writer = Writer::Mock(mock);
+        let result = run_reorder(&writer, &cache, "Work", &ids(&["d4e5f6", "a1b2c3"])).await;
+        assert!(result.is_err(), "reorder must surface the write failure");
+        assert_eq!(
+            cached_backlog_ids(&cache),
+            ids(&["a1b2c3", "d4e5f6"]),
+            "cache content UNCHANGED after a failed write (patch only on success)"
+        );
+    }
+
+    // abort-on-mismatch: a non-permutation of the section's ids is rejected AFTER
+    // the verify fetch but BEFORE any write (verify-before-write guarantee).
+    #[tokio::test]
+    async fn test_reorder_aborts_on_mismatch() {
+        let (cache, mock, bl) = seed_backlog(BL_ENTRIES);
+        let writer = Writer::Mock(mock);
+        let result = run_reorder(&writer, &cache, "Work", &ids(&["a1b2c3"])).await;
+        assert!(result.is_err(), "reorder must abort on a non-permutation");
+
+        let calls = writer.mock().calls();
+        let bl_key = MockMcp::addr_key(&bl);
+        assert!(
+            calls
+                .iter()
+                .any(|c| matches!(c, MockCall::GetNote(_)) && call_addr_key(c) == bl_key),
+            "backlog must be fetched (verify) before the planner rejects: {calls:?}"
+        );
+        assert!(
+            !calls
+                .iter()
+                .any(|c| matches!(c, MockCall::ReplaceLine(..) | MockCall::InsertInNote(..))),
+            "no write may occur when the planner aborts on mismatch: {calls:?}"
+        );
+    }
+
+    // --- remove ---
+
+    // verify-before-write + tombstone-in-place: exactly ONE ReplaceLine writes the
+    // tombstone marker at the entry's line, preceded by a get_note; no insert and
+    // no delete-shaped call; the note keeps the SAME line count (overwrite, never
+    // delete/shift — the exact data-safety invariant).
+    #[tokio::test]
+    async fn test_remove_tombstones_and_verifies_before_write() {
+        let (cache, mock, bl) = seed_backlog(BL_ENTRIES);
+        let writer = Writer::Mock(mock);
+        run_remove(&writer, &cache, "Work", "a1b2c3")
+            .await
+            .expect("remove should succeed");
+
+        let calls = writer.mock().calls();
+        let bl_key = MockMcp::addr_key(&bl);
+        let get_pos = calls
+            .iter()
+            .position(|c| matches!(c, MockCall::GetNote(_)) && call_addr_key(c) == bl_key)
+            .expect("backlog was fetched");
+        let replaces: Vec<(usize, usize, String)> = calls
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| match c {
+                MockCall::ReplaceLine(a, line, text) if MockMcp::addr_key(a) == bl_key => {
+                    Some((i, *line, text.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            replaces.len(),
+            1,
+            "remove writes exactly one line: {calls:?}"
+        );
+        assert!(
+            get_pos < replaces[0].0,
+            "get_note(backlog) must precede the tombstone write: {calls:?}"
+        );
+        assert_eq!(replaces[0].1, 3, "Janet entry is on line 3");
+        assert_eq!(replaces[0].2, "<!-- np-backlog: removed -->");
+        assert!(
+            !calls
+                .iter()
+                .any(|c| matches!(c, MockCall::InsertInNote(..))),
+            "remove never inserts: {calls:?}"
+        );
+
+        // Overwrite-in-place invariant: same line count, entry line tombstoned.
+        let body = writer.mock().body(&bl);
+        assert_eq!(
+            body.lines().count(),
+            BL_ENTRIES.trim_end().lines().count(),
+            "line count preserved (tombstone overwrites, never removes/shifts)"
+        );
+        assert!(body.contains("<!-- np-backlog: removed -->"));
+        assert!(
+            !body.contains("a1b2c3"),
+            "removed entry's id is gone from the note body: {body:?}"
+        );
+        assert!(
+            body.contains("d4e5f6"),
+            "the other entry is untouched: {body:?}"
+        );
+    }
+
+    // patch-on-success: the removed id is GONE from the cached content's wikilink
+    // ids and the tombstone marker replaced it in place (not a vacuous check).
+    #[tokio::test]
+    async fn test_remove_patches_cache_on_success() {
+        let (cache, mock, _bl) = seed_backlog(BL_ENTRIES);
+        let writer = Writer::Mock(mock);
+        run_remove(&writer, &cache, "Work", "a1b2c3")
+            .await
+            .expect("remove should succeed");
+
+        assert_eq!(
+            cached_backlog_ids(&cache),
+            ids(&["d4e5f6"]),
+            "removed entry's id must be gone from the cached content"
+        );
+        let guard = cache.0.read().unwrap();
+        let store = guard.as_ref().expect("cache seeded");
+        let idx = *store.path_index.get(BL_REL).expect("backlog note in cache");
+        assert!(
+            store.notes[idx]
+                .content
+                .contains("<!-- np-backlog: removed -->"),
+            "cached content carries the tombstone marker in place"
+        );
+    }
+
+    // patch-only-on-success: a failed write leaves the removed id STILL present in
+    // the cached content (never a phantom removal).
+    #[tokio::test]
+    async fn test_remove_does_not_patch_on_failure() {
+        let (cache, mock, _bl) = seed_backlog(BL_ENTRIES);
+        mock.set_fail_replace();
+        let writer = Writer::Mock(mock);
+        let result = run_remove(&writer, &cache, "Work", "a1b2c3").await;
+        assert!(result.is_err(), "remove must surface the write failure");
+        assert_eq!(
+            cached_backlog_ids(&cache),
+            ids(&["a1b2c3", "d4e5f6"]),
+            "cache content UNCHANGED after a failed write — the id is still present"
+        );
+    }
+
+    // abort-on-unknown-id: an id absent from the section is rejected AFTER the
+    // verify fetch but BEFORE any write (never guess a line to tombstone).
+    #[tokio::test]
+    async fn test_remove_aborts_on_unknown_id() {
+        let (cache, mock, bl) = seed_backlog(BL_ENTRIES);
+        let writer = Writer::Mock(mock);
+        let result = run_remove(&writer, &cache, "Work", "nomatch0").await;
+        assert!(result.is_err(), "remove must abort on an unknown id");
+
+        let calls = writer.mock().calls();
+        let bl_key = MockMcp::addr_key(&bl);
+        assert!(
+            calls
+                .iter()
+                .any(|c| matches!(c, MockCall::GetNote(_)) && call_addr_key(c) == bl_key),
+            "backlog must be fetched (verify) before the planner rejects: {calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|c| matches!(c, MockCall::ReplaceLine(..))),
+            "no write to a guessed line when the id is unknown (abort on 0-match): {calls:?}"
+        );
     }
 }
