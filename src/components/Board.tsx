@@ -17,7 +17,7 @@ interface BoardProps {
 }
 
 /** The work queue: ranked tasks in rank order. Primarily read-only — grooming
- * happens in the Backlog — but ranked rows carry a ✕ remove/unrank affordance
+ * happens in the Backlog — but ranked rows carry a − remove/unrank affordance
  * (aiy) so a stale entry can be cleaned out without leaving the queue. */
 export function Board({ basePath, mcpConnected, mcpConnecting, onToast, onReconnect }: BoardProps) {
   const [data, setData] = useState<BacklogData | null>(null);

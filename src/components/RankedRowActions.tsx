@@ -13,7 +13,7 @@ export function rankedRowLabel(t: RankedTask): string {
 }
 
 /** Trailing actions for a ranked row, shared by the Board and Backlog queues.
- * A ✕ remove/unrank button (aiy) always trails, cleaning the entry out of the
+ * A − remove/unrank button (aiy) always trails, cleaning the entry out of the
  * app-owned #np-backlog note via the existing gated `backlogRemove` tombstone
  * path (verify-before-write, never a destructive delete). It is disabled while
  * offline or busy via `canRemove`. Three display states precede it:
@@ -37,12 +37,13 @@ export function RankedRowActions({
   const remove = (
     <button
       type="button"
-      title="Remove from backlog"
+      title="Remove from ranking"
+      aria-label="Remove from ranking"
       disabled={!canRemove}
       onClick={() => onUnrank(t)}
       className="hover:text-text-secondary disabled:opacity-40"
     >
-      ✕
+      −
     </button>
   );
   if (!t.resolved) {
