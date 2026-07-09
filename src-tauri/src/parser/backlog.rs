@@ -184,7 +184,7 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
     // separately would re-parse the control note and re-walk `resolve_folder`
     // three times per build.
     let projects_control = parse_project_control(store);
-    let ctx_projects = projects_control
+    let (ctx_projects, resolve_warnings) = projects_control
         .as_ref()
         .map(|c| resolve_context_projects(store, c))
         .unwrap_or_default();
@@ -378,6 +378,7 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
     let control_note_title = control.as_ref().map(|c| c.note_title.clone());
     let mut warnings = control.map(|c| c.warnings).unwrap_or_default();
     warnings.extend(projects_warnings);
+    warnings.extend(resolve_warnings);
 
     Backlog {
         contexts,
@@ -609,6 +610,38 @@ mod tests {
             b.warnings.iter().any(|w| w.contains("np-projects")),
             "expected a #np-projects ambiguity warning, got {:?}",
             b.warnings
+        );
+    }
+
+    #[test]
+    fn test_jd_collision_warning_reaches_backlog() {
+        // duq end-to-end: a JD-prefixed ref that resolves among two JD-colliding
+        // folders (no exact match) must surface its resolver warning in
+        // Backlog.warnings — the same channel #np-projects/#np-backlog warnings ride.
+        let projects_note = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/Projects.md",
+            "# P #np-projects\n## Work\n1. [[12 - Alpha]]\n",
+            NoteKind::Regular,
+        );
+        let a = parse_note(
+            "/a.md",
+            "Notes/12 - Alpha Project/a.md",
+            "# A\n* x\n",
+            NoteKind::Regular,
+        );
+        let b = parse_note(
+            "/b.md",
+            "Notes/12 - Alpha Archive/b.md",
+            "# B\n* y\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note, a, b]);
+        let bk = build_backlog(&st, &test_opts());
+        assert!(
+            bk.warnings.iter().any(|w| w.contains("sharing JD id")),
+            "expected the JD-collision warning in Backlog.warnings, got {:?}",
+            bk.warnings
         );
     }
 

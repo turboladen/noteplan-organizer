@@ -237,10 +237,8 @@ pub fn scan_scoped(base_path: &str) -> Option<NoteStore> {
     let mut resolved: HashSet<String> = HashSet::new();
     for ctx in &control.contexts {
         for r in &ctx.refs {
-            if let Some(folder) =
-                resolve_folder_among(folder_universe.iter().map(String::as_str), r)
-            {
-                resolved.insert(folder);
+            if let Some(m) = resolve_folder_among(folder_universe.iter().map(String::as_str), r) {
+                resolved.insert(m.folder);
             }
         }
     }
