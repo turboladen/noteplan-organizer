@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getBacklog, openNotePlanUrl } from "../api/commands";
 import type { Backlog as BacklogData, RankedTask } from "../types/api";
 import { TaskCard } from "./TaskCard";
+import { RankedRowActions } from "./RankedRowActions";
 import { ContextTagCaption } from "./ContextTagCaption";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 
@@ -125,29 +126,14 @@ export function Board({ basePath }: { basePath: string }) {
               <li key={t.block_id}>
                 <TaskCard
                   task={t}
-                  muted={!t.resolved}
+                  muted={!t.resolved || t.ghost}
                   hideProjectChip={groupBy === "project" && t.calendar_period === null}
                   slot={
                     <span className="inline-block w-full text-center text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-100 rounded-md">
                       {t.rank}
                     </span>
                   }
-                  actions={
-                    t.resolved ? (
-                      <button
-                        type="button"
-                        title="Open in NotePlan"
-                        onClick={() => openTask(t.source_relative_path)}
-                        className="hover:text-text-secondary"
-                      >
-                        ↗
-                      </button>
-                    ) : (
-                      <span className="text-[10px] text-amber-600" title="Block ID no longer resolves">
-                        stale
-                      </span>
-                    )
-                  }
+                  actions={<RankedRowActions t={t} onOpen={openTask} />}
                 />
               </li>
             ))}

@@ -101,6 +101,9 @@ export interface RankedTask {
   source_relative_path: string;
   line_number: number;
   resolved: boolean;
+  /** True when a resolved ranked entry points at a calendar [>] reschedule
+   * ghost — display-only; the task is muted, never dropped. */
+  ghost: boolean;
   tags: string[];
   project_title: string | null;
   project_rank: number | null;
