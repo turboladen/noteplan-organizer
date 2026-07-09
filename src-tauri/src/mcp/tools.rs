@@ -271,11 +271,30 @@ pub async fn replace_line(
     parse_edit_response(&envelope)
 }
 
-// NOTE: there is deliberately NO `delete_line` wrapper. The NotePlan MCP now
-// rejects `delete_lines` without a confirmationToken, and its `dryRun`/token
-// flow is BROKEN upstream (writes execute anyway — see CLAUDE.md), so we never
-// delete lines. The backlog "remove" path tombstones a line in place via
-// `replace_line` (`edit_line`) instead, keeping the write path non-destructive.
+/// Delete a SINGLE 1-based line (`delete_lines`). The ONLY line-count-reducing
+/// op. Callers RESTRICT this to the app-owned `#np-backlog` control note — NEVER a
+/// user content note (this is why it is permitted despite the app-wide "no
+/// `delete_lines` on content notes" rule). Asserts the write went through the
+/// bridge (NotePlan actually applied it) and reported `success:true`, exactly like
+/// `replace_line`/`insert_in_note`; a non-bridge or unsuccessful response is Err,
+/// so a broken delete aborts the GC pass rather than losing data.
+///
+/// ARG SHAPE UNVERIFIED — before merge (l9e §0), confirm in MCP Inspector against
+/// the scratch note that a single-line `delete_lines` SUCCEEDS through the bridge
+/// WITHOUT a `confirmationToken`, and nail the exact param shape (single `line`?
+/// `startLine`/`endLine`? `line`+`lineCount`? `lines:[…]`?). CLAUDE.md/docs still
+/// record the historical rejection-without-token; treat this shape as a best guess
+/// until Inspector-confirmed. The arg shape is isolated to the single `json!` line
+/// below so a different confirmed shape is a one-line change.
+pub async fn delete_line(state: &McpState, addr: &NoteAddr, line: usize) -> McpResult<String> {
+    // §0-PENDING best-guess arg shape: delete exactly ONE line by 1-based number.
+    let mut args = json!({ "action": "delete_lines", "line": line });
+    addr.inject(args.as_object_mut().expect("json object"));
+    let result = state.call_tool("noteplan_edit_content", args).await?;
+    let envelope = extract_text(&result);
+    assert_bridge_backend(&envelope, "delete_lines")?; // NotePlan actually applied it
+    parse_edit_response(&envelope) // Err unless success:true
+}
 
 // ---------------------------------------------------------------------------
 // noteplan_paragraphs (task operations)
@@ -434,6 +453,27 @@ mod tests {
         // absence of success:true is not success.
         assert!(parse_edit_response(r#"{"error":"boom"}"#).is_err());
         assert!(parse_edit_response(r#"{"message":"did a thing"}"#).is_err());
+    }
+
+    #[test]
+    fn test_delete_lines_success_false_aborts_gc() {
+        // `delete_line` reuses `parse_edit_response`: a `delete_lines` response that
+        // does NOT report success must be Err, so a failed/rejected delete (e.g. the
+        // historical no-token rejection) aborts the GC pass — no data loss, the
+        // tombstones simply persist until a later successful cleanup.
+        let json = r#"{"success":false,"error":"delete_lines requires a confirmationToken"}"#;
+        assert!(parse_edit_response(json).is_err());
+    }
+
+    #[test]
+    fn test_delete_lines_non_bridge_aborts() {
+        // A `delete_lines` reply not applied through the bridge must abort (the
+        // historic data-loss backend). Mirrors the edit_line bridge guard.
+        assert!(assert_bridge_backend(r#"{"backends":["files"]}"#, "delete_lines").is_err());
+        assert!(
+            assert_bridge_backend(r#"{"success":true,"backends":["bridge"]}"#, "delete_lines")
+                .is_ok()
+        );
     }
 
     #[test]

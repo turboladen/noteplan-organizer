@@ -1,7 +1,10 @@
 use crate::{
     analyzer::run_all_analyzers,
     app_state::{NoteStoreCache, WriteSuppression},
-    backlog_write::{WriteOp, plan_append_entry, plan_remove, plan_reorder, plan_stamp_block_id},
+    backlog_write::{
+        WriteOp, plan_append_entry, plan_gc_tombstones, plan_remove, plan_reorder,
+        plan_stamp_block_id, verify_all_tombstones,
+    },
     config, dump, export,
     mcp::{McpState, tools, tools::NoteAddr},
     models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report},
@@ -342,7 +345,8 @@ pub fn get_filing_suggestions(
 // pass-through to the exact `tools::*` functions (which keep their
 // `assert_bridge_backend` + `parse_edit_response` data-safety guards) — the
 // production write path is behaviour-identical to calling `tools::` directly.
-// There is deliberately NO delete method (the only destructive op was removed).
+// The `delete_line` method is the ONE line-count-reducing op; callers restrict it
+// to the app-owned backlog note (see `apply_ops`' `DeleteBacklogLine` arm).
 // A concrete enum (rather than a generic `trait`) sidesteps async-fn-in-trait
 // `Send` friction on the Tauri command futures.
 // ---------------------------------------------------------------------------
@@ -376,6 +380,17 @@ impl Writer<'_> {
             Writer::Mock(k) => k.insert_in_note(addr, text, line),
         }
     }
+
+    /// Delete a single 1-based line. The ONLY line-count-reducing op; `apply_ops`
+    /// only ever calls it for a `DeleteBacklogLine` against the app-owned backlog
+    /// note (never a content note).
+    async fn delete_line(&self, addr: &NoteAddr, line: usize) -> Result<(), String> {
+        match self {
+            Writer::Real(m) => tools::delete_line(m, addr, line).await.map(|_| ()),
+            #[cfg(test)]
+            Writer::Mock(k) => k.delete_line(addr, line),
+        }
+    }
 }
 
 // --- Test-only in-memory MCP write surface (used by the rank unit tests) -----
@@ -393,6 +408,7 @@ enum MockCall {
     GetNote(NoteAddr),
     ReplaceLine(NoteAddr, usize, String),
     InsertInNote(NoteAddr, usize, String),
+    DeleteLine(NoteAddr, usize),
 }
 
 #[cfg(test)]
@@ -402,6 +418,7 @@ struct MockInner {
     calls: Vec<MockCall>,
     fail_next_replace: bool,
     fail_next_insert: bool,
+    fail_next_delete: bool,
 }
 
 #[cfg(test)]
@@ -440,6 +457,10 @@ impl MockMcp {
 
     fn set_fail_insert(&self) {
         self.inner.lock().unwrap().fail_next_insert = true;
+    }
+
+    fn set_fail_delete(&self) {
+        self.inner.lock().unwrap().fail_next_delete = true;
     }
 
     fn body(&self, addr: &NoteAddr) -> String {
@@ -512,6 +533,31 @@ impl MockMcp {
             ));
         }
         lines.insert(line - 1, text.to_string());
+        Ok(())
+    }
+
+    fn delete_line(&self, addr: &NoteAddr, line: usize) -> Result<(), String> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.calls.push(MockCall::DeleteLine(addr.clone(), line));
+        if inner.fail_next_delete {
+            inner.fail_next_delete = false;
+            return Err("mock: forced delete_line failure".to_string());
+        }
+        let key = Self::addr_key(addr);
+        let lines = inner
+            .bodies
+            .get_mut(&key)
+            .ok_or_else(|| format!("mock: no note at {key}"))?;
+        // Mirror the real server reducing line count: bounds-check 1..=len (a
+        // delete past the end is a bug, surfaced rather than silently ignored),
+        // then remove the line.
+        if line < 1 || line > lines.len() {
+            return Err(format!(
+                "mock: delete line {line} out of range (1..={})",
+                lines.len()
+            ));
+        }
+        lines.remove(line - 1);
         Ok(())
     }
 }
@@ -686,8 +732,10 @@ async fn fetch_note_strict(
 /// Apply the line-level `ops` to `content` in memory, returning the post-write
 /// text. Used to patch the read cache locally (no MCP). Ops targeting one note
 /// are homogeneous per command (rank source = 1 replace; rank backlog = 1
-/// insert; reorder = N replaces; remove = 1 replace/tombstone), so sequential
-/// 1-based application has no index-shift hazard.
+/// insert; reorder = N replaces; remove = 1 replace/tombstone; GC = N deletes),
+/// so sequential 1-based application has no index-shift hazard — the GC deletes
+/// arrive DESCENDING (highest line first), so removing higher indices first keeps
+/// every lower not-yet-removed index valid, exactly mirroring `apply_ops`.
 fn content_after_ops(content: &str, ops: &[WriteOp]) -> String {
     let mut lines: Vec<String> = content.lines().map(String::from).collect();
     for op in ops {
@@ -713,6 +761,13 @@ fn content_after_ops(content: &str, ops: &[WriteOp]) -> String {
                 // it never affects disk. Confirm the server's at-line base in the
                 // manual smoke test.
                 lines.insert((line.saturating_sub(1)).min(lines.len()), text.clone());
+            }
+            WriteOp::DeleteBacklogLine { line } => {
+                // GC ops arrive DESCENDING, so removing higher indices first keeps
+                // every lower not-yet-removed index valid.
+                if *line >= 1 && *line <= lines.len() {
+                    lines.remove(*line - 1);
+                }
             }
         }
     }
@@ -832,6 +887,18 @@ async fn apply_ops(
                     text
                 );
                 writer.replace_line(backlog_addr, line, &text).await?;
+            }
+            WriteOp::DeleteBacklogLine { line } => {
+                // The deleted content is invariant (always the tombstone marker),
+                // so the line number is a complete audit trail. Only ever emitted
+                // by `plan_gc_tombstones` against the app-owned backlog note.
+                log::info!(
+                    "backlog[{}] via {}: delete tombstone line {}",
+                    scope,
+                    backlog_addr.mode(),
+                    line
+                );
+                writer.delete_line(backlog_addr, line).await?;
             }
         }
         // Re-arm from write COMPLETION so the trailing 2s debounce is covered even
@@ -1038,9 +1105,26 @@ pub async fn backlog_reorder(
     .await
 }
 
-/// Testable reorder body (drives a real or mock `Writer`). Delegates the
-/// single-note fetch→plan→apply→patch protocol to `run_backlog_write`; the only
-/// reorder-specific piece is the `plan_reorder` closure.
+/// Testable reorder body (drives a real or mock `Writer`). Runs in TWO isolated
+/// phases:
+///
+/// 1. The reorder itself — the single-note fetch→plan→apply→patch protocol
+///    (`run_backlog_write` with `plan_reorder`), EXACTLY as before. Its result is
+///    the ONLY thing that determines the command's outcome: on failure we return
+///    the error and never touch anything else.
+///
+/// 2. A SEPARATE, best-effort tombstone GC pass (`gc_tombstones_best_effort`).
+///    It re-fetches the note FRESH (a second `get_note` against the just-reordered
+///    content — stronger verify-before-write than reusing phase-1's snapshot),
+///    plans+verifies deletes against THAT content, and deletes accumulated
+///    tombstones bottom-up. Its error is LOGGED and SWALLOWED: a cleanup hiccup
+///    must never fail — or appear to fail — the user's reorder. Reorder Ok + GC
+///    Err → the user sees a successful reorder; the tombstones simply remain and
+///    an error is logged. This isolation is why the FIRST destructive op is safe
+///    to ship even if `delete_lines` proves flaky (l9e §0 gate pending).
+///
+/// GC runs on reorder ONLY — never on remove (preserves remove's tested
+/// non-destructive tombstone invariant) and never on rank.
 async fn reorder_inner(
     writer: &Writer<'_>,
     cache: &NoteStoreCache,
@@ -1049,6 +1133,7 @@ async fn reorder_inner(
     ordered_block_ids: &[String],
     backlog_note_title: &str,
 ) -> Result<(), String> {
+    // Phase 1: the reorder. A failure here aborts before any GC (return early).
     run_backlog_write(
         writer,
         cache,
@@ -1056,6 +1141,68 @@ async fn reorder_inner(
         backlog_note_title,
         "reorder",
         |content| plan_reorder(content, context, ordered_block_ids),
+    )
+    .await?;
+
+    // Phase 2: best-effort tombstone GC. NEVER propagate its error — the reorder
+    // already succeeded and its result stands regardless of the cleanup outcome.
+    if let Err(e) = gc_tombstones_best_effort(writer, cache, suppress, backlog_note_title).await {
+        log::warn!(
+            "reorder tombstone GC skipped (reorder itself succeeded; tombstones left in place): \
+             {e}"
+        );
+    }
+    Ok(())
+}
+
+/// Best-effort deletion of accumulated tombstone lines in the app-owned backlog
+/// note, run as a SEPARATE pass AFTER a successful reorder. Re-fetches the note
+/// FRESH (so the deletes plan against the current post-reorder content — the
+/// single-fetch verify-before-write model, not a reused pre-reorder snapshot),
+/// plans deletes via `plan_gc_tombstones`, re-verifies every planned target is
+/// EXACTLY a tombstone in that same fetched content (`verify_all_tombstones` —
+/// belt-and-suspenders against a FUTURE planner bug, not against a concurrent
+/// edit: it reads the same in-memory content the planner did and does not
+/// re-fetch), applies them bottom-up, and patches the cache ONLY on success.
+/// Returns Err on any failure so the caller can LOG it; the caller must NOT
+/// propagate it (a GC failure must never fail the reorder). Delegates to the same
+/// safe `run_backlog_write` protocol every other backlog write uses, so the
+/// ownership gate, single-fetch model, suppression, and patch-on-success-only all
+/// apply unchanged — including its accepted limitation that a concurrent NotePlan
+/// edit inside the seconds-long fetch→write window is not detected (here a delete
+/// removes+shifts a line, so this window is higher-stakes than for the additive
+/// ops; mitigated by best-effort isolation, exact note-wide tombstone matching,
+/// and the fresh re-fetch — see l9e §0 human empirical gate before merge).
+async fn gc_tombstones_best_effort(
+    writer: &Writer<'_>,
+    cache: &NoteStoreCache,
+    suppress: &WriteSuppression,
+    backlog_note_title: &str,
+) -> Result<(), String> {
+    run_backlog_write(
+        writer,
+        cache,
+        suppress,
+        backlog_note_title,
+        "gc-tombstones",
+        |content| {
+            let ops = plan_gc_tombstones(content)?;
+            // Belt-and-suspenders: re-confirm every planned delete targets an EXACT
+            // tombstone in the SAME fetched content the planner read. With today's
+            // `plan_gc_tombstones` this can only pass; it exists to catch a FUTURE
+            // planner bug (predicate divergence) — if any target isn't a tombstone,
+            // abort the whole GC pass (zero deletes) rather than delete a line we
+            // can't prove is a tombstone.
+            let targets: Vec<usize> = ops
+                .iter()
+                .filter_map(|op| match op {
+                    WriteOp::DeleteBacklogLine { line } => Some(*line),
+                    _ => None,
+                })
+                .collect();
+            verify_all_tombstones(content, &targets)?;
+            Ok(ops)
+        },
     )
     .await
 }
@@ -1130,7 +1277,8 @@ async fn remove_inner(
 mod tests {
     use super::{
         MockCall, MockMcp, Writer, content_after_ops, existing_ids_from_cache, rank_task_inner,
-        remove_inner, reorder_inner, resolve_note_by_path, title_matches,
+        remove_inner, reorder_inner, resolve_note_by_path, run_backlog_write, title_matches,
+        verify_all_tombstones,
     };
     use crate::{
         app_state::{NoteStoreCache, WriteSuppression},
@@ -1195,6 +1343,19 @@ mod tests {
                 ]
             ),
             "two\none\n"
+        );
+        // GC deletes arrive DESCENDING: removing higher indices first leaves the
+        // lower not-yet-removed targets valid, so lines 2 and 4 (the tombstones)
+        // are removed and lines 1, 3, 5 survive in order.
+        assert_eq!(
+            content_after_ops(
+                "keep1\ndrop2\nkeep3\ndrop4\nkeep5\n",
+                &[
+                    WriteOp::DeleteBacklogLine { line: 4 },
+                    WriteOp::DeleteBacklogLine { line: 2 },
+                ]
+            ),
+            "keep1\nkeep3\nkeep5\n"
         );
     }
 
@@ -1299,9 +1460,10 @@ mod tests {
 
     fn call_addr_key(c: &MockCall) -> String {
         match c {
-            MockCall::GetNote(a) | MockCall::ReplaceLine(a, ..) | MockCall::InsertInNote(a, ..) => {
-                MockMcp::addr_key(a)
-            }
+            MockCall::GetNote(a)
+            | MockCall::ReplaceLine(a, ..)
+            | MockCall::InsertInNote(a, ..)
+            | MockCall::DeleteLine(a, ..) => MockMcp::addr_key(a),
         }
     }
 
@@ -1917,6 +2079,230 @@ mod tests {
         assert!(
             !calls.iter().any(|c| matches!(c, MockCall::ReplaceLine(..))),
             "no write to a guessed line when the id is unknown (abort on 0-match): {calls:?}"
+        );
+    }
+
+    // --- reorder tombstone GC (the FIRST destructive op) ---
+
+    // Backlog "Work" section with two ranked entries and ONE tombstone between
+    // them (line 4). Reorder repositions the two entries (lines 3, 5); GC then
+    // deletes the tombstone.
+    const BL_ONE_TOMBSTONE: &str = "# Backlog #np-backlog\n## Work\n- [[Janet^a1b2c3]] Ship v2 \
+                                    spec\n<!-- np-backlog: removed -->\n- [[Ops^d4e5f6]] Review \
+                                    tix\n";
+
+    // Two tombstones (lines 4 and 6) so the bottom-up delete order is observable.
+    const BL_TWO_TOMBSTONES: &str = "# Backlog #np-backlog\n## Work\n- [[Janet^a1b2c3]] Ship v2 \
+                                     spec\n<!-- np-backlog: removed -->\n- [[Ops^d4e5f6]] Review \
+                                     tix\n<!-- np-backlog: removed -->\n";
+
+    // GC deletes ONLY the tombstone line, each delete preceded by a fresh
+    // get_note (verify-before-write), leaving every real entry byte-identical and
+    // reducing the line count by exactly the tombstone count.
+    #[tokio::test]
+    async fn test_gc_deletes_only_tombstones_via_mock() {
+        let (cache, mock, bl) = seed_backlog(BL_ONE_TOMBSTONE);
+        let writer = Writer::Mock(mock);
+        run_reorder(&writer, &cache, "Work", &ids(&["d4e5f6", "a1b2c3"]))
+            .await
+            .expect("reorder + GC should succeed");
+
+        let calls = writer.mock().calls();
+        let bl_key = MockMcp::addr_key(&bl);
+        let deletes: Vec<(usize, usize)> = calls
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| match c {
+                MockCall::DeleteLine(a, line) if MockMcp::addr_key(a) == bl_key => Some((i, *line)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(deletes.len(), 1, "exactly one tombstone deleted: {calls:?}");
+        assert_eq!(deletes[0].1, 4, "the tombstone sat on line 4");
+        // Each delete is preceded by a get_note (verify-before-write on fresh
+        // content): the GC pass's own re-fetch.
+        let last_get_before_delete = calls[..deletes[0].0]
+            .iter()
+            .rposition(|c| matches!(c, MockCall::GetNote(_)) && call_addr_key(c) == bl_key);
+        assert!(
+            last_get_before_delete.is_some(),
+            "a get_note(backlog) must precede the delete: {calls:?}"
+        );
+
+        let body = writer.mock().body(&bl);
+        assert!(
+            !body.contains("<!-- np-backlog: removed -->"),
+            "tombstone gone: {body:?}"
+        );
+        assert!(
+            body.contains("- [[Janet^a1b2c3]] Ship v2 spec"),
+            "Janet entry byte-identical: {body:?}"
+        );
+        assert!(
+            body.contains("- [[Ops^d4e5f6]] Review tix"),
+            "Ops entry byte-identical: {body:?}"
+        );
+        assert_eq!(
+            body.lines().count(),
+            BL_ONE_TOMBSTONE.trim_end().lines().count() - 1,
+            "line count reduced by exactly the tombstone count"
+        );
+    }
+
+    // Bottom-up delete order: with two tombstones the emitted DeleteLine sequence
+    // is strictly DESCENDING (highest line first), so no delete shifts a
+    // not-yet-deleted lower target.
+    #[tokio::test]
+    async fn test_gc_delete_order_is_bottom_up() {
+        let (cache, mock, bl) = seed_backlog(BL_TWO_TOMBSTONES);
+        let writer = Writer::Mock(mock);
+        run_reorder(&writer, &cache, "Work", &ids(&["d4e5f6", "a1b2c3"]))
+            .await
+            .expect("reorder + GC should succeed");
+
+        let bl_key = MockMcp::addr_key(&bl);
+        let delete_lines: Vec<usize> = writer
+            .mock()
+            .calls()
+            .iter()
+            .filter_map(|c| match c {
+                MockCall::DeleteLine(a, line) if MockMcp::addr_key(a) == bl_key => Some(*line),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(delete_lines, vec![6, 4], "deletes issued bottom-up");
+
+        let body = writer.mock().body(&bl);
+        assert!(
+            !body.contains("<!-- np-backlog: removed -->"),
+            "both tombstones gone: {body:?}"
+        );
+        assert_eq!(
+            body.lines().count(),
+            BL_TWO_TOMBSTONES.trim_end().lines().count() - 2,
+            "line count reduced by exactly both tombstones"
+        );
+    }
+
+    // THE combined proof: reorder to a new order with an interspersed tombstone →
+    // final body is the entries in the NEW order, each byte-identical, the
+    // tombstone gone, line count = #entries + headings, and no entry mislocated
+    // (the Janet entry that sat adjacent to the deleted tombstone is intact and in
+    // its new position).
+    #[tokio::test]
+    async fn test_reorder_then_gc_final_order_and_no_tombstones() {
+        let (cache, mock, bl) = seed_backlog(BL_ONE_TOMBSTONE);
+        let writer = Writer::Mock(mock);
+        run_reorder(&writer, &cache, "Work", &ids(&["d4e5f6", "a1b2c3"]))
+            .await
+            .expect("reorder + GC should succeed");
+
+        // Cache reflects the new order (Ops before Janet).
+        assert_eq!(
+            cached_backlog_ids(&cache),
+            ids(&["d4e5f6", "a1b2c3"]),
+            "cache shows the new entry order after reorder + GC"
+        );
+
+        // On-disk (mock) body: exact expected final content.
+        let body = writer.mock().body(&bl);
+        assert_eq!(
+            body,
+            "# Backlog #np-backlog\n## Work\n- [[Ops^d4e5f6]] Review tix\n- [[Janet^a1b2c3]] Ship \
+             v2 spec",
+            "final body = entries in new order, tombstone gone, nothing mislocated: {body:?}"
+        );
+    }
+
+    // (Y) split proof: GC is a SEPARATE best-effort pass — a delete failure is
+    // SWALLOWED, so the reorder still returns Ok, its cache patch stands, and the
+    // tombstone simply remains. A delete_lines hiccup can NEVER fail the reorder.
+    #[tokio::test]
+    async fn test_reorder_ok_when_gc_delete_fails() {
+        let (cache, mock, bl) = seed_backlog(BL_ONE_TOMBSTONE);
+        mock.set_fail_delete(); // the GC delete will fail
+        let writer = Writer::Mock(mock);
+        let result = run_reorder(&writer, &cache, "Work", &ids(&["d4e5f6", "a1b2c3"])).await;
+
+        assert!(
+            result.is_ok(),
+            "reorder must still succeed when GC's delete fails: {result:?}"
+        );
+        // Reorder's own cache patch stands (new order), independent of GC.
+        assert_eq!(
+            cached_backlog_ids(&cache),
+            ids(&["d4e5f6", "a1b2c3"]),
+            "reorder cache patch stands even though GC failed"
+        );
+        // The reorder DID run (entries repositioned on disk)...
+        let body = writer.mock().body(&bl);
+        let ops_pos = body.find("d4e5f6").expect("Ops entry present");
+        let janet_pos = body.find("a1b2c3").expect("Janet entry present");
+        assert!(ops_pos < janet_pos, "entries reordered on disk: {body:?}");
+        // ...but the tombstone REMAINS (GC delete failed, was swallowed).
+        assert!(
+            body.contains("<!-- np-backlog: removed -->"),
+            "tombstone remains after the swallowed GC failure: {body:?}"
+        );
+    }
+
+    // No tombstones present → GC emits zero deletes: reorder issues NO DeleteLine
+    // call at all (the no-op cleanup path; also the regression guard that the
+    // reorder path is untouched when the note is tombstone-free).
+    #[tokio::test]
+    async fn test_reorder_without_tombstones_issues_no_delete() {
+        let (cache, mock, _bl) = seed_backlog(BL_ENTRIES);
+        let writer = Writer::Mock(mock);
+        run_reorder(&writer, &cache, "Work", &ids(&["d4e5f6", "a1b2c3"]))
+            .await
+            .expect("reorder should succeed");
+        assert!(
+            !writer
+                .mock()
+                .calls()
+                .iter()
+                .any(|c| matches!(c, MockCall::DeleteLine(..))),
+            "no delete_lines call when there are no tombstones to collect"
+        );
+    }
+
+    // Belt-and-suspenders verify-before-write for deletes: if a (hypothetically
+    // buggy) GC plan ever listed a NON-tombstone line, `verify_all_tombstones`
+    // aborts the pass BEFORE any delete — zero DeleteLine calls and the note is
+    // byte-unchanged. We simulate the buggy plan by handing `run_backlog_write` a
+    // closure that plans a delete of an ENTRY line (3) yet still runs the guard,
+    // exactly as `gc_tombstones_best_effort` does.
+    #[tokio::test]
+    async fn test_gc_verify_aborts_on_non_tombstone_target() {
+        let (cache, mock, bl) = seed_backlog(BL_ENTRIES);
+        let writer = Writer::Mock(mock);
+        let suppress = WriteSuppression::default();
+        let before = writer.mock().body(&bl);
+
+        let result = run_backlog_write(&writer, &cache, &suppress, "Backlog", "gc-abort-test", {
+            |content| {
+                // A planner bug: target an entry line (3), not a tombstone.
+                let bad_ops = vec![WriteOp::DeleteBacklogLine { line: 3 }];
+                // The guard must catch it against the SAME fetched content.
+                verify_all_tombstones(content, &[3])?;
+                Ok(bad_ops)
+            }
+        })
+        .await;
+
+        assert!(
+            result.is_err(),
+            "verify must abort the GC pass on a non-tombstone target"
+        );
+        let calls = writer.mock().calls();
+        assert!(
+            !calls.iter().any(|c| matches!(c, MockCall::DeleteLine(..))),
+            "no delete may occur when verify aborts: {calls:?}"
+        );
+        assert_eq!(
+            writer.mock().body(&bl),
+            before,
+            "note is byte-unchanged when verify aborts"
         );
     }
 }
