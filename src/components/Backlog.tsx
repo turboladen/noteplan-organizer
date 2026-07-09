@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { backlogRankTask, backlogReorder, getBacklog, openNotePlanUrl } from "../api/commands";
 import type { Backlog as BacklogData, PoolTask, RankedTask } from "../types/api";
 import { TaskCard } from "./TaskCard";
+import { RankedRowActions } from "./RankedRowActions";
 import { ContextTagCaption } from "./ContextTagCaption";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 import { matchesSearch } from "../utils/taskMeta";
@@ -149,22 +150,42 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
     const pool = ctx.pool.filter((t) => matchesSearch(search, t.text, t.tags));
 
     const projectGroups = new Map<string, InventoryGroup>();
+    const makeProjectGroup = (title: string, rank: number | null): InventoryGroup => ({
+      key: `p:${title}`,
+      label: title,
+      rankBadge: rank,
+      isCalendar: false,
+      tasks: [],
+      rankedCount: rankedCountFor((r) => r.project_title === title),
+    });
     const calendarTasks: PoolTask[] = [];
     const other: PoolTask[] = [];
     for (const t of pool) {
       if (t.calendar_period !== null) calendarTasks.push(t);
       else if (t.project_title !== null) {
-        const g = projectGroups.get(t.project_title) ?? {
-          key: `p:${t.project_title}`,
-          label: t.project_title,
-          rankBadge: t.project_rank,
-          isCalendar: false,
-          tasks: [],
-          rankedCount: rankedCountFor((r) => r.project_title === t.project_title),
-        };
+        const g =
+          projectGroups.get(t.project_title) ??
+          makeProjectGroup(t.project_title, t.project_rank);
         g.tasks.push(t);
         projectGroups.set(t.project_title, g);
       } else other.push(t);
+    }
+    // uof: under an ACTIVE search, a project whose RANKED tasks match the query
+    // but that has ZERO matching pool tasks produces no header above, so its
+    // ranked matches are invisible in the inventory. Inject an empty-bodied group
+    // for it (guarded by !has so the pool loop's groups aren't duplicated). Scoped
+    // to search so the unfiltered inventory isn't cluttered with all-ranked
+    // projects. Counts reuse the shared rankedMatching pass — no double count (mu1).
+    if (search.trim()) {
+      for (const r of rankedMatching) {
+        if (
+          r.project_title !== null &&
+          r.calendar_period === null &&
+          !projectGroups.has(r.project_title)
+        ) {
+          projectGroups.set(r.project_title, makeProjectGroup(r.project_title, r.project_rank));
+        }
+      }
     }
     const result = [...projectGroups.values()].sort(
       (a, b) => (a.rankBadge ?? 9999) - (b.rankBadge ?? 9999),
@@ -312,7 +333,7 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
             >
               <TaskCard
                 task={t}
-                muted={!t.resolved}
+                muted={!t.resolved || t.ghost}
                 slot={
                   <span className="flex items-center gap-1">
                     <span className="text-text-muted cursor-grab text-[10px]">⋮⋮</span>
@@ -321,22 +342,7 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
                     </span>
                   </span>
                 }
-                actions={
-                  t.resolved ? (
-                    <button
-                      type="button"
-                      title="Open in NotePlan"
-                      onClick={() => openTask(t.source_relative_path)}
-                      className="hover:text-text-secondary"
-                    >
-                      ↗
-                    </button>
-                  ) : (
-                    <span className="text-[10px] text-amber-600" title="Block ID no longer resolves">
-                      stale
-                    </span>
-                  )
-                }
+                actions={<RankedRowActions t={t} onOpen={openTask} />}
               />
             </li>
           ))}
