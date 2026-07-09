@@ -501,8 +501,17 @@ impl MockMcp {
             .bodies
             .get_mut(&key)
             .ok_or_else(|| format!("mock: no note at {key}"))?;
-        let idx = line.saturating_sub(1).min(lines.len());
-        lines.insert(idx, text.to_string());
+        // Reject out-of-range like the real server (parse_edit_response surfaces
+        // "line N out of range") instead of silently clamping — clamping would
+        // mask a planner/executor bug that produced a bad insert position. Valid
+        // insert positions are 1..=len+1 (len+1 = append after the last line).
+        if line < 1 || line > lines.len() + 1 {
+            return Err(format!(
+                "mock: insert line {line} out of range (1..={})",
+                lines.len() + 1
+            ));
+        }
+        lines.insert(line - 1, text.to_string());
         Ok(())
     }
 }
@@ -715,8 +724,16 @@ fn content_after_ops(content: &str, ops: &[WriteOp]) -> String {
 }
 
 /// Patch the read cache for one note by computing its post-write content locally
-/// (pre-write content + the ops we applied) — ZERO MCP calls. Only called after
-/// a SUCCESSFUL write (else computed content wouldn't match a partial write).
+/// (pre-write content + the ops we applied) — ZERO MCP calls. Called after a
+/// SUCCESSFUL write (else computed content wouldn't match a partial write).
+///
+/// With EMPTY `ops` — an idempotent stamp, where `plan_stamp_block_id` found the
+/// `^id` already on the freshly-fetched line and emitted no write — this still
+/// refreshes the cache to `pre_content`. That's deliberate: it teaches the
+/// block-id collision set (`existing_ids_from_cache`) about an id already on disk
+/// that a stale cache hadn't seen yet, closing the idempotent-path analog of the
+/// partial-failure duplicate-id risk this write path guards against.
+///
 /// This is a READ cache patch only; a rare divergence (a concurrent user edit
 /// mid-write) just causes brief display staleness that the next real watcher
 /// event / manual scan corrects. Skips notes not uniquely in the cache.
@@ -729,9 +746,8 @@ fn patch_cache_after_ops(
     let Some((file_path, rel, kind)) = &resolved.patch else {
         return;
     };
-    if ops.is_empty() {
-        return;
-    }
+    // content_after_ops with empty ops returns pre_content — the fresh on-disk
+    // content — so an idempotent re-stamp still refreshes the cached note.
     let post = content_after_ops(pre_content, ops);
     let note = parse_note(file_path, rel, &post, kind.clone());
     let mut guard = cache.0.write().unwrap_or_else(|p| p.into_inner());
@@ -1382,6 +1398,45 @@ mod tests {
             "# Design\n* Ship v2 spec !! ^abc123"
         );
         assert_eq!(entry_id(&writer.mock().body(&backlog_addr)), "abc123");
+    }
+
+    #[tokio::test]
+    async fn test_rank_idempotent_refreshes_stale_cache_with_on_disk_id() {
+        // Regression for the idempotent-path duplicate-id gap: the cache is STALE
+        // (it doesn't yet know the ^id already on the source line), while the fresh
+        // on-disk content the writer fetches DOES carry it. An idempotent rank
+        // (no source write) must still refresh the cache so the collision set
+        // learns the on-disk id — otherwise a later rank could regenerate it.
+        let source_abs = format!("/abs/{SRC_REL}");
+        let backlog_abs = format!("/abs/{BL_REL}");
+        let store = NoteStore::new(vec![
+            parse_note(
+                &source_abs,
+                SRC_REL,
+                "# Design\n* Ship v2 spec !!\n",
+                NoteKind::Regular,
+            ),
+            parse_note(&backlog_abs, BL_REL, BL_BODY, NoteKind::Regular),
+        ]);
+        let cache = NoteStoreCache::default();
+        cache.set(store);
+        let source_addr = NoteAddr::Filename(SRC_REL.to_string());
+        let backlog_addr = NoteAddr::Filename(BL_REL.to_string());
+        let mock = MockMcp::with_note(&source_addr, "# Design\n* Ship v2 spec !! ^stalid\n");
+        mock.seed(&backlog_addr, BL_BODY);
+        let writer = Writer::Mock(mock);
+
+        assert!(
+            !existing_ids_from_cache(&cache, "/abs").contains("stalid"),
+            "precondition: the stale cache does not yet know the on-disk id"
+        );
+        run_rank(&writer, &cache)
+            .await
+            .expect("idempotent rank should succeed");
+        assert!(
+            existing_ids_from_cache(&cache, "/abs").contains("stalid"),
+            "idempotent rank must refresh the cache so the collision set learns the on-disk ^id"
+        );
     }
 
     // (f) ROUND-2(b): the backlog insert FAILS but the stamp succeeds. Rank must
