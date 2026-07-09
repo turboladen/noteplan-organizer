@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { backlogRankTask, backlogReorder, getBacklog, openNotePlanUrl } from "../api/commands";
+import {
+  backlogRankTask,
+  backlogRemove,
+  backlogReorder,
+  getBacklog,
+  openNotePlanUrl,
+} from "../api/commands";
 import type { Backlog as BacklogData, PoolTask, RankedTask } from "../types/api";
 import { TaskCard } from "./TaskCard";
-import { RankedRowActions } from "./RankedRowActions";
+import { RankedRowActions, rankedRowLabel } from "./RankedRowActions";
 import { ContextTagCaption } from "./ContextTagCaption";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 import { matchesSearch } from "../utils/taskMeta";
@@ -128,6 +134,23 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
       load(includeOlder);
     } catch (e) {
       onToast(`Add failed: ${e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleUnrank = async (t: RankedTask) => {
+    if (!ctx) return;
+    setBusy(true);
+    try {
+      // Routes to the gated verify-before-write tombstone path (edit_line blank,
+      // never a destructive delete); removes the entry from the app-owned
+      // #np-backlog note only, leaving the source task untouched.
+      await backlogRemove(ctx.name, t.block_id, backlogTitle);
+      onToast(`Removed from ${ctx.name} backlog`);
+      load(includeOlder);
+    } catch (e) {
+      onToast(`Remove failed: ${e}`);
     } finally {
       setBusy(false);
     }
@@ -332,7 +355,7 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
               onDrop={() => onDrop(i)}
             >
               <TaskCard
-                task={t}
+                task={{ ...t, text: rankedRowLabel(t) }}
                 muted={!t.resolved || t.ghost}
                 slot={
                   <span className="flex items-center gap-1">
@@ -342,7 +365,14 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
                     </span>
                   </span>
                 }
-                actions={<RankedRowActions t={t} onOpen={openTask} />}
+                actions={
+                  <RankedRowActions
+                    t={t}
+                    onOpen={openTask}
+                    onUnrank={handleUnrank}
+                    canRemove={mcpConnected && !busy && hasBacklogNote}
+                  />
+                }
               />
             </li>
           ))}

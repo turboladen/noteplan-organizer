@@ -434,7 +434,15 @@ function App() {
               </div>
             )}
 
-            {activeView === "board" && <Board basePath={notePlanPath} />}
+            {activeView === "board" && (
+              <Board
+                basePath={notePlanPath}
+                mcpConnected={mcpConnected}
+                mcpConnecting={mcpState === "connecting"}
+                onToast={showToast}
+                onReconnect={handleMcpConnect}
+              />
+            )}
 
             {activeView === "backlog" && (
               <Backlog

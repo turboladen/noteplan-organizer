@@ -1,41 +1,84 @@
-import { useEffect, useMemo, useState } from "react";
-import { getBacklog, openNotePlanUrl } from "../api/commands";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { backlogRemove, getBacklog, openNotePlanUrl } from "../api/commands";
 import type { Backlog as BacklogData, RankedTask } from "../types/api";
 import { TaskCard } from "./TaskCard";
-import { RankedRowActions } from "./RankedRowActions";
+import { RankedRowActions, rankedRowLabel } from "./RankedRowActions";
 import { ContextTagCaption } from "./ContextTagCaption";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 
 type GroupBy = "none" | "project";
 
-/** The work queue: ranked tasks in rank order. Read-only in Phase 1 (Open
- * action only); grooming happens in the Backlog. */
-export function Board({ basePath }: { basePath: string }) {
+interface BoardProps {
+  basePath: string;
+  mcpConnected: boolean;
+  mcpConnecting: boolean;
+  onToast: (m: string) => void;
+  onReconnect: () => void;
+}
+
+/** The work queue: ranked tasks in rank order. Primarily read-only — grooming
+ * happens in the Backlog — but ranked rows carry a ✕ remove/unrank affordance
+ * (aiy) so a stale entry can be cleaned out without leaving the queue. */
+export function Board({ basePath, mcpConnected, mcpConnecting, onToast, onReconnect }: BoardProps) {
   const [data, setData] = useState<BacklogData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeCtx, setActiveCtx] = useState(0);
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  // A monotonic generation guards every load() — the effect-driven one and the
+  // imperative post-write reloads alike. Each call captures the current gen and
+  // applies its result only if still the latest, so a stale in-flight load
+  // (superseded by a newer reload, or from a vault the user already navigated
+  // away from) can never apply the wrong vault's data. (noteplan-organizer-lo2)
+  const loadGen = useRef(0);
+  const load = (isReload = false) => {
+    const gen = ++loadGen.current;
     getBacklog(basePath)
       .then((b) => {
-        if (cancelled) return;
+        if (gen !== loadGen.current) return;
         setData(b);
         setError(null);
-        setActiveCtx(0);
+        setActiveCtx((i) => (i < b.contexts.length ? i : 0));
       })
       .catch((e) => {
-        if (cancelled) return;
-        setData(null);
-        setError(String(e));
+        if (gen !== loadGen.current) return;
+        // Only the initial load takes over the view with the error page; a
+        // post-write reload failure keeps the current board (the write already
+        // succeeded) and just surfaces a toast, mirroring the Backlog.
+        if (isReload) onToast(`Board reload failed: ${e}`);
+        else {
+          setData(null);
+          setError(String(e));
+        }
       });
-    return () => {
-      cancelled = true;
-    };
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only on basePath; load reads basePath
   }, [basePath]);
 
   const ctx = data?.contexts[activeCtx];
+  const backlogTitle = data?.control_note_title ?? "";
+  const hasBacklogNote = data?.control_note_title != null;
+
+  const handleUnrank = async (t: RankedTask) => {
+    if (!ctx) return;
+    setBusy(true);
+    try {
+      // Routes to the gated verify-before-write tombstone path (edit_line blank,
+      // never a destructive delete); removes the entry from the app-owned
+      // #np-backlog note only, leaving the source task untouched.
+      await backlogRemove(ctx.name, t.block_id, backlogTitle);
+      onToast(`Removed from ${ctx.name} backlog`);
+      load(true);
+    } catch (e) {
+      onToast(`Remove failed: ${e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const groups = useMemo(() => {
     const ranked = ctx?.ranked ?? [];
@@ -68,6 +111,27 @@ export function Board({ basePath }: { basePath: string }) {
       <p className="text-xs text-text-muted mb-3">
         Your ranked queue — groom it in the Backlog, work it here.
       </p>
+
+      {!mcpConnected && mcpConnecting && (
+        <div className="mb-3 text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded-[var(--radius-card)] px-3 py-2">
+          Connecting to NotePlan…
+        </div>
+      )}
+      {!mcpConnected && !mcpConnecting && (
+        <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-[var(--radius-card)] px-3 py-2 flex items-center justify-between gap-3">
+          <span>
+            Removing is paused — the NotePlan connection is offline. The board is
+            read-only until it reconnects.
+          </span>
+          <button
+            type="button"
+            onClick={onReconnect}
+            className="flex-shrink-0 font-medium text-accent-700 hover:underline"
+          >
+            Reconnect
+          </button>
+        </div>
+      )}
 
       <div className="flex items-center justify-between mb-4">
         <div className="inline-flex items-center bg-surface-hover rounded-[var(--radius-button)] p-0.5">
@@ -125,7 +189,7 @@ export function Board({ basePath }: { basePath: string }) {
             {g.tasks.map((t) => (
               <li key={t.block_id}>
                 <TaskCard
-                  task={t}
+                  task={{ ...t, text: rankedRowLabel(t) }}
                   muted={!t.resolved || t.ghost}
                   hideProjectChip={groupBy === "project" && t.calendar_period === null}
                   slot={
@@ -133,7 +197,14 @@ export function Board({ basePath }: { basePath: string }) {
                       {t.rank}
                     </span>
                   }
-                  actions={<RankedRowActions t={t} onOpen={openTask} />}
+                  actions={
+                    <RankedRowActions
+                      t={t}
+                      onOpen={openTask}
+                      onUnrank={handleUnrank}
+                      canRemove={mcpConnected && !busy && hasBacklogNote}
+                    />
+                  }
                 />
               </li>
             ))}
