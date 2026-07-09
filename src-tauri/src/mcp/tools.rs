@@ -279,16 +279,16 @@ pub async fn replace_line(
 /// `replace_line`/`insert_in_note`; a non-bridge or unsuccessful response is Err,
 /// so a broken delete aborts the GC pass rather than losing data.
 ///
-/// ARG SHAPE UNVERIFIED — before merge (l9e §0), confirm in MCP Inspector against
-/// the scratch note that a single-line `delete_lines` SUCCEEDS through the bridge
-/// WITHOUT a `confirmationToken`, and nail the exact param shape (single `line`?
-/// `startLine`/`endLine`? `line`+`lineCount`? `lines:[…]`?). CLAUDE.md/docs still
-/// record the historical rejection-without-token; treat this shape as a best guess
-/// until Inspector-confirmed. The arg shape is isolated to the single `json!` line
-/// below so a different confirmed shape is a one-line change.
+/// ARG SHAPE VERIFIED via MCP Inspector (l9e §0, 2026-07-09): `delete_lines` takes
+/// `startLine`/`endLine` (1-indexed, inclusive) — NOT `line` — and SUCCEEDS through
+/// the bridge WITHOUT a `confirmationToken` (the historical no-token rejection no
+/// longer applies). A single-line delete is the inclusive range `startLine == endLine`.
+/// The note MUST be addressed by its canonical filename/id (callers resolve it via
+/// `noteplan_get_notes` before writing, exactly like every other write op) — a
+/// hand-typed relative path returns `ERR_NOT_FOUND`.
 pub async fn delete_line(state: &McpState, addr: &NoteAddr, line: usize) -> McpResult<String> {
-    // §0-PENDING best-guess arg shape: delete exactly ONE line by 1-based number.
-    let mut args = json!({ "action": "delete_lines", "line": line });
+    // Delete exactly ONE line as a 1-based inclusive single-line range.
+    let mut args = json!({ "action": "delete_lines", "startLine": line, "endLine": line });
     addr.inject(args.as_object_mut().expect("json object"));
     let result = state.call_tool("noteplan_edit_content", args).await?;
     let envelope = extract_text(&result);
