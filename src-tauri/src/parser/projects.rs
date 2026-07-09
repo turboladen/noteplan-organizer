@@ -115,7 +115,7 @@ fn parse_contexts(content: &str) -> Vec<Context> {
     contexts
 }
 
-use crate::parser::{CONTROL_DIR, is_excluded_relative, is_under_folder};
+use crate::parser::{CONTROL_DIR, folder_depth, is_excluded_relative, is_under_folder};
 
 /// Sort key that ranks a control-note candidate: CONTROL_DIR notes first (the
 /// app-owned folder always wins), then by relative path for a deterministic tie
@@ -230,7 +230,7 @@ pub(crate) fn resolve_folder_among<'a>(
 /// Sort key among folders that match a reference the SAME way: shallower (fewer
 /// path segments) first, then lexicographic for a total, deterministic order.
 fn folder_rank(path: &str) -> (usize, &str) {
-    (path.matches('/').count(), path)
+    (folder_depth(path), path)
 }
 
 /// Public: map each control-note context to its resolved project folders.

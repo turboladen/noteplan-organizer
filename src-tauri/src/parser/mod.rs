@@ -10,7 +10,7 @@ pub mod period;
 mod projects;
 mod task;
 
-pub(crate) use backlog::{BACKLOG_TAG, is_under_folder};
+pub(crate) use backlog::{BACKLOG_TAG, folder_depth, is_under_folder};
 pub use backlog::{BacklogOptions, build_backlog};
 pub use block::extract_content_blocks;
 pub use filing::build_filing_targets;

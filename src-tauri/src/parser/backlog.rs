@@ -116,6 +116,14 @@ pub(crate) fn is_under_folder(relative_path: &str, folder: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('/'))
 }
 
+/// Folder specificity as a segment count (`a/b/c` -> 3). The single notion of
+/// "how nested is this folder" shared by resolve_folder (wants the SHALLOWEST =
+/// min depth) and project_for_path (wants the DEEPEST = max depth). Unifies the
+/// METRIC only; each call site keeps its own min/max direction.
+pub(crate) fn folder_depth(path: &str) -> usize {
+    path.split('/').count()
+}
+
 /// Whether a CALENDAR task belongs in a context's pool. `declared` are the
 /// context's declared tags (lowercased, no `#`); `claimed` is the union of all
 /// contexts' declared tags. Comparison is case-insensitive and honors NotePlan
@@ -155,7 +163,7 @@ fn project_for_path<'a>(
     projects
         .iter()
         .filter(|(folder, _, _)| is_under_folder(relative_path, folder))
-        .max_by_key(|(folder, _, _)| folder.len())
+        .max_by_key(|(folder, _, _)| folder_depth(folder))
 }
 
 pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
@@ -742,6 +750,13 @@ mod tests {
             ids.contains(&"schd01"),
             "project-note scheduled task must be kept"
         );
+    }
+
+    #[test]
+    fn test_folder_depth_counts_segments() {
+        assert_eq!(folder_depth("Notes"), 1);
+        assert_eq!(folder_depth("Notes/32 - X"), 2);
+        assert_eq!(folder_depth("Notes/32 - X/32.01 - Y"), 3);
     }
 
     #[test]
