@@ -10,7 +10,7 @@ pub mod period;
 mod projects;
 mod task;
 
-pub(crate) use backlog::{BACKLOG_TAG, is_under_folder};
+pub(crate) use backlog::{BACKLOG_TAG, folder_depth, is_under_folder};
 pub use backlog::{BacklogOptions, build_backlog};
 pub use block::extract_content_blocks;
 pub use filing::build_filing_targets;
@@ -237,10 +237,8 @@ pub fn scan_scoped(base_path: &str) -> Option<NoteStore> {
     let mut resolved: HashSet<String> = HashSet::new();
     for ctx in &control.contexts {
         for r in &ctx.refs {
-            if let Some(folder) =
-                resolve_folder_among(folder_universe.iter().map(String::as_str), r)
-            {
-                resolved.insert(folder);
+            if let Some(m) = resolve_folder_among(folder_universe.iter().map(String::as_str), r) {
+                resolved.insert(m.folder);
             }
         }
     }

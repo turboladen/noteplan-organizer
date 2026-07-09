@@ -39,6 +39,7 @@ impl Analyzer for StrayTaggedTaskAnalyzer {
             return Vec::new();
         }
         let tracked: Vec<String> = resolve_context_projects(store, &control)
+            .0
             .into_iter()
             .flat_map(|(_, projects)| projects.into_iter().map(|(folder, _, _)| folder))
             .collect();

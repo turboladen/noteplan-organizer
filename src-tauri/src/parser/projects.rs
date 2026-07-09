@@ -115,7 +115,7 @@ fn parse_contexts(content: &str) -> Vec<Context> {
     contexts
 }
 
-use crate::parser::{CONTROL_DIR, is_excluded_relative, is_under_folder};
+use crate::parser::{CONTROL_DIR, folder_depth, is_excluded_relative, is_under_folder};
 
 /// Sort key that ranks a control-note candidate: CONTROL_DIR notes first (the
 /// app-owned folder always wins), then by relative path for a deterministic tie
@@ -152,7 +152,7 @@ fn leading_jd(name: &str) -> Option<String> {
 /// folder even when an unrelated folder shares the same JD id.) Calendar-kind
 /// notes are skipped so a `Calendar` reference can never claim the `Calendar/`
 /// tree and mislabel calendar tasks with project metadata.
-fn resolve_folder(store: &NoteStore, reference: &str) -> Option<String> {
+fn resolve_folder(store: &NoteStore, reference: &str) -> Option<FolderMatch> {
     // Feed the ranking core the ancestor folders of every note that could host a
     // project: skip excluded notes and calendar-kind notes so a project reference
     // never resolves into the calendar tree (dz4; kind-based, so a Regular note
@@ -182,6 +182,17 @@ pub(crate) fn ancestor_dirs(relative_path: &str) -> impl Iterator<Item = &str> {
     })
 }
 
+/// A reference resolved to a folder, plus any JD-id ambiguity worth surfacing.
+pub(crate) struct FolderMatch {
+    /// The chosen folder relative path (directory portion, no trailing slash).
+    pub folder: String,
+    /// Distinct folder paths tied at the WINNING match quality while the
+    /// reference carried a leading JD id. `Some` only when >1 (a genuine
+    /// ambiguity the tiebreak — not match quality — resolved); `None` for the
+    /// unambiguous common case. Sorted for a deterministic warning message.
+    pub jd_collision: Option<Vec<String>>,
+}
+
 /// Ranking core of `resolve_folder`, decoupled from the note store so it can rank
 /// an arbitrary set of candidate FOLDER PATHS (directory strings). A folder's
 /// FINAL segment matches the reference by full case-insensitive equality (an
@@ -192,12 +203,15 @@ pub(crate) fn ancestor_dirs(relative_path: &str) -> impl Iterator<Item = &str> {
 pub(crate) fn resolve_folder_among<'a>(
     candidates: impl Iterator<Item = &'a str>,
     reference: &str,
-) -> Option<String> {
+) -> Option<FolderMatch> {
     let ref_lower = reference.to_lowercase();
     let ref_jd = leading_jd(reference);
 
-    // (match_quality, folder): quality 0 = exact segment name, 1 = JD-id only.
-    let mut best: Option<(u8, String)> = None;
+    // Distinct matched folder -> match quality (0 = exact segment name, 1 = JD-id
+    // only). Candidates yield each folder once per note under it, so dedup here;
+    // borrow the candidate paths (no per-candidate allocation) and clone only the
+    // chosen/tied folders below.
+    let mut matched: std::collections::HashMap<&'a str, u8> = std::collections::HashMap::new();
     for cand in candidates {
         let Some(seg) = std::path::Path::new(cand)
             .file_name()
@@ -213,24 +227,46 @@ pub(crate) fn resolve_folder_among<'a>(
                 .map_or(false, |(a, b)| a == b);
         if exact || jd_only {
             let quality: u8 = if exact { 0 } else { 1 };
-            // Rank (quality, then shallowest, then lexicographic); a lower tuple
-            // wins. An exact match (quality 0) can never be displaced by a JD-only
-            // match (quality 1), regardless of depth.
-            let better = best.as_ref().map_or(true, |(bq, bp)| {
-                (quality, folder_rank(cand)) < (*bq, folder_rank(bp))
-            });
-            if better {
-                best = Some((quality, cand.to_string()));
-            }
+            matched.entry(cand).or_insert(quality);
         }
     }
-    best.map(|(_, folder)| folder)
+
+    // Winner: min (quality, then shallowest, then lexicographic) — a lower tuple
+    // wins. Folder paths are distinct HashMap keys, so the order is total and the
+    // winner is independent of iteration order. An exact match (quality 0) can
+    // never be displaced by a JD-only match (quality 1), regardless of depth.
+    let (&best_folder, &best_quality) = matched
+        .iter()
+        .min_by(|a, b| (*a.1, folder_rank(a.0)).cmp(&(*b.1, folder_rank(b.0))))?;
+
+    // duq: when the reference carries a JD id and >1 distinct folder ties at the
+    // WINNING match quality, the tiebreak (not match quality) decided among
+    // colliding JD ids — surface those folders. An exact winner (quality 0) with
+    // a JD-only decoy (quality 1) is NOT a collision: only 1 folder at quality 0.
+    // Count first; only allocate (and sort) the Vec in the rare ambiguous case.
+    let jd_collision =
+        if ref_jd.is_some() && matched.values().filter(|&&q| q == best_quality).count() > 1 {
+            let mut tied: Vec<String> = matched
+                .iter()
+                .filter(|&(_, &q)| q == best_quality)
+                .map(|(&folder, _)| folder.to_string())
+                .collect();
+            tied.sort();
+            Some(tied)
+        } else {
+            None
+        };
+
+    Some(FolderMatch {
+        folder: best_folder.to_string(),
+        jd_collision,
+    })
 }
 
 /// Sort key among folders that match a reference the SAME way: shallower (fewer
 /// path segments) first, then lexicographic for a total, deterministic order.
 fn folder_rank(path: &str) -> (usize, &str) {
-    (path.matches('/').count(), path)
+    (folder_depth(path), path)
 }
 
 /// Public: map each control-note context to its resolved project folders.
@@ -256,7 +292,7 @@ pub fn context_folders(store: &NoteStore) -> Vec<(String, Vec<String>)> {
 /// Reused by the backlog reader to stamp project metadata onto tasks.
 pub fn context_folder_projects(store: &NoteStore) -> Vec<(String, Vec<(String, u32, String)>)> {
     match parse_project_control(store) {
-        Some(control) => resolve_context_projects(store, &control),
+        Some(control) => resolve_context_projects(store, &control).0,
         None => vec![],
     }
 }
@@ -264,26 +300,38 @@ pub fn context_folder_projects(store: &NoteStore) -> Vec<(String, Vec<(String, u
 /// Core of `context_folder_projects` that works from an already-parsed control
 /// note, so a caller that also needs the contexts' tags/warnings (e.g.
 /// `build_backlog`) can parse `#np-projects` exactly once instead of re-parsing
-/// it per accessor.
+/// it per accessor. Returns the resolved (folder, rank, title) triples per
+/// context PLUS any JD-collision warnings (duq): when a JD-prefixed ref resolves
+/// among ≥2 folders tied at the winning match quality, the tiebreak silently
+/// picked one — surface that so the user can disambiguate. Warnings ride the
+/// existing `Vec<String>` channel (see `build_backlog`), no new type.
 pub(crate) fn resolve_context_projects(
     store: &NoteStore,
     control: &ProjectControl,
-) -> Vec<(String, Vec<(String, u32, String)>)> {
-    control
-        .contexts
-        .iter()
-        .map(|ctx| {
-            let projects = ctx
-                .refs
-                .iter()
-                .enumerate()
-                .filter_map(|(i, r)| {
-                    resolve_folder(store, r).map(|folder| (folder, (i + 1) as u32, r.clone()))
-                })
-                .collect();
-            (ctx.name.clone(), projects)
-        })
-        .collect()
+) -> (Vec<(String, Vec<(String, u32, String)>)>, Vec<String>) {
+    let mut result = Vec::new();
+    let mut warnings = Vec::new();
+    for ctx in &control.contexts {
+        let mut projects = Vec::new();
+        // Unresolved refs still consume an ordinal (rank = 1-based ref index).
+        for (i, r) in ctx.refs.iter().enumerate() {
+            let Some(m) = resolve_folder(store, r) else {
+                continue;
+            };
+            if let Some(folders) = &m.jd_collision {
+                warnings.push(format!(
+                    "Reference \"{}\" matches {} folders sharing JD id {}; resolved to \"{}\".",
+                    r,
+                    folders.len(),
+                    leading_jd(r).unwrap_or_default(),
+                    m.folder
+                ));
+            }
+            projects.push((m.folder, (i + 1) as u32, r.clone()));
+        }
+        result.push((ctx.name.clone(), projects));
+    }
+    (result, warnings)
 }
 
 /// Public: map each control-note context to its declared tags (lowercased, no
@@ -559,5 +607,112 @@ mod tests {
         );
         let store = NoteStore::new(vec![control, proj]);
         assert_eq!(context_folder_projects(&store)[0].1[0].0, "Notes/Calendar");
+    }
+
+    #[test]
+    fn test_jd_collision_surfaces_warning() {
+        // Ref "12 - Alpha" (JD id "12"). Two folders share the JD id but NEITHER
+        // is an exact name match, so both tie at the JD-only winning quality and
+        // the shallowest/lexicographic tiebreak — not match quality — decided.
+        // That silent pick must surface a warning.
+        let control_note = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/P.md",
+            "# P #np-projects\n## Work\n1. [[12 - Alpha]]\n",
+            NoteKind::Regular,
+        );
+        let a = parse_note(
+            "/a.md",
+            "Notes/12 - Alpha Project/a.md",
+            "# A\n* x\n",
+            NoteKind::Regular,
+        );
+        let b = parse_note(
+            "/b.md",
+            "Notes/12 - Alpha Archive/b.md",
+            "# B\n* y\n",
+            NoteKind::Regular,
+        );
+        let store = NoteStore::new(vec![control_note, a, b]);
+        let control = parse_project_control(&store).unwrap();
+        let (projects, warnings) = resolve_context_projects(&store, &control);
+        // Deterministic: same depth → lexicographically first folder wins.
+        assert_eq!(projects[0].1[0].0, "Notes/12 - Alpha Archive");
+        assert_eq!(warnings.len(), 1, "one JD-collision warning: {warnings:?}");
+        let w = &warnings[0];
+        assert!(w.contains("12"), "warning names the JD id: {w}");
+        assert!(w.contains("2 folders"), "warning states the count: {w}");
+        assert!(
+            w.contains("Notes/12 - Alpha Archive"),
+            "warning names the resolved folder: {w}"
+        );
+    }
+
+    #[test]
+    fn test_exact_match_with_jd_decoy_is_silent() {
+        // Exact-name winner plus a shallower JD-only decoy: only 1 folder ties at
+        // the winning quality (0 = exact), so no tiebreak among equals occurred —
+        // the exact match is the unambiguous intended result. Must stay silent.
+        let control_note = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/P.md",
+            "# P #np-projects\n## Work\n1. [[12 - Alpha Project]]\n",
+            NoteKind::Regular,
+        );
+        let decoy = parse_note(
+            "/d.md",
+            "Notes/12 - Old Alpha Archive/d.md",
+            "# D\n* x\n",
+            NoteKind::Regular,
+        );
+        let real = parse_note(
+            "/r.md",
+            "Notes/1x - Domains [Work]/12 - Alpha Project/r.md",
+            "# R\n* y\n",
+            NoteKind::Regular,
+        );
+        let store = NoteStore::new(vec![control_note, decoy, real]);
+        let control = parse_project_control(&store).unwrap();
+        let (projects, warnings) = resolve_context_projects(&store, &control);
+        assert_eq!(
+            projects[0].1[0].0,
+            "Notes/1x - Domains [Work]/12 - Alpha Project"
+        );
+        assert!(
+            warnings.is_empty(),
+            "exact match + JD decoy must be silent: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn test_no_jd_ref_no_collision_warning() {
+        // A bare (non-JD) ref that collides on name among two folders is OUT of
+        // scope for the JD-collision warning: `ref_jd` is None, so even two exact
+        // matches produce no warning (the 241 bare-dup case is a separate concern).
+        let control_note = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/P.md",
+            "# P #np-projects\n## Work\n1. [[Shared]]\n",
+            NoteKind::Regular,
+        );
+        let top = parse_note(
+            "/t.md",
+            "Notes/Shared/t.md",
+            "# T\n* x\n",
+            NoteKind::Regular,
+        );
+        let nested = parse_note(
+            "/n.md",
+            "Notes/12 - Alpha Project/Shared/n.md",
+            "# N\n* y\n",
+            NoteKind::Regular,
+        );
+        let store = NoteStore::new(vec![control_note, top, nested]);
+        let control = parse_project_control(&store).unwrap();
+        let (_projects, warnings) = resolve_context_projects(&store, &control);
+        assert!(
+            warnings.is_empty(),
+            "non-JD ref collision must not warn: {warnings:?}"
+        );
     }
 }

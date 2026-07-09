@@ -116,6 +116,14 @@ pub(crate) fn is_under_folder(relative_path: &str, folder: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('/'))
 }
 
+/// Folder specificity as a segment count (`a/b/c` -> 3). The single notion of
+/// "how nested is this folder" shared by resolve_folder (wants the SHALLOWEST =
+/// min depth) and project_for_path (wants the DEEPEST = max depth). Unifies the
+/// METRIC only; each call site keeps its own min/max direction.
+pub(crate) fn folder_depth(path: &str) -> usize {
+    path.split('/').count()
+}
+
 /// Whether a CALENDAR task belongs in a context's pool. `declared` are the
 /// context's declared tags (lowercased, no `#`); `claimed` is the union of all
 /// contexts' declared tags. Comparison is case-insensitive and honors NotePlan
@@ -155,7 +163,7 @@ fn project_for_path<'a>(
     projects
         .iter()
         .filter(|(folder, _, _)| is_under_folder(relative_path, folder))
-        .max_by_key(|(folder, _, _)| folder.len())
+        .max_by_key(|(folder, _, _)| folder_depth(folder))
 }
 
 pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
@@ -176,7 +184,7 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
     // separately would re-parse the control note and re-walk `resolve_folder`
     // three times per build.
     let projects_control = parse_project_control(store);
-    let ctx_projects = projects_control
+    let (ctx_projects, resolve_warnings) = projects_control
         .as_ref()
         .map(|c| resolve_context_projects(store, c))
         .unwrap_or_default();
@@ -370,6 +378,7 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
     let control_note_title = control.as_ref().map(|c| c.note_title.clone());
     let mut warnings = control.map(|c| c.warnings).unwrap_or_default();
     warnings.extend(projects_warnings);
+    warnings.extend(resolve_warnings);
 
     Backlog {
         contexts,
@@ -605,6 +614,38 @@ mod tests {
     }
 
     #[test]
+    fn test_jd_collision_warning_reaches_backlog() {
+        // duq end-to-end: a JD-prefixed ref that resolves among two JD-colliding
+        // folders (no exact match) must surface its resolver warning in
+        // Backlog.warnings — the same channel #np-projects/#np-backlog warnings ride.
+        let projects_note = parse_note(
+            "/p.md",
+            "Notes/_NotePlan Organizer/Projects.md",
+            "# P #np-projects\n## Work\n1. [[12 - Alpha]]\n",
+            NoteKind::Regular,
+        );
+        let a = parse_note(
+            "/a.md",
+            "Notes/12 - Alpha Project/a.md",
+            "# A\n* x\n",
+            NoteKind::Regular,
+        );
+        let b = parse_note(
+            "/b.md",
+            "Notes/12 - Alpha Archive/b.md",
+            "# B\n* y\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note, a, b]);
+        let bk = build_backlog(&st, &test_opts());
+        assert!(
+            bk.warnings.iter().any(|w| w.contains("sharing JD id")),
+            "expected the JD-collision warning in Backlog.warnings, got {:?}",
+            bk.warnings
+        );
+    }
+
+    #[test]
     fn test_backlog_control_dir_note_wins_over_stray_sorting_earlier() {
         // A stray note tagged #np-backlog under @Archive sorts BEFORE the real
         // control note by relative_path, yet the CONTROL_DIR note must win — same
@@ -742,6 +783,13 @@ mod tests {
             ids.contains(&"schd01"),
             "project-note scheduled task must be kept"
         );
+    }
+
+    #[test]
+    fn test_folder_depth_counts_segments() {
+        assert_eq!(folder_depth("Notes"), 1);
+        assert_eq!(folder_depth("Notes/32 - X"), 2);
+        assert_eq!(folder_depth("Notes/32 - X/32.01 - Y"), 3);
     }
 
     #[test]
