@@ -37,6 +37,10 @@ pub struct RankedTask {
     pub line_number: usize,
     /// False when the block ID no longer resolves to a live task (stale entry).
     pub resolved: bool,
+    /// True when a RESOLVED ranked entry points at a calendar `[>]` (Scheduled)
+    /// reschedule move-ghost — the id resolves, but the instance is no longer
+    /// active. A display-only axis distinct from `resolved`; never drops the task.
+    pub ghost: bool,
     pub tags: Vec<String>,
     pub project_title: Option<String>,
     pub project_rank: Option<u32>,

@@ -28,14 +28,27 @@ static HEADING_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^##\s+(.+?)\s
 // The gap is LAZY (`.*?`) so we capture the FIRST `[[…^id]]` after the leader —
 // matching the writer's leftmost `ITEM_ID_RE`. A greedy `.*` would capture the
 // LAST ref, diverging from the writer when an entry's text embeds a second link.
+// Groups: 1 = link title (`[[<title>^id]]`), 2 = block id, 3 = trailing display
+// text after `]]` (trimmed). The id is group 2 (not group 1) — the sole capture
+// consumer must read `c[2]`.
 static ENTRY_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(?:\d+\.|[-*+])\s+.*?\[\[[^\]^]*\^([A-Za-z0-9]{4,})\]\]").unwrap()
+    Regex::new(r"^\s*(?:\d+\.|[-*+])\s+.*?\[\[([^\]^]*)\^([A-Za-z0-9]{4,})\]\]\s*(.*?)\s*$")
+        .unwrap()
 });
 
-/// Parsed `#np-backlog`: ordered block IDs per context heading.
+/// One ordered entry in a `#np-backlog` context: the block id plus the on-disk
+/// display metadata (link title + trailing text) preserved so an unresolved
+/// entry can still render its original text instead of a blank row.
+struct BacklogEntry {
+    block_id: String,
+    link_title: String, // from `[[<link_title>^id]]`
+    text: String,       // trailing display text after `]]`, trimmed
+}
+
+/// Parsed `#np-backlog`: ordered entries per context heading.
 struct BacklogControl {
     note_title: String,
-    contexts: Vec<(String, Vec<String>)>, // (heading, ordered block_ids)
+    contexts: Vec<(String, Vec<BacklogEntry>)>, // (heading, ordered entries)
     warnings: Vec<String>,
 }
 
@@ -62,13 +75,17 @@ fn parse_backlog_control(store: &NoteStore) -> Option<BacklogControl> {
         ));
     }
 
-    let mut contexts: Vec<(String, Vec<String>)> = Vec::new();
+    let mut contexts: Vec<(String, Vec<BacklogEntry>)> = Vec::new();
     for line in note.content.lines() {
         if let Some(c) = HEADING_RE.captures(line) {
             contexts.push((c[1].to_string(), Vec::new()));
         } else if let Some(c) = ENTRY_RE.captures(line) {
-            if let Some((_, ids)) = contexts.last_mut() {
-                ids.push(c[1].to_string());
+            if let Some((_, entries)) = contexts.last_mut() {
+                entries.push(BacklogEntry {
+                    block_id: c[2].to_string(),
+                    link_title: c[1].to_string(),
+                    text: c[3].to_string(),
+                });
             }
         }
     }
@@ -165,7 +182,7 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
     // control as empty — no contexts of its own, no ids, no title, no
     // warnings — and let the union logic below do the rest.
     let control = parse_backlog_control(store);
-    let control_contexts: &[(String, Vec<String>)] = control
+    let control_contexts: &[(String, Vec<BacklogEntry>)] = control
         .as_ref()
         .map(|c| c.contexts.as_slice())
         .unwrap_or(&[]);
@@ -228,10 +245,10 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
 
     let mut contexts = Vec::new();
     for name in &context_names {
-        let ids: &[String] = control_contexts
+        let entries: &[BacklogEntry] = control_contexts
             .iter()
             .find(|(n, _)| n == name)
-            .map(|(_, ids)| ids.as_slice())
+            .map(|(_, entries)| entries.as_slice())
             .unwrap_or(&[]);
         let projects: Vec<(String, u32, String)> = ctx_projects
             .iter()
@@ -241,38 +258,56 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
 
         // Ranked, in list order.
         let mut ranked = Vec::new();
-        let ranked_ids: HashSet<&String> = ids.iter().collect();
-        for (i, id) in ids.iter().enumerate() {
-            match index.get(id) {
+        let ranked_ids: HashSet<&String> = entries.iter().map(|e| &e.block_id).collect();
+        for (i, entry) in entries.iter().enumerate() {
+            match index.get(&entry.block_id) {
                 Some(&(ni, ti)) => {
                     let note = &store.notes[ni];
                     let t = &note.tasks[ti];
                     let project = project_for_path(&projects, &note.relative_path);
+                    let calendar_kind = CalendarKind::from_note_kind(&note.kind);
+                    // bqo: a ranked entry whose id resolves to a calendar `[>]`
+                    // (Scheduled) task is a reschedule move-ghost — NotePlan greys
+                    // it and renders only the live tail elsewhere. The id DOES
+                    // resolve (resolved stays true), but flag it so the UI can mute
+                    // it, mirroring the pool's existing ghost-drop predicate
+                    // (is_calendar && Scheduled) above. COSMETIC ONLY — never drops
+                    // or alters the task.
+                    // NOTE: rests on the live-vault assumption that a rescheduled
+                    // ranked task leaves `[>] … ^id` in a scanned calendar note with
+                    // the block id on the ghost (validated at the human empirical gate).
+                    let ghost = calendar_kind.is_some() && matches!(t.state, TaskState::Scheduled);
                     ranked.push(RankedTask {
                         rank: (i + 1) as u32,
-                        block_id: id.clone(),
+                        block_id: entry.block_id.clone(),
                         text: t.text.clone(),
                         priority: t.priority,
                         source_note_title: note.title.clone(),
                         source_relative_path: note.relative_path.clone(),
                         line_number: t.line_number,
                         resolved: true,
+                        ghost,
                         tags: t.tags.clone(),
                         project_title: project.map(|(_, _, title)| title.clone()),
                         project_rank: project.map(|(_, rank, _)| *rank),
-                        calendar_kind: CalendarKind::from_note_kind(&note.kind),
+                        calendar_kind,
                         calendar_period: period::calendar_period(&note.kind, &note.relative_path),
                     });
                 }
+                // Unresolved: the id no longer matches a live task, but the
+                // on-disk backlog line still carries the original link title +
+                // display text — preserve both so the row renders its text and an
+                // "orphaned" affordance instead of a blank stale row (6tn).
                 None => ranked.push(RankedTask {
                     rank: (i + 1) as u32,
-                    block_id: id.clone(),
-                    text: String::new(),
+                    block_id: entry.block_id.clone(),
+                    text: entry.text.clone(),
                     priority: 0,
-                    source_note_title: String::new(),
+                    source_note_title: entry.link_title.clone(),
                     source_relative_path: String::new(),
                     line_number: 0,
                     resolved: false,
+                    ghost: false,
                     tags: Vec::new(),
                     project_title: None,
                     project_rank: None,
@@ -451,7 +486,76 @@ mod tests {
         let st = store(vec![projects_note(), backlog_note]);
         let b = build_backlog(&st, &test_opts());
         assert_eq!(b.contexts[0].ranked.len(), 1);
-        assert!(!b.contexts[0].ranked[0].resolved);
+        let r = &b.contexts[0].ranked[0];
+        assert!(!r.resolved);
+        // 6tn: the preserved on-disk line still carries the original display text
+        // and link title even though the block id no longer resolves.
+        assert_eq!(r.text, "old");
+        assert_eq!(r.source_note_title, "Gone");
+        assert!(r.source_relative_path.is_empty());
+        assert!(!r.ghost);
+    }
+
+    #[test]
+    fn test_unresolved_entry_preserves_text_and_title() {
+        // A #np-backlog ranked entry whose block id matches NO live task: the
+        // reader must surface the preserved link title + trailing text (6tn), not
+        // a blank stale row, and leave the source path empty (the source is gone).
+        let backlog_note = parse_note(
+            "/b.md",
+            "Notes/_NotePlan Organizer/Backlog.md",
+            "# Backlog #np-backlog\n## Work\n1. [[Ship the thing^lostid]] finalize the deck\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note(), backlog_note]);
+        let b = build_backlog(&st, &test_opts());
+        let ranked = &b.contexts[0].ranked;
+        assert_eq!(ranked.len(), 1);
+        assert!(!ranked[0].resolved);
+        assert_eq!(ranked[0].block_id, "lostid");
+        assert_eq!(ranked[0].text, "finalize the deck");
+        assert_eq!(ranked[0].source_note_title, "Ship the thing");
+        assert!(ranked[0].source_relative_path.is_empty());
+    }
+
+    #[test]
+    fn test_ranked_calendar_scheduled_task_marked_ghost() {
+        // bqo: a ranked entry resolving to a calendar `[>]` (Scheduled) task is a
+        // reschedule move-ghost — resolved stays true (the id resolves) but ghost
+        // is set so the UI can mute it. A ranked Regular-note Scheduled task is NOT
+        // a ghost (genuinely scheduled work).
+        let backlog_note = parse_note(
+            "/b.md",
+            "Notes/_NotePlan Organizer/Backlog.md",
+            "# Backlog #np-backlog\n## Work\n1. [[Day^ghst01]] Fix grill\n2. [[Janet^schd01]] \
+             Ship\n",
+            NoteKind::Regular,
+        );
+        let daily = parse_note(
+            "/d.md",
+            "Calendar/20260703.md",
+            "# Day\n* [>] Fix grill >2026-07-05 ^ghst01\n",
+            NoteKind::Daily,
+        );
+        let work_note = parse_note(
+            "/w.md",
+            "Notes/32 - Product Ownership/32.01 - Janet.md",
+            "# Janet\n* [>] Ship v2 spec >2026-08-01 ^schd01\n",
+            NoteKind::Regular,
+        );
+        let st = store(vec![projects_note(), backlog_note, daily, work_note]);
+        let b = build_backlog(&st, &test_opts());
+        let ranked = &b.contexts[0].ranked;
+        let ghost = ranked.iter().find(|r| r.block_id == "ghst01").unwrap();
+        assert!(
+            ghost.resolved && ghost.ghost,
+            "calendar [>] must be a ghost"
+        );
+        let scheduled = ranked.iter().find(|r| r.block_id == "schd01").unwrap();
+        assert!(
+            scheduled.resolved && !scheduled.ghost,
+            "project-note [>] is genuinely scheduled, not a ghost"
+        );
     }
 
     #[test]
@@ -626,7 +730,7 @@ mod tests {
         let ctrl = parse_backlog_control(&st).expect("backlog control found");
         assert_eq!(ctrl.note_title, "Real Backlog");
         assert_eq!(ctrl.contexts[0].0, "Work");
-        assert_eq!(ctrl.contexts[0].1, vec!["a1b2c3".to_string()]);
+        assert_eq!(ctrl.contexts[0].1[0].block_id, "a1b2c3");
         assert_eq!(ctrl.warnings.len(), 1);
     }
 

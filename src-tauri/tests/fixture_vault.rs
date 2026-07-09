@@ -105,6 +105,10 @@ fn test_backlog_ranked_stale_and_prose() {
 
     assert_eq!(work.ranked[2].block_id, "dead999");
     assert!(!work.ranked[2].resolved, "stale entry");
+    // 6tn: an unresolved entry still surfaces the on-disk link title + display
+    // text (`3. [[Ghost^dead999]] a stale ranked entry`) instead of a blank row.
+    assert_eq!(work.ranked[2].text, "a stale ranked entry");
+    assert_eq!(work.ranked[2].source_note_title, "Ghost");
 
     assert!(
         work.ranked.iter().all(|r| r.block_id != "ref0001"),
