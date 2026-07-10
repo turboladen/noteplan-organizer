@@ -571,7 +571,7 @@ mod tests {
         let json = r##"{"success":true,"dryRun":true,"lineCountToDelete":1,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"}],"backends":["bridge"]}"##;
         assert!(parse_delete_dry_run(json, 4, TOMBSTONE).is_err());
         // Empty token is also unusable.
-        let empty = r##"{"success":true,"lineCountToDelete":1,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"}],"confirmationToken":"","backends":["bridge"]}"##;
+        let empty = r##"{"success":true,"dryRun":true,"lineCountToDelete":1,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"}],"confirmationToken":"","backends":["bridge"]}"##;
         assert!(parse_delete_dry_run(empty, 4, TOMBSTONE).is_err());
     }
 
@@ -583,7 +583,7 @@ mod tests {
 
     #[test]
     fn test_parse_delete_dry_run_empty_preview_errs() {
-        let json = r#"{"success":true,"lineCountToDelete":1,"deletedLinesPreview":[],"confirmationToken":"tok","backends":["bridge"]}"#;
+        let json = r#"{"success":true,"dryRun":true,"lineCountToDelete":1,"deletedLinesPreview":[],"confirmationToken":"tok","backends":["bridge"]}"#;
         assert!(parse_delete_dry_run(json, 4, TOMBSTONE).is_err());
     }
 
