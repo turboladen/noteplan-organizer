@@ -271,29 +271,142 @@ pub async fn replace_line(
     parse_edit_response(&envelope)
 }
 
-/// Delete a SINGLE 1-based line (`delete_lines`). The ONLY line-count-reducing
-/// op. Callers RESTRICT this to the app-owned `#np-backlog` control note — NEVER a
-/// user content note (this is why it is permitted despite the app-wide "no
-/// `delete_lines` on content notes" rule). Asserts the write went through the
-/// bridge (NotePlan actually applied it) and reported `success:true`, exactly like
-/// `replace_line`/`insert_in_note`; a non-bridge or unsuccessful response is Err,
-/// so a broken delete aborts the GC pass rather than losing data.
+/// Parse a `delete_lines` **dry-run** response and VERIFY-BEFORE-CONFIRM: return the
+/// server's `confirmationToken` ONLY if the previewed deletion is EXACTLY the single
+/// 1-based `line` we intend to delete AND that line's previewed content trims to
+/// `expected_trimmed`. This is the compare-and-delete safety crux — the server
+/// previews what a confirm WOULD delete, so a concurrent external edit that shifted
+/// the note between our fetch and now surfaces here as a preview whose content is not
+/// our tombstone, and we refuse to confirm.
 ///
-/// ARG SHAPE VERIFIED via MCP Inspector (l9e §0, 2026-07-09): `delete_lines` takes
-/// `startLine`/`endLine` (1-indexed, inclusive) — NOT `line` — and SUCCEEDS through
-/// the bridge WITHOUT a `confirmationToken` (the historical no-token rejection no
-/// longer applies). A single-line delete is the inclusive range `startLine == endLine`.
-/// The note MUST be addressed by its canonical filename/id (callers resolve it via
-/// `noteplan_get_notes` before writing, exactly like every other write op) — a
-/// hand-typed relative path returns `ERR_NOT_FOUND`.
-pub async fn delete_line(state: &McpState, addr: &NoteAddr, line: usize) -> McpResult<String> {
-    // Delete exactly ONE line as a 1-based inclusive single-line range.
-    let mut args = json!({ "action": "delete_lines", "startLine": line, "endLine": line });
-    addr.inject(args.as_object_mut().expect("json object"));
-    let result = state.call_tool("noteplan_edit_content", args).await?;
-    let envelope = extract_text(&result);
-    assert_bridge_backend(&envelope, "delete_lines")?; // NotePlan actually applied it
-    parse_edit_response(&envelope) // Err unless success:true
+/// Err (NO token returned, so the caller MUST NOT confirm) if: the response is not
+/// `success:true`, `lineCountToDelete != 1`, `deletedLinesPreview` is not exactly one
+/// entry, the previewed entry's `line` != `line`, its `content.trim()` !=
+/// `expected_trimmed`, or `confirmationToken` is missing/empty.
+fn parse_delete_dry_run(json_text: &str, line: usize, expected_trimmed: &str) -> McpResult<String> {
+    let v: Value = serde_json::from_str(json_text)
+        .map_err(|e| format!("delete_lines(dryRun): response was not JSON ({e}): {json_text}"))?;
+    if v.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(format!(
+            "delete_lines dry run did not report success: {}",
+            response_error(&v)
+        ));
+    }
+    let count = v.get("lineCountToDelete").and_then(Value::as_u64);
+    if count != Some(1) {
+        return Err(format!(
+            "delete_lines dry run would delete {} line(s), expected exactly 1 — aborting before \
+             confirm.",
+            count.map(|n| n.to_string()).unwrap_or_else(|| "?".into())
+        ));
+    }
+    let preview = v
+        .get("deletedLinesPreview")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            "delete_lines dry run missing `deletedLinesPreview` — cannot verify; aborting before \
+             confirm."
+                .to_string()
+        })?;
+    let [entry] = preview.as_slice() else {
+        return Err(format!(
+            "delete_lines dry run preview had {} entries, expected exactly 1 — aborting before \
+             confirm.",
+            preview.len()
+        ));
+    };
+    let prev_line = entry.get("line").and_then(Value::as_u64);
+    if prev_line != Some(line as u64) {
+        return Err(format!(
+            "delete_lines dry run preview targets line {prev_line:?}, expected {line} — aborting \
+             before confirm."
+        ));
+    }
+    let content = entry
+        .get("content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            "delete_lines dry run preview entry missing `content` — cannot verify; aborting before \
+             confirm."
+                .to_string()
+        })?;
+    if content.trim() != expected_trimmed {
+        return Err(format!(
+            "delete_lines dry run preview content {:?} does not match the expected tombstone {:?} \
+             — a concurrent edit may have shifted the note; aborting before confirm.",
+            content.trim(),
+            expected_trimmed
+        ));
+    }
+    v.get("confirmationToken")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            "delete_lines dry run missing `confirmationToken` — cannot confirm; aborting."
+                .to_string()
+        })
+}
+
+/// Delete a SINGLE 1-based line (`delete_lines`) as a verified compare-and-delete.
+/// The ONLY line-count-reducing op. Callers RESTRICT this to the app-owned
+/// `#np-backlog` control note — NEVER a user content note (this is why it is
+/// permitted despite the app-wide "no `delete_lines` on content notes" rule).
+///
+/// CONFIRMED CONTRACT (MCP Inspector, l9e §0, 2026-07-09): `delete_lines` requires a
+/// TWO-STEP `confirmationToken` flow over `startLine`/`endLine` (1-indexed,
+/// inclusive; a single-line delete is `startLine == endLine`):
+///  1. DRY RUN (`dryRun:true`) — NON-destructive: the server does NOT delete, it
+///     returns `lineCountToDelete`, a `deletedLinesPreview` of what a confirm WOULD
+///     remove, and a `confirmationToken`.
+///  2. CONFIRM (`confirmationToken` + `dryRun:false`) — actually deletes.
+///
+/// Between the two we VERIFY the preview equals the expected tombstone: this is a
+/// server-side COMPARE-AND-DELETE. `expected_trimmed` is the exact (trimmed) marker
+/// the caller expects on `line`; if the previewed line count isn't 1, the previewed
+/// line number differs, or its content doesn't trim to `expected_trimmed`, we return
+/// Err WITHOUT sending the confirm — the server is about to delete something that is
+/// NOT our tombstone (a concurrent external edit shifted the note). This mitigates
+/// the kr7 concurrent-edit window that plain fetch-then-delete cannot close.
+///
+/// Both steps assert the bridge backend (NotePlan actually applied/previewed it) and
+/// require `success:true`; any parse/bridge/mismatch failure is Err, so a broken or
+/// unsafe delete aborts the GC pass rather than losing data. The note MUST be
+/// addressed by its canonical filename/id (callers resolve it via
+/// `noteplan_get_notes` before writing) — a hand-typed relative path returns
+/// `ERR_NOT_FOUND`.
+pub async fn delete_line(
+    state: &McpState,
+    addr: &NoteAddr,
+    line: usize,
+    expected_trimmed: &str,
+) -> McpResult<String> {
+    // STEP 1 — dry run (non-destructive preview + confirmationToken). Delete exactly
+    // ONE line as a 1-based inclusive single-line range.
+    let mut dry_args =
+        json!({ "action": "delete_lines", "startLine": line, "endLine": line, "dryRun": true });
+    addr.inject(dry_args.as_object_mut().expect("json object"));
+    let dry_result = state.call_tool("noteplan_edit_content", dry_args).await?;
+    let dry_envelope = extract_text(&dry_result);
+    assert_bridge_backend(&dry_envelope, "delete_lines(dryRun)")?;
+    // VERIFY-BEFORE-CONFIRM: only proceed if the preview IS the expected tombstone.
+    let token = parse_delete_dry_run(&dry_envelope, line, expected_trimmed)?;
+
+    // STEP 2 — confirm (actually deletes). Reached ONLY when the preview matched.
+    let mut confirm_args = json!({
+        "action": "delete_lines",
+        "startLine": line,
+        "endLine": line,
+        "confirmationToken": token,
+        "dryRun": false,
+    });
+    addr.inject(confirm_args.as_object_mut().expect("json object"));
+    let confirm_result = state
+        .call_tool("noteplan_edit_content", confirm_args)
+        .await?;
+    let confirm_envelope = extract_text(&confirm_result);
+    assert_bridge_backend(&confirm_envelope, "delete_lines(confirm)")?; // actually applied
+    parse_edit_response(&confirm_envelope) // Err unless success:true
 }
 
 // ---------------------------------------------------------------------------
@@ -392,7 +505,67 @@ pub async fn get_events(state: &McpState, start_date: &str, end_date: &str) -> M
 
 #[cfg(test)]
 mod tests {
-    use super::{assert_bridge_backend, parse_edit_response, parse_get_notes_content};
+    use super::{
+        assert_bridge_backend, parse_delete_dry_run, parse_edit_response, parse_get_notes_content,
+    };
+
+    // A realistic `delete_lines` dry-run envelope: line 4 previews the tombstone
+    // marker (indented, as the server pads preview content), plus a token.
+    const DRY_RUN_OK: &str = r##"{"success":true,"dryRun":true,"lineCountToDelete":1,"deletedLinesPreview":[{"line":4,"content":"  <!-- np-backlog: removed -->"}],"confirmationToken":"tok-uuid-1","confirmationExpiresAt":"2026-07-09T00:00:00Z","backends":["bridge"]}"##;
+    const TOMBSTONE: &str = "<!-- np-backlog: removed -->";
+
+    #[test]
+    fn test_parse_delete_dry_run_ok_returns_token() {
+        // Preview matches the expected tombstone on the requested line -> token.
+        assert_eq!(
+            parse_delete_dry_run(DRY_RUN_OK, 4, TOMBSTONE).unwrap(),
+            "tok-uuid-1"
+        );
+    }
+
+    #[test]
+    fn test_parse_delete_dry_run_content_mismatch_errs() {
+        // SAFETY CRUX: the preview shows a NON-tombstone line (concurrent edit) ->
+        // no token returned, so the caller can never confirm the delete.
+        let json = r##"{"success":true,"dryRun":true,"lineCountToDelete":1,"deletedLinesPreview":[{"line":4,"content":"- [[Real^task99]] a real entry"}],"confirmationToken":"tok","backends":["bridge"]}"##;
+        let err = parse_delete_dry_run(json, 4, TOMBSTONE).unwrap_err();
+        assert!(err.contains("does not match"), "names the mismatch: {err}");
+    }
+
+    #[test]
+    fn test_parse_delete_dry_run_wrong_line_errs() {
+        // Preview targets a DIFFERENT line than requested -> abort before confirm.
+        assert!(parse_delete_dry_run(DRY_RUN_OK, 5, TOMBSTONE).is_err());
+    }
+
+    #[test]
+    fn test_parse_delete_dry_run_multi_line_count_errs() {
+        // A count other than exactly 1 must abort (never confirm a multi-line delete).
+        let json = r##"{"success":true,"lineCountToDelete":2,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"},{"line":5,"content":"<!-- np-backlog: removed -->"}],"confirmationToken":"tok","backends":["bridge"]}"##;
+        assert!(parse_delete_dry_run(json, 4, TOMBSTONE).is_err());
+    }
+
+    #[test]
+    fn test_parse_delete_dry_run_missing_token_errs() {
+        // A matching preview but no token -> cannot confirm -> Err.
+        let json = r##"{"success":true,"lineCountToDelete":1,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"}],"backends":["bridge"]}"##;
+        assert!(parse_delete_dry_run(json, 4, TOMBSTONE).is_err());
+        // Empty token is also unusable.
+        let empty = r##"{"success":true,"lineCountToDelete":1,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"}],"confirmationToken":"","backends":["bridge"]}"##;
+        assert!(parse_delete_dry_run(empty, 4, TOMBSTONE).is_err());
+    }
+
+    #[test]
+    fn test_parse_delete_dry_run_success_false_errs() {
+        let json = r#"{"success":false,"error":"note not found"}"#;
+        assert!(parse_delete_dry_run(json, 4, TOMBSTONE).is_err());
+    }
+
+    #[test]
+    fn test_parse_delete_dry_run_empty_preview_errs() {
+        let json = r#"{"success":true,"lineCountToDelete":1,"deletedLinesPreview":[],"confirmationToken":"tok","backends":["bridge"]}"#;
+        assert!(parse_delete_dry_run(json, 4, TOMBSTONE).is_err());
+    }
 
     #[test]
     fn test_parse_get_notes_content_ok() {
@@ -457,11 +630,11 @@ mod tests {
 
     #[test]
     fn test_delete_lines_success_false_aborts_gc() {
-        // `delete_line` reuses `parse_edit_response`: a `delete_lines` response that
-        // does NOT report success must be Err, so a failed/rejected delete (e.g. the
-        // historical no-token rejection) aborts the GC pass — no data loss, the
-        // tombstones simply persist until a later successful cleanup.
-        let json = r#"{"success":false,"error":"delete_lines requires a confirmationToken"}"#;
+        // `delete_line`'s CONFIRM step reuses `parse_edit_response`: a confirm
+        // response that does NOT report success must be Err, so a failed/rejected
+        // delete (e.g. an expired confirmationToken) aborts the GC pass — no data
+        // loss, the tombstones simply persist until a later successful cleanup.
+        let json = r#"{"success":false,"error":"confirmationToken expired"}"#;
         assert!(parse_edit_response(json).is_err());
     }
 

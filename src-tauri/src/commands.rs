@@ -2,7 +2,7 @@ use crate::{
     analyzer::run_all_analyzers,
     app_state::{NoteStoreCache, WriteSuppression},
     backlog_write::{
-        WriteOp, plan_append_entry, plan_gc_tombstones, plan_remove, plan_reorder,
+        TOMBSTONE, WriteOp, plan_append_entry, plan_gc_tombstones, plan_remove, plan_reorder,
         plan_stamp_block_id, verify_all_tombstones,
     },
     config, dump, export,
@@ -381,14 +381,24 @@ impl Writer<'_> {
         }
     }
 
-    /// Delete a single 1-based line. The ONLY line-count-reducing op; `apply_ops`
-    /// only ever calls it for a `DeleteBacklogLine` against the app-owned backlog
-    /// note (never a content note).
-    async fn delete_line(&self, addr: &NoteAddr, line: usize) -> Result<(), String> {
+    /// Delete a single 1-based line via the verified two-step compare-and-delete.
+    /// The ONLY line-count-reducing op; `apply_ops` only ever calls it for a
+    /// `DeleteBacklogLine` against the app-owned backlog note (never a content
+    /// note), passing the `TOMBSTONE` marker as `expected` so the server-side
+    /// dry-run preview is confirmed to be exactly that tombstone before the delete
+    /// is committed.
+    async fn delete_line(
+        &self,
+        addr: &NoteAddr,
+        line: usize,
+        expected: &str,
+    ) -> Result<(), String> {
         match self {
-            Writer::Real(m) => tools::delete_line(m, addr, line).await.map(|_| ()),
+            Writer::Real(m) => tools::delete_line(m, addr, line, expected)
+                .await
+                .map(|_| ()),
             #[cfg(test)]
-            Writer::Mock(k) => k.delete_line(addr, line),
+            Writer::Mock(k) => k.delete_line(addr, line, expected),
         }
     }
 }
@@ -408,7 +418,10 @@ enum MockCall {
     GetNote(NoteAddr),
     ReplaceLine(NoteAddr, usize, String),
     InsertInNote(NoteAddr, usize, String),
-    DeleteLine(NoteAddr, usize),
+    // The two-step delete_lines flow, modeled as two distinct calls so tests can
+    // assert the confirm is NEVER reached when the dry-run preview doesn't match.
+    DeleteDryRun(NoteAddr, usize),
+    DeleteConfirm(NoteAddr, usize),
 }
 
 #[cfg(test)]
@@ -418,7 +431,11 @@ struct MockInner {
     calls: Vec<MockCall>,
     fail_next_replace: bool,
     fail_next_insert: bool,
+    /// Force the CONFIRM step of the next two-step delete to fail (dry-run still ok).
     fail_next_delete: bool,
+    /// Simulate a concurrent external edit: make the next delete's dry-run PREVIEW
+    /// show a non-tombstone line, so verify-before-confirm aborts before the confirm.
+    delete_preview_mismatch: bool,
 }
 
 #[cfg(test)]
@@ -461,6 +478,10 @@ impl MockMcp {
 
     fn set_fail_delete(&self) {
         self.inner.lock().unwrap().fail_next_delete = true;
+    }
+
+    fn set_delete_preview_mismatch(&self) {
+        self.inner.lock().unwrap().delete_preview_mismatch = true;
     }
 
     fn body(&self, addr: &NoteAddr) -> String {
@@ -536,24 +557,64 @@ impl MockMcp {
         Ok(())
     }
 
-    fn delete_line(&self, addr: &NoteAddr, line: usize) -> Result<(), String> {
+    /// Models `tools::delete_line`'s two-step compare-and-delete faithfully so the
+    /// tests exercise the real safety flow:
+    ///  1. DRY RUN — record a `DeleteDryRun` call; compute the previewed content for
+    ///     `line` from the in-memory body (or a fabricated non-tombstone line when
+    ///     `delete_preview_mismatch` is set, simulating a concurrent external edit).
+    ///     This step NEVER mutates.
+    ///  2. VERIFY-BEFORE-CONFIRM — if the previewed content doesn't trim to
+    ///     `expected`, return Err WITHOUT recording a confirm or mutating.
+    ///  3. CONFIRM — record a `DeleteConfirm` call, then (unless `fail_next_delete`)
+    ///     remove the line.
+    fn delete_line(&self, addr: &NoteAddr, line: usize, expected: &str) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap();
-        inner.calls.push(MockCall::DeleteLine(addr.clone(), line));
+        let key = Self::addr_key(addr);
+        // STEP 1: dry-run preview (non-destructive).
+        inner.calls.push(MockCall::DeleteDryRun(addr.clone(), line));
+        let preview = if inner.delete_preview_mismatch {
+            inner.delete_preview_mismatch = false;
+            // Concurrent edit: the line is no longer the tombstone we planned to delete.
+            "- [[Sneaky^concur1]] a concurrent edit".to_string()
+        } else {
+            let lines = inner
+                .bodies
+                .get(&key)
+                .ok_or_else(|| format!("mock: no note at {key}"))?;
+            if line < 1 || line > lines.len() {
+                return Err(format!(
+                    "mock: delete dryRun line {line} out of range (1..={})",
+                    lines.len()
+                ));
+            }
+            // Real server pads preview content with indentation; model the leading
+            // whitespace so the executor's `.trim()` compare is exercised.
+            format!("  {}", lines[line - 1])
+        };
+        // STEP 2: VERIFY-BEFORE-CONFIRM. A preview that isn't the expected tombstone
+        // aborts here — no confirm call is recorded, no mutation happens.
+        if preview.trim() != expected {
+            return Err(format!(
+                "mock: delete preview mismatch on line {line}: previewed {:?}, expected {:?}",
+                preview.trim(),
+                expected
+            ));
+        }
+        // STEP 3: confirm (actually deletes). Only reached when the preview matched.
+        inner
+            .calls
+            .push(MockCall::DeleteConfirm(addr.clone(), line));
         if inner.fail_next_delete {
             inner.fail_next_delete = false;
-            return Err("mock: forced delete_line failure".to_string());
+            return Err("mock: forced delete confirm failure".to_string());
         }
-        let key = Self::addr_key(addr);
         let lines = inner
             .bodies
             .get_mut(&key)
             .ok_or_else(|| format!("mock: no note at {key}"))?;
-        // Mirror the real server reducing line count: bounds-check 1..=len (a
-        // delete past the end is a bug, surfaced rather than silently ignored),
-        // then remove the line.
         if line < 1 || line > lines.len() {
             return Err(format!(
-                "mock: delete line {line} out of range (1..={})",
+                "mock: delete confirm line {line} out of range (1..={})",
                 lines.len()
             ));
         }
@@ -891,14 +952,17 @@ async fn apply_ops(
             WriteOp::DeleteBacklogLine { line } => {
                 // The deleted content is invariant (always the tombstone marker),
                 // so the line number is a complete audit trail. Only ever emitted
-                // by `plan_gc_tombstones` against the app-owned backlog note.
+                // by `plan_gc_tombstones` against the app-owned backlog note. Pass
+                // TOMBSTONE as the expected content so the two-step compare-and-delete
+                // confirms the server's dry-run preview IS that tombstone before it
+                // commits — a concurrent edit that shifted the line aborts the delete.
                 log::info!(
                     "backlog[{}] via {}: delete tombstone line {}",
                     scope,
                     backlog_addr.mode(),
                     line
                 );
-                writer.delete_line(backlog_addr, line).await?;
+                writer.delete_line(backlog_addr, line, TOMBSTONE).await?;
             }
         }
         // Re-arm from write COMPLETION so the trailing 2s debounce is covered even
@@ -1463,7 +1527,8 @@ mod tests {
             MockCall::GetNote(a)
             | MockCall::ReplaceLine(a, ..)
             | MockCall::InsertInNote(a, ..)
-            | MockCall::DeleteLine(a, ..) => MockMcp::addr_key(a),
+            | MockCall::DeleteDryRun(a, ..)
+            | MockCall::DeleteConfirm(a, ..) => MockMcp::addr_key(a),
         }
     }
 
@@ -2109,19 +2174,30 @@ mod tests {
 
         let calls = writer.mock().calls();
         let bl_key = MockMcp::addr_key(&bl);
-        let deletes: Vec<(usize, usize)> = calls
+        let confirms: Vec<(usize, usize)> = calls
             .iter()
             .enumerate()
             .filter_map(|(i, c)| match c {
-                MockCall::DeleteLine(a, line) if MockMcp::addr_key(a) == bl_key => Some((i, *line)),
+                MockCall::DeleteConfirm(a, line) if MockMcp::addr_key(a) == bl_key => {
+                    Some((i, *line))
+                }
                 _ => None,
             })
             .collect();
-        assert_eq!(deletes.len(), 1, "exactly one tombstone deleted: {calls:?}");
-        assert_eq!(deletes[0].1, 4, "the tombstone sat on line 4");
-        // Each delete is preceded by a get_note (verify-before-write on fresh
-        // content): the GC pass's own re-fetch.
-        let last_get_before_delete = calls[..deletes[0].0]
+        assert_eq!(
+            confirms.len(),
+            1,
+            "exactly one tombstone deleted (confirmed): {calls:?}"
+        );
+        assert_eq!(confirms[0].1, 4, "the tombstone sat on line 4");
+        // The confirm is preceded by a matching dry-run on the SAME line (the
+        // two-step compare-and-delete), which is itself preceded by a fresh
+        // get_note (verify-before-write on the GC pass's own re-fetch).
+        let dry_pos = calls[..confirms[0].0]
+            .iter()
+            .rposition(|c| matches!(c, MockCall::DeleteDryRun(_, l) if *l == 4))
+            .expect("a DeleteDryRun(4) must precede the DeleteConfirm(4)");
+        let last_get_before_delete = calls[..dry_pos]
             .iter()
             .rposition(|c| matches!(c, MockCall::GetNote(_)) && call_addr_key(c) == bl_key);
         assert!(
@@ -2161,16 +2237,37 @@ mod tests {
             .expect("reorder + GC should succeed");
 
         let bl_key = MockMcp::addr_key(&bl);
-        let delete_lines: Vec<usize> = writer
-            .mock()
-            .calls()
+        let calls = writer.mock().calls();
+        let delete_lines: Vec<usize> = calls
             .iter()
             .filter_map(|c| match c {
-                MockCall::DeleteLine(a, line) if MockMcp::addr_key(a) == bl_key => Some(*line),
+                MockCall::DeleteConfirm(a, line) if MockMcp::addr_key(a) == bl_key => Some(*line),
                 _ => None,
             })
             .collect();
-        assert_eq!(delete_lines, vec![6, 4], "deletes issued bottom-up");
+        assert_eq!(
+            delete_lines,
+            vec![6, 4],
+            "confirmed deletes issued bottom-up"
+        );
+        // Each per-line delete is its own two-step dry-run→confirm, so a token stays
+        // valid: the full delete sub-sequence is DryRun(6), Confirm(6), DryRun(4),
+        // Confirm(4) — never a Confirm before its own DryRun.
+        let delete_seq: Vec<(bool, usize)> = calls
+            .iter()
+            .filter_map(|c| match c {
+                MockCall::DeleteDryRun(a, l) if MockMcp::addr_key(a) == bl_key => Some((true, *l)),
+                MockCall::DeleteConfirm(a, l) if MockMcp::addr_key(a) == bl_key => {
+                    Some((false, *l))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            delete_seq,
+            vec![(true, 6), (false, 6), (true, 4), (false, 4)],
+            "two-step per line, bottom-up: {calls:?}"
+        );
 
         let body = writer.mock().body(&bl);
         assert!(
@@ -2214,13 +2311,15 @@ mod tests {
         );
     }
 
-    // (Y) split proof: GC is a SEPARATE best-effort pass — a delete failure is
-    // SWALLOWED, so the reorder still returns Ok, its cache patch stands, and the
-    // tombstone simply remains. A delete_lines hiccup can NEVER fail the reorder.
+    // (Y) split proof: GC is a SEPARATE best-effort pass — a CONFIRM-step delete
+    // failure is SWALLOWED, so the reorder still returns Ok, its cache patch stands,
+    // and the tombstone simply remains. A delete_lines hiccup can NEVER fail the
+    // reorder. Here the two-step dry-run SUCCEEDS (preview matches) but the confirm
+    // fails.
     #[tokio::test]
     async fn test_reorder_ok_when_gc_delete_fails() {
         let (cache, mock, bl) = seed_backlog(BL_ONE_TOMBSTONE);
-        mock.set_fail_delete(); // the GC delete will fail
+        mock.set_fail_delete(); // the GC delete's CONFIRM step will fail
         let writer = Writer::Mock(mock);
         let result = run_reorder(&writer, &cache, "Work", &ids(&["d4e5f6", "a1b2c3"])).await;
 
@@ -2234,6 +2333,21 @@ mod tests {
             ids(&["d4e5f6", "a1b2c3"]),
             "reorder cache patch stands even though GC failed"
         );
+        // The two-step DID reach the confirm (dry-run preview matched the tombstone),
+        // and the confirm is what failed — proving the failure is the swallowed one.
+        let calls = writer.mock().calls();
+        assert!(
+            calls
+                .iter()
+                .any(|c| matches!(c, MockCall::DeleteDryRun(..))),
+            "the dry-run ran: {calls:?}"
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|c| matches!(c, MockCall::DeleteConfirm(..))),
+            "the confirm was attempted (and failed): {calls:?}"
+        );
         // The reorder DID run (entries repositioned on disk)...
         let body = writer.mock().body(&bl);
         let ops_pos = body.find("d4e5f6").expect("Ops entry present");
@@ -2243,6 +2357,44 @@ mod tests {
         assert!(
             body.contains("<!-- np-backlog: removed -->"),
             "tombstone remains after the swallowed GC failure: {body:?}"
+        );
+    }
+
+    // SAFETY CRUX: if the dry-run preview shows a NON-tombstone line (a concurrent
+    // external edit shifted the note between the GC fetch and the delete), the
+    // compare-and-delete aborts BEFORE the confirm — zero DeleteConfirm calls, the
+    // line is NOT deleted, and (GC being best-effort) the reorder still returns Ok.
+    #[tokio::test]
+    async fn test_gc_preview_mismatch_aborts_before_confirm() {
+        let (cache, mock, bl) = seed_backlog(BL_ONE_TOMBSTONE);
+        mock.set_delete_preview_mismatch(); // the dry-run preview won't be the tombstone
+        let writer = Writer::Mock(mock);
+        let result = run_reorder(&writer, &cache, "Work", &ids(&["d4e5f6", "a1b2c3"])).await;
+
+        assert!(
+            result.is_ok(),
+            "reorder still succeeds; the mismatched GC delete is swallowed: {result:?}"
+        );
+        let calls = writer.mock().calls();
+        // The dry-run ran (verify-before-confirm)...
+        assert!(
+            calls
+                .iter()
+                .any(|c| matches!(c, MockCall::DeleteDryRun(..))),
+            "the dry-run preview was requested: {calls:?}"
+        );
+        // ...but the confirm was NEVER sent — the delete never fired.
+        assert!(
+            !calls
+                .iter()
+                .any(|c| matches!(c, MockCall::DeleteConfirm(..))),
+            "no confirm may be sent when the preview isn't the expected tombstone: {calls:?}"
+        );
+        // The tombstone is untouched on disk (never deleted).
+        let body = writer.mock().body(&bl);
+        assert!(
+            body.contains("<!-- np-backlog: removed -->"),
+            "tombstone NOT deleted when the preview mismatched: {body:?}"
         );
     }
 
@@ -2261,8 +2413,8 @@ mod tests {
                 .mock()
                 .calls()
                 .iter()
-                .any(|c| matches!(c, MockCall::DeleteLine(..))),
-            "no delete_lines call when there are no tombstones to collect"
+                .any(|c| matches!(c, MockCall::DeleteDryRun(..) | MockCall::DeleteConfirm(..))),
+            "no delete_lines call (not even a dry-run) when there are no tombstones to collect"
         );
     }
 
@@ -2296,8 +2448,10 @@ mod tests {
         );
         let calls = writer.mock().calls();
         assert!(
-            !calls.iter().any(|c| matches!(c, MockCall::DeleteLine(..))),
-            "no delete may occur when verify aborts: {calls:?}"
+            !calls
+                .iter()
+                .any(|c| matches!(c, MockCall::DeleteDryRun(..) | MockCall::DeleteConfirm(..))),
+            "no delete (not even a dry-run) may occur when verify aborts: {calls:?}"
         );
         assert_eq!(
             writer.mock().body(&bl),

@@ -281,19 +281,20 @@ pub fn plan_reorder(
         .collect()
 }
 
-/// The text that a removed ranked entry's line is overwritten with. Removing
-/// never deletes a line (the NotePlan MCP now rejects `delete_lines` without a
-/// confirmationToken, and upstream `dryRun`/token flow is BROKEN — see
-/// CLAUDE.md); instead we overwrite the line in place via `edit_line`
-/// (`ReplaceBacklogLine`), which needs no token. A NON-EMPTY HTML comment (not a
-/// blank line) is used so `edit_line` unconditionally replaces the line in
-/// place: it can neither reject the write as empty content nor collapse the
-/// emptied line, so the "one-line, never removes/shifts" invariant holds
-/// regardless of how the server handles empty content. IGNORED by the reader
-/// (`ENTRY_RE` needs a list-leader + `[[…^id]]`, `HEADING_RE` needs `##`, and it
-/// has no `#` so it can't be miscounted as the `#np-backlog` tag) and by reorder
-/// (`ITEM_RE`).
-const TOMBSTONE: &str = "<!-- np-backlog: removed -->";
+/// The text that a removed ranked entry's line is overwritten with. Removing never
+/// deletes a line: it overwrites the entry in place via `edit_line`
+/// (`ReplaceBacklogLine`), a cheap single un-tokened call that keeps the "one-line,
+/// never removes/shifts" invariant. Actual line reclamation is deferred to the
+/// opportunistic GC pass on reorder, which deletes these markers via the two-step
+/// `delete_lines` compare-and-delete (`tools::delete_line`, verified against this
+/// exact marker before confirming). A NON-EMPTY HTML comment (not a blank line) is
+/// used so `edit_line` unconditionally replaces the line in place: it can neither
+/// reject the write as empty content nor collapse the emptied line, so the invariant
+/// holds regardless of how the server handles empty content. IGNORED by the reader
+/// (`ENTRY_RE` needs a list-leader + `[[…^id]]`, `HEADING_RE` needs `##`, and it has
+/// no `#` so it can't be miscounted as the `#np-backlog` tag) and by reorder
+/// (`ITEM_RE`). Shared with the executor as the compare-and-delete `expected_trimmed`.
+pub(crate) const TOMBSTONE: &str = "<!-- np-backlog: removed -->";
 
 /// Remove a ranked entry from the app-owned backlog note by overwriting its line
 /// with a tombstone marker, never deleting it. Data-safety: this only ever
