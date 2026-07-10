@@ -292,6 +292,17 @@ fn parse_delete_dry_run(json_text: &str, line: usize, expected_trimmed: &str) ->
             response_error(&v)
         ));
     }
+    // Guard the historic "dryRun ignored → write goes through anyway" bug: a server
+    // that silently deleted on STEP 1 would still return success+token+preview, and
+    // STEP 2's confirm would then fire against an already-shifted note. Require the
+    // response to echo `dryRun:true` so a flag-ignoring server aborts before confirm.
+    if v.get("dryRun").and_then(Value::as_bool) != Some(true) {
+        return Err(
+            "delete_lines dry run response did not echo `dryRun:true` — the server may have \
+             ignored the flag (and possibly already deleted); aborting before confirm."
+                .to_string(),
+        );
+    }
     let count = v.get("lineCountToDelete").and_then(Value::as_u64);
     if count != Some(1) {
         return Err(format!(
@@ -524,6 +535,15 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_delete_dry_run_missing_dryrun_flag_errs() {
+        // A server that ignored `dryRun` (and may have already deleted) must abort
+        // before confirm even if success/count/preview/token all look valid.
+        let json = r##"{"success":true,"lineCountToDelete":1,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"}],"confirmationToken":"tok","backends":["bridge"]}"##;
+        let err = parse_delete_dry_run(json, 4, TOMBSTONE).unwrap_err();
+        assert!(err.contains("dryRun:true"), "unexpected error: {err}");
+    }
+
+    #[test]
     fn test_parse_delete_dry_run_content_mismatch_errs() {
         // SAFETY CRUX: the preview shows a NON-tombstone line (concurrent edit) ->
         // no token returned, so the caller can never confirm the delete.
@@ -541,14 +561,14 @@ mod tests {
     #[test]
     fn test_parse_delete_dry_run_multi_line_count_errs() {
         // A count other than exactly 1 must abort (never confirm a multi-line delete).
-        let json = r##"{"success":true,"lineCountToDelete":2,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"},{"line":5,"content":"<!-- np-backlog: removed -->"}],"confirmationToken":"tok","backends":["bridge"]}"##;
+        let json = r##"{"success":true,"dryRun":true,"lineCountToDelete":2,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"},{"line":5,"content":"<!-- np-backlog: removed -->"}],"confirmationToken":"tok","backends":["bridge"]}"##;
         assert!(parse_delete_dry_run(json, 4, TOMBSTONE).is_err());
     }
 
     #[test]
     fn test_parse_delete_dry_run_missing_token_errs() {
         // A matching preview but no token -> cannot confirm -> Err.
-        let json = r##"{"success":true,"lineCountToDelete":1,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"}],"backends":["bridge"]}"##;
+        let json = r##"{"success":true,"dryRun":true,"lineCountToDelete":1,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"}],"backends":["bridge"]}"##;
         assert!(parse_delete_dry_run(json, 4, TOMBSTONE).is_err());
         // Empty token is also unusable.
         let empty = r##"{"success":true,"lineCountToDelete":1,"deletedLinesPreview":[{"line":4,"content":"<!-- np-backlog: removed -->"}],"confirmationToken":"","backends":["bridge"]}"##;
