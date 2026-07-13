@@ -7,8 +7,10 @@ use std::{
 };
 
 /// A planned mutation. By construction, content notes can ONLY be appended to
-/// (AppendBlockId); all delete/replace variants target the app-owned backlog
-/// note. This encodes the data-safety invariant in the type system.
+/// (AppendBlockId); all insert/replace/delete variants (`InsertBacklogLine`,
+/// `ReplaceBacklogLine`, `DeleteBacklogLine`) target the app-owned backlog note.
+/// `DeleteBacklogLine` is the only variant that reduces the note's line count.
+/// This encodes the data-safety invariant in the type system.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WriteOp {
     /// Append ` ^block_id` to a task line in a CONTENT note. `line`/`new_line_text`
@@ -25,10 +27,21 @@ pub enum WriteOp {
     InsertBacklogLine { line: usize, text: String },
     /// Replace a line in the BACKLOG note (app-owned).
     ReplaceBacklogLine { line: usize, text: String },
+    /// Delete a single 1-based line in the app-owned BACKLOG note. The ONLY
+    /// line-count-reducing op; by construction it targets the backlog note (never
+    /// a content note). Emitted ONLY by `plan_gc_tombstones`, and only for lines
+    /// that are EXACTLY the tombstone marker. GC planners emit these in DESCENDING
+    /// line order so sequential (bottom-up) application never shifts a
+    /// not-yet-deleted lower target — the sole line-shift-safety primitive for
+    /// deletes.
+    DeleteBacklogLine { line: usize },
 }
 
 impl WriteOp {
     /// True if this op mutates a user content note (only AppendBlockId does).
+    /// `DeleteBacklogLine` targets the app-owned backlog note ONLY (never a
+    /// content note), so it is classified false here alongside the other
+    /// backlog-note ops — the delete path can never touch user content.
     pub fn touches_content_note(&self) -> bool {
         matches!(self, WriteOp::AppendBlockId { .. })
     }
@@ -268,19 +281,20 @@ pub fn plan_reorder(
         .collect()
 }
 
-/// The text that a removed ranked entry's line is overwritten with. Removing
-/// never deletes a line (the NotePlan MCP now rejects `delete_lines` without a
-/// confirmationToken, and upstream `dryRun`/token flow is BROKEN — see
-/// CLAUDE.md); instead we overwrite the line in place via `edit_line`
-/// (`ReplaceBacklogLine`), which needs no token. A NON-EMPTY HTML comment (not a
-/// blank line) is used so `edit_line` unconditionally replaces the line in
-/// place: it can neither reject the write as empty content nor collapse the
-/// emptied line, so the "one-line, never removes/shifts" invariant holds
-/// regardless of how the server handles empty content. IGNORED by the reader
-/// (`ENTRY_RE` needs a list-leader + `[[…^id]]`, `HEADING_RE` needs `##`, and it
-/// has no `#` so it can't be miscounted as the `#np-backlog` tag) and by reorder
-/// (`ITEM_RE`).
-const TOMBSTONE: &str = "<!-- np-backlog: removed -->";
+/// The text that a removed ranked entry's line is overwritten with. Removing never
+/// deletes a line: it overwrites the entry in place via `edit_line`
+/// (`ReplaceBacklogLine`), a cheap single un-tokened call that keeps the "one-line,
+/// never removes/shifts" invariant. Actual line reclamation is deferred to the
+/// opportunistic GC pass on reorder, which deletes these markers via the two-step
+/// `delete_lines` compare-and-delete (`tools::delete_line`, verified against this
+/// exact marker before confirming). A NON-EMPTY HTML comment (not a blank line) is
+/// used so `edit_line` unconditionally replaces the line in place: it can neither
+/// reject the write as empty content nor collapse the emptied line, so the invariant
+/// holds regardless of how the server handles empty content. IGNORED by the reader
+/// (`ENTRY_RE` needs a list-leader + `[[…^id]]`, `HEADING_RE` needs `##`, and it has
+/// no `#` so it can't be miscounted as the `#np-backlog` tag) and by reorder
+/// (`ITEM_RE`). Shared with the executor as the compare-and-delete `expected_trimmed`.
+pub(crate) const TOMBSTONE: &str = "<!-- np-backlog: removed -->";
 
 /// Remove a ranked entry from the app-owned backlog note by overwriting its line
 /// with a tombstone marker, never deleting it. Data-safety: this only ever
@@ -316,6 +330,66 @@ pub fn plan_remove(content: &str, context: &str, block_id: &str) -> Result<Vec<W
             context, block_id
         )),
     }
+}
+
+/// Plan deletion of every accumulated tombstone line in the app-owned backlog
+/// note. This is the ONLY emitter of the line-count-reducing `DeleteBacklogLine`.
+///
+/// Data-safety:
+/// - Ownership-gated (`ensure_backlog_note`): refuses a note lacking the
+///   `#np-backlog` marker, so a mis-addressed CONTENT note can never have lines
+///   deleted through this path.
+/// - A line is a tombstone IFF its TRIMMED text == `TOMBSTONE` (exact marker
+///   match). NOT substring (`- real task <!-- np-backlog: removed -->` is NOT a
+///   tombstone) and NOT a blank line (the app never writes blank tombstones —
+///   `TOMBSTONE` is a non-empty comment by deliberate design; blank lines are
+///   meaningful user formatting). A line carrying the marker plus any extra text
+///   (trim != `TOMBSTONE`) is EXCLUDED, i.e. kept.
+/// - Note-WIDE (not section-scoped): the marker is globally unambiguous, so any
+///   reorder cleans every tombstone in the note.
+/// - Emits `DeleteBacklogLine` ops in strictly DESCENDING line order (bottom-up)
+///   so sequential application never shifts a not-yet-deleted lower target.
+/// - No tombstones → empty Vec (no write).
+pub fn plan_gc_tombstones(content: &str) -> Result<Vec<WriteOp>, String> {
+    ensure_backlog_note(content)?;
+    let mut lines: Vec<usize> = content
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.trim() == TOMBSTONE)
+        .map(|(i, _)| i + 1)
+        .collect();
+    lines.sort_unstable_by(|a, b| b.cmp(a)); // DESCENDING (bottom-up)
+    Ok(lines
+        .into_iter()
+        .map(|line| WriteOp::DeleteBacklogLine { line })
+        .collect())
+}
+
+/// Belt-and-suspenders guard for the GC delete pass: confirm EVERY listed 1-based
+/// `line` in `content` is EXACTLY the tombstone marker (trimmed equality — the
+/// same rule as `plan_gc_tombstones`). Returns Err naming the first offending line
+/// if any target is out of range or is not a bare tombstone; the caller ABORTS the
+/// whole GC pass on Err (no delete issued).
+///
+/// SCOPE: this runs against the SAME in-memory `content` the planner selected from,
+/// so for the CURRENT `plan_gc_tombstones` it can only pass — its value is a guard
+/// against a FUTURE planner bug where the planner's and this check's tombstone
+/// predicate diverge (belt-and-suspenders), NOT against a concurrent NotePlan edit.
+/// It does NOT re-fetch, so it cannot catch content that changed on disk AFTER the
+/// pass's fetch — that mid-write window is the app-wide single-fetch limitation
+/// shared by every write op, not something this check closes.
+pub fn verify_all_tombstones(content: &str, lines: &[usize]) -> Result<(), String> {
+    let all: Vec<&str> = content.lines().collect();
+    for &line in lines {
+        let is_tombstone = line >= 1 && line <= all.len() && all[line - 1].trim() == TOMBSTONE;
+        if !is_tombstone {
+            return Err(format!(
+                "GC abort: backlog line {} is not a tombstone marker — refusing to delete.",
+                line
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -687,5 +761,130 @@ mod tests {
             }
             .touches_content_note()
         );
+        // DeleteBacklogLine — the ONLY line-count-reducing op — targets the
+        // app-owned backlog note ONLY, never user content. Conscious
+        // classification: it must NOT touch a content note.
+        assert!(!WriteOp::DeleteBacklogLine { line: 1 }.touches_content_note());
+    }
+
+    // --- GC tombstone planner (plan_gc_tombstones / verify_all_tombstones) ---
+
+    // A backlog note carrying two tombstones interspersed with real entries.
+    const BL_TOMBSTONED: &str = "# Backlog #np-backlog\n## Work\n- [[Janet^a1b2c3]] Ship v2 \
+                                 spec\n<!-- np-backlog: removed -->\n- [[Ops^d4e5f6]] Review \
+                                 tix\n## Home\n<!-- np-backlog: removed -->\n- [[Reno^g7h8i9]] \
+                                 Call contractor\n";
+
+    #[test]
+    fn test_gc_plans_deletes_only_tombstone_lines() {
+        // Tombstones sit on lines 4 and 7 (1-based; line 6 is the `## Home`
+        // heading). GC deletes EXACTLY those, in DESCENDING order, and never an
+        // entry line number.
+        let ops = plan_gc_tombstones(BL_TOMBSTONED).unwrap();
+        assert_eq!(
+            ops,
+            vec![
+                WriteOp::DeleteBacklogLine { line: 7 },
+                WriteOp::DeleteBacklogLine { line: 4 },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_gc_no_tombstones_is_noop() {
+        // Entries only (no tombstone) → empty plan → no write.
+        assert!(plan_gc_tombstones(BL).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_gc_exact_match_not_substring_or_blank() {
+        // Line 3: bare marker (deleted). Line 4: marker as a SUBSTRING of a real
+        // entry (kept). Line 5: marker + trailing text, trim != TOMBSTONE (kept).
+        // Line 6: blank line (kept — blank tombstones are never written). Only the
+        // bare marker on line 3 is deleted.
+        let content = "# B #np-backlog\n## Work\n<!-- np-backlog: removed -->\n- real task <!-- \
+                       np-backlog: removed -->\n<!-- np-backlog: removed --> extra text\n\n- \
+                       [[Ops^d4e5f6]] Review\n";
+        let ops = plan_gc_tombstones(content).unwrap();
+        assert_eq!(ops, vec![WriteOp::DeleteBacklogLine { line: 3 }]);
+    }
+
+    #[test]
+    fn test_gc_descending_order() {
+        // ≥3 tombstones → strictly descending line numbers (bottom-up invariant at
+        // the planner, so sequential application never shifts a lower target).
+        let content = "# B #np-backlog\n## Work\n<!-- np-backlog: removed -->\n- [[A^aaaa11]] \
+                       one\n<!-- np-backlog: removed -->\n- [[B^bbbb22]] two\n<!-- np-backlog: \
+                       removed -->\n";
+        let ops = plan_gc_tombstones(content).unwrap();
+        assert_eq!(
+            ops,
+            vec![
+                WriteOp::DeleteBacklogLine { line: 7 },
+                WriteOp::DeleteBacklogLine { line: 5 },
+                WriteOp::DeleteBacklogLine { line: 3 },
+            ]
+        );
+        // Strictly descending.
+        let nums: Vec<usize> = ops
+            .iter()
+            .map(|op| match op {
+                WriteOp::DeleteBacklogLine { line } => *line,
+                other => panic!("expected DeleteBacklogLine, got {other:?}"),
+            })
+            .collect();
+        assert!(nums.windows(2).all(|w| w[0] > w[1]), "strictly descending");
+    }
+
+    #[test]
+    fn test_gc_rejects_non_backlog_note() {
+        // Ownership gate: a note WITHOUT the #np-backlog marker — even one that
+        // structurally has a `##` section and a tombstone-looking line — must be
+        // refused, so GC can never delete lines in a mis-addressed content note.
+        let not_backlog =
+            "# Real Content Note\n## Work\n<!-- np-backlog: removed -->\n- a real note line\n";
+        assert!(plan_gc_tombstones(not_backlog).is_err());
+    }
+
+    #[test]
+    fn test_gc_mixed_entries_and_tombstones_leaves_entries_bytewise() {
+        // Applying the planned deletes (descending) must remove ONLY the tombstone
+        // lines and leave every real entry byte-identical. We apply against a
+        // Vec<String> mirror the way the executor / content_after_ops does.
+        let ops = plan_gc_tombstones(BL_TOMBSTONED).unwrap();
+        let mut lines: Vec<String> = BL_TOMBSTONED.lines().map(String::from).collect();
+        for op in &ops {
+            if let WriteOp::DeleteBacklogLine { line } = op {
+                lines.remove(*line - 1); // descending → lower indices stay valid
+            }
+        }
+        let out = lines.join("\n");
+        assert!(!out.contains(TOMBSTONE), "all tombstones gone: {out:?}");
+        // Every real entry line survives byte-identically.
+        for entry in [
+            "- [[Janet^a1b2c3]] Ship v2 spec",
+            "- [[Ops^d4e5f6]] Review tix",
+            "- [[Reno^g7h8i9]] Call contractor",
+            "## Work",
+            "## Home",
+            "# Backlog #np-backlog",
+        ] {
+            assert!(
+                out.lines().any(|l| l == entry),
+                "entry preserved: {entry:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_verify_all_tombstones_ok_and_abort() {
+        // OK: the two real tombstone lines (4, 7) verify.
+        assert!(verify_all_tombstones(BL_TOMBSTONED, &[7, 4]).is_ok());
+        // ABORT: line 3 is a real ENTRY, not a tombstone (simulated stale/bad
+        // target) → Err, so the GC pass refuses to delete it.
+        let err = verify_all_tombstones(BL_TOMBSTONED, &[3]).unwrap_err();
+        assert!(err.contains("not a tombstone"), "names the reason: {err}");
+        // ABORT: out-of-range line → Err (never index past the content).
+        assert!(verify_all_tombstones(BL_TOMBSTONED, &[999]).is_err());
     }
 }
