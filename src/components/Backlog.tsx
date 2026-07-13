@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useRefreshOnScanUpdate } from "../hooks/useRefreshOnScanUpdate";
 import {
   backlogRankTask,
   backlogRemove,
@@ -8,7 +8,6 @@ import {
   openNotePlanUrl,
 } from "../api/commands";
 import {
-  SCAN_UPDATE_EVENT,
   type Backlog as BacklogData,
   type PoolTask,
   type RankedTask,
@@ -79,25 +78,11 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only on basePath/includeOlder; load reads basePath and takes includeOlder as an arg, both covered
   }, [basePath, includeOlder]);
 
-  // Refresh when the file watcher detects external NotePlan changes. The
-  // scan-update payload is a findings Report (not backlog data), so we ignore it
-  // and re-fetch via load(); loadGen dedups any race with a newer load or a
-  // vault switch. Re-subscribing on basePath/includeOlder (mirroring the mount
-  // effect) keeps the handler bound to the current includeOlder — no stale
-  // closure. (noteplan-organizer-kui)
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    let cancelled = false;
-    listen(SCAN_UPDATE_EVENT, () => load(includeOlder)).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-subscribe on basePath/includeOlder so the handler loads with the current includeOlder
-  }, [basePath, includeOlder]);
+  // Refresh when the file watcher detects external NotePlan changes. Passing
+  // includeOlder in deps keeps the handler bound to the current window — no stale
+  // closure; loadGen dedups any race with a newer load or a vault switch.
+  // (noteplan-organizer-kui)
+  useRefreshOnScanUpdate(() => load(includeOlder), [basePath, includeOlder]);
 
   const backlogTitle = data?.control_note_title ?? "";
   // Projects-only vaults (no #np-backlog note) still render contexts and

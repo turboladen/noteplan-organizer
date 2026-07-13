@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { backlogRemove, getBacklog, openNotePlanUrl } from "../api/commands";
-import { SCAN_UPDATE_EVENT, type Backlog as BacklogData, type RankedTask } from "../types/api";
+import { type Backlog as BacklogData, type RankedTask } from "../types/api";
+import { useRefreshOnScanUpdate } from "../hooks/useRefreshOnScanUpdate";
 import { TaskCard } from "./TaskCard";
 import { RankedRowActions, rankedRowLabel } from "./RankedRowActions";
 import { ContextTagCaption } from "./ContextTagCaption";
@@ -60,24 +60,10 @@ export function Board({ basePath, mcpConnected, mcpConnecting, onToast, onReconn
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only on basePath; load reads basePath
   }, [basePath]);
 
-  // Refresh when the file watcher detects external NotePlan changes. The
-  // scan-update payload is a findings Report (not backlog data), so we ignore it
-  // and re-fetch via load(true); loadGen dedups any race with a newer load or a
-  // vault switch, and load(true) surfaces a failure as a toast without tearing
-  // down the board. (noteplan-organizer-kui)
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    let cancelled = false;
-    listen(SCAN_UPDATE_EVENT, () => load(true)).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-subscribe only on basePath; load reads basePath
-  }, [basePath]);
+  // Refresh when the file watcher detects external NotePlan changes. load(true)
+  // surfaces a failure as a toast without tearing down the board; loadGen dedups
+  // any race with a newer load or a vault switch. (noteplan-organizer-kui)
+  useRefreshOnScanUpdate(() => load(true), [basePath]);
 
   const ctx = data?.contexts[activeCtx];
   const backlogTitle = data?.control_note_title ?? "";
