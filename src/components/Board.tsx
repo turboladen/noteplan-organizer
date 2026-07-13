@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { backlogRemove, getBacklog, openNotePlanUrl } from "../api/commands";
-import type { Backlog as BacklogData, RankedTask } from "../types/api";
+import { type Backlog as BacklogData, type RankedTask } from "../types/api";
+import { useRefreshOnScanUpdate } from "../hooks/useRefreshOnScanUpdate";
 import { TaskCard } from "./TaskCard";
 import { RankedRowActions, rankedRowLabel } from "./RankedRowActions";
 import { ContextTagCaption } from "./ContextTagCaption";
@@ -58,6 +59,11 @@ export function Board({ basePath, mcpConnected, mcpConnecting, onToast, onReconn
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only on basePath; load reads basePath
   }, [basePath]);
+
+  // Refresh when the file watcher detects external NotePlan changes. load(true)
+  // surfaces a failure as a toast without tearing down the board; loadGen dedups
+  // any race with a newer load or a vault switch. (noteplan-organizer-kui)
+  useRefreshOnScanUpdate(() => load(true), [basePath]);
 
   const ctx = data?.contexts[activeCtx];
   const backlogTitle = data?.control_note_title ?? "";

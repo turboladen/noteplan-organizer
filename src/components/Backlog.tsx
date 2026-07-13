@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRefreshOnScanUpdate } from "../hooks/useRefreshOnScanUpdate";
 import {
   backlogRankTask,
   backlogRemove,
@@ -6,7 +7,11 @@ import {
   getBacklog,
   openNotePlanUrl,
 } from "../api/commands";
-import type { Backlog as BacklogData, PoolTask, RankedTask } from "../types/api";
+import {
+  type Backlog as BacklogData,
+  type PoolTask,
+  type RankedTask,
+} from "../types/api";
 import { TaskCard } from "./TaskCard";
 import { RankedRowActions, rankedRowLabel } from "./RankedRowActions";
 import { ContextTagCaption } from "./ContextTagCaption";
@@ -72,6 +77,12 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
     load(includeOlder);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only on basePath/includeOlder; load reads basePath and takes includeOlder as an arg, both covered
   }, [basePath, includeOlder]);
+
+  // Refresh when the file watcher detects external NotePlan changes. Passing
+  // includeOlder in deps keeps the handler bound to the current window — no stale
+  // closure; loadGen dedups any race with a newer load or a vault switch.
+  // (noteplan-organizer-kui)
+  useRefreshOnScanUpdate(() => load(includeOlder), [basePath, includeOlder]);
 
   const backlogTitle = data?.control_note_title ?? "";
   // Projects-only vaults (no #np-backlog note) still render contexts and
