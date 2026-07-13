@@ -148,8 +148,16 @@ never spawn the MCP server against the user's real vault (use the fixture vault 
   `noteplan_edit_content` actions are `edit_line`/`delete_lines`/`insert`/`append` with a
   `content` field (not `replace`/`delete`/`text`). Verify schemas in MCP Inspector before
   writing new wrappers.
-- **`dryRun`/`confirmationToken` are BROKEN upstream** (writes go through anyway;
-  NotePlan/noteplan-mcp#8) — never rely on them for safety.
+- **`dryRun`/`confirmationToken`: action-dependent — verify per action, never assume.**
+  For `delete_lines` (the ONLY line-removing op) the two-step flow is REQUIRED and WORKS
+  (verified in MCP Inspector 2026-07-13, PR #22): STEP 1 `dryRun:true` is genuinely
+  non-destructive and returns a `deletedLinesPreview` + `confirmationToken`; STEP 2 with the
+  token deletes. `tools::delete_line` exploits this as a compare-and-delete (dry-run → confirm
+  the preview trims to the expected tombstone → confirm), and asserts the response echoes
+  `dryRun:true` to guard the historical "flag ignored, write goes through anyway" bug
+  (NotePlan/noteplan-mcp#8) in case it resurfaces. That historical bug was NOT re-verified for
+  the other edit actions (`edit_line`/`insert`/`append`) — do not rely on their `dryRun`
+  without confirming it in Inspector first.
 - Every write-path response must report `backends:["bridge"]` (= the running NotePlan app
   applied it); `assert_bridge_backend` enforces this — non-bridge ops abort.
 - Parse `success:true` from every edit response; `call_tool` also rejects `isError` results.
