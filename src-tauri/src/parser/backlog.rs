@@ -889,6 +889,47 @@ mod tests {
         );
     }
 
+    // Regression guard for noteplan-organizer-v2i (validated not-a-bug 2026-07-13):
+    // NotePlan forward-scheduling leaves a greyed `[>]` ghost in the ORIGIN daily
+    // AND materializes a fresh Open copy in the TARGET (future) daily note. The
+    // origin ghost is correctly dropped as a move-ghost, but the Open copy — living
+    // in a SEPARATE future daily — must still be harvested. This is the exact case
+    // v2i feared would vanish: the daily window passes all future dates
+    // (`daily_within_window`: today - future < 0 <= 30), and the scan reads every
+    // Calendar/ file, so the forward-scheduled task never disappears from the pool.
+    // (The neighboring ghost-dropped test only covers ghost+live in the SAME note.)
+    #[test]
+    fn test_forward_scheduled_open_copy_in_future_daily_is_harvested() {
+        let origin = parse_note(
+            "/o.md",
+            "Calendar/20260703.md", // 2 days before test today (2026-07-05): in-window
+            "# Day\n* [>] Ship the thing >2026-08-01 ^orig01\n",
+            NoteKind::Daily,
+        );
+        let target = parse_note(
+            "/t.md",
+            "Calendar/20260801.md", // future: in-window (future dailies always pass)
+            "# Day\n* Ship the thing ^live01\n",
+            NoteKind::Daily,
+        );
+        let st = store(vec![projects_note(), origin, target]);
+        let b = build_backlog(&st, &test_opts());
+        let work = b.contexts.iter().find(|c| c.name == "Work").unwrap();
+        let ids: Vec<&str> = work
+            .pool
+            .iter()
+            .filter_map(|t| t.block_id.as_deref())
+            .collect();
+        assert!(
+            ids.contains(&"live01"),
+            "future-daily Open copy of a forward-scheduled task must be harvested (v2i)"
+        );
+        assert!(
+            !ids.contains(&"orig01"),
+            "origin reschedule ghost must be dropped"
+        );
+    }
+
     #[test]
     fn test_folder_depth_counts_segments() {
         assert_eq!(folder_depth("Notes"), 1);
