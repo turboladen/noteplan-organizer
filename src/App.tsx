@@ -20,8 +20,9 @@ import { Backlog } from "./components/Backlog";
 import { Board } from "./components/Board";
 import { FilingAssistant } from "./components/FilingAssistant";
 import { FindingsList } from "./components/FindingsList";
-import { ALL_VIEWS, Sidebar } from "./components/Sidebar";
-import type { AppView, McpUiState } from "./components/Sidebar";
+import { Sidebar } from "./components/Sidebar";
+import { ALL_VIEWS } from "./components/views";
+import type { AppView, McpUiState } from "./components/views";
 import { SCAN_UPDATE_EVENT, SYSTEM_ASSESSMENT_CATEGORIES } from "./types/api";
 import type { Finding, FindingCategory, Report, ReportStats, Severity } from "./types/api";
 import { getFindingId } from "./utils/findingId";
@@ -142,23 +143,40 @@ function App() {
       } else {
         next.add(findingId);
       }
-      saveDismissed(next);
       return next;
     });
   }, []);
 
-  // Prune dismissed IDs that no longer match any finding after a rescan
+  // Persist the dismissed set whenever it changes — covers both toggles and the
+  // render-time prune below. This is a pure "sync external system" effect (no
+  // setState), so it doesn't trip react-hooks/set-state-in-effect, and it lets
+  // the prune stay pure (never call saveDismissed during render).
   useEffect(() => {
-    if (!report) return;
-    const currentIds = new Set(report.findings.map(getFindingId));
-    setDismissedIds((prev) => {
-      const pruned = new Set([...prev].filter((id) => currentIds.has(id)));
-      if (pruned.size !== prev.size) {
-        saveDismissed(pruned);
-      }
-      return pruned;
-    });
-  }, [report]);
+    saveDismissed(dismissedIds);
+  }, [dismissedIds]);
+
+  // Prune dismissed IDs that no longer match any finding after a rescan.
+  // setState-during-render reconciliation (React "adjusting state when a prop
+  // changes"): a report-identity sentinel replaces the old effect so the prune
+  // happens before the children ever see a stale dismissed set. The now-stale
+  // IDs left in localStorage are inert (loadDismissed doesn't validate; they
+  // match no finding) and get tidied on the next toggleDismissed, so we no
+  // longer persist the pruned set here.
+  const [prevReport, setPrevReport] = useState<Report | null>(null);
+  if (report !== prevReport) {
+    setPrevReport(report);
+    if (report) {
+      const currentIds = new Set(report.findings.map(getFindingId));
+      setDismissedIds((prev) => {
+        const pruned = new Set([...prev].filter((id) => currentIds.has(id)));
+        // Return the SAME ref when nothing was pruned so React bails out of the
+        // update — this keeps dismissedIds identity stable across no-op rescans,
+        // so the persistence effect (and its localStorage write) only fires when
+        // the set actually changed (matches the old `pruned.size !== prev.size`).
+        return pruned.size === prev.size ? prev : pruned;
+      });
+    }
+  }
 
   // Auto-detect NotePlan path on mount
   useEffect(() => {

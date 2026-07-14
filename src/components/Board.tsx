@@ -3,7 +3,8 @@ import { backlogRemove, getBacklog, openNotePlanUrl } from "../api/commands";
 import { type Backlog as BacklogData, type RankedTask } from "../types/api";
 import { useRefreshOnScanUpdate } from "../hooks/useRefreshOnScanUpdate";
 import { TaskCard } from "./TaskCard";
-import { RankedRowActions, rankedRowLabel } from "./RankedRowActions";
+import { RankedRowActions } from "./RankedRowActions";
+import { rankedRowLabel } from "./rankedRow";
 import { ContextTagCaption } from "./ContextTagCaption";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 

@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useRef, useState } from "react";
 import { openNotePlanUrl } from "../api/commands";
 import type { Finding, FindingCategory, ReportStats, Severity } from "../types/api";
 import { CATEGORY_BADGE_STYLES, CATEGORY_LABELS, SEVERITY_BADGE_STYLES } from "../types/api";
@@ -56,11 +56,19 @@ export function FindingsList({
   const listRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
-  // Reset pagination when filters change
-  useEffect(() => {
+  // Reset pagination/focus when the filters or the findings list change.
+  // setState-during-render reconciliation on a composite sentinel (plus a
+  // findings-identity check) replaces the old effect, so the reset lands before
+  // the children render rather than in a post-commit pass.
+  const filterKey = `${selectedCategory}|${selectedSeverity}|${showDismissed}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  const [prevFindings, setPrevFindings] = useState(findings);
+  if (filterKey !== prevFilterKey || findings !== prevFindings) {
+    setPrevFilterKey(filterKey);
+    setPrevFindings(findings);
     setVisibleCount(PAGE_SIZE);
     setFocusedIndex(-1);
-  }, [selectedCategory, selectedSeverity, showDismissed, findings]);
+  }
 
   const filtered = findings.filter((f) => {
     if (selectedCategory !== "all" && f.category !== selectedCategory) {
@@ -89,61 +97,58 @@ export function FindingsList({
   );
 
   // Keyboard navigation
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      const maxIndex = visibleActive.length - 1;
-      if (maxIndex < 0) return;
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    const maxIndex = visibleActive.length - 1;
+    if (maxIndex < 0) return;
 
-      switch (e.key) {
-        case "ArrowDown":
-        case "j": {
-          e.preventDefault();
-          const next = Math.min(focusedIndex + 1, maxIndex);
-          setFocusedIndex(next);
-          cardRefs.current.get(next)?.scrollIntoView({ block: "nearest" });
-          break;
-        }
-        case "ArrowUp":
-        case "k": {
-          e.preventDefault();
-          const prev = Math.max(focusedIndex - 1, 0);
-          setFocusedIndex(prev);
-          cardRefs.current.get(prev)?.scrollIntoView({ block: "nearest" });
-          break;
-        }
-        case "Enter": {
-          if (focusedIndex >= 0 && focusedIndex <= maxIndex) {
-            const f = visibleActive[focusedIndex];
-            if (f.context || f.line_number) {
-              e.preventDefault();
-              const fid = getFindingId(f);
-              setExpandedId(expandedId === fid ? null : fid);
-            }
-          }
-          break;
-        }
-        case "o": {
-          if (focusedIndex >= 0 && focusedIndex <= maxIndex) {
-            const f = visibleActive[focusedIndex];
-            if (!f.is_folder) {
-              e.preventDefault();
-              openNotePlanUrl(buildNotePlanUrl(f.file_path));
-            }
-          }
-          break;
-        }
-        case " ": {
-          if (focusedIndex >= 0 && focusedIndex <= maxIndex) {
-            e.preventDefault();
-            const fid = getFindingId(visibleActive[focusedIndex]);
-            onToggleDismissed(fid);
-          }
-          break;
-        }
+    switch (e.key) {
+      case "ArrowDown":
+      case "j": {
+        e.preventDefault();
+        const next = Math.min(focusedIndex + 1, maxIndex);
+        setFocusedIndex(next);
+        cardRefs.current.get(next)?.scrollIntoView({ block: "nearest" });
+        break;
       }
-    },
-    [focusedIndex, visibleActive, expandedId, onToggleDismissed],
-  );
+      case "ArrowUp":
+      case "k": {
+        e.preventDefault();
+        const prev = Math.max(focusedIndex - 1, 0);
+        setFocusedIndex(prev);
+        cardRefs.current.get(prev)?.scrollIntoView({ block: "nearest" });
+        break;
+      }
+      case "Enter": {
+        if (focusedIndex >= 0 && focusedIndex <= maxIndex) {
+          const f = visibleActive[focusedIndex];
+          if (f.context || f.line_number) {
+            e.preventDefault();
+            const fid = getFindingId(f);
+            setExpandedId(expandedId === fid ? null : fid);
+          }
+        }
+        break;
+      }
+      case "o": {
+        if (focusedIndex >= 0 && focusedIndex <= maxIndex) {
+          const f = visibleActive[focusedIndex];
+          if (!f.is_folder) {
+            e.preventDefault();
+            openNotePlanUrl(buildNotePlanUrl(f.file_path));
+          }
+        }
+        break;
+      }
+      case " ": {
+        if (focusedIndex >= 0 && focusedIndex <= maxIndex) {
+          e.preventDefault();
+          const fid = getFindingId(visibleActive[focusedIndex]);
+          onToggleDismissed(fid);
+        }
+        break;
+      }
+    }
+  };
 
   return (
     <div className="flex gap-6">
@@ -363,6 +368,7 @@ export function FindingsList({
       {/* Note preview panel */}
       {previewPath && (
         <NotePreview
+          key={previewPath}
           path={previewPath}
           basePath={basePath}
           onClose={() => setPreviewPath(null)}

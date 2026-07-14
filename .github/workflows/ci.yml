@@ -20,3 +20,18 @@ jobs:
 
       - name: Check formatting
         run: cargo +nightly fmt --manifest-path src-tauri/Cargo.toml --check
+
+  lint:
+    name: ESLint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # `eslint .` needs no build/typecheck first.
+      - name: Lint
+        run: bun run lint
