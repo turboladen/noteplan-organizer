@@ -8,8 +8,8 @@ pub(crate) fn extract_text(result: &rmcp::model::CallToolResult) -> String {
     result
         .content
         .iter()
-        .filter_map(|c| match c.raw {
-            rmcp::model::RawContent::Text(ref t) => Some(t.text.as_str()),
+        .filter_map(|c| match c {
+            rmcp::model::ContentBlock::Text(t) => Some(t.text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
