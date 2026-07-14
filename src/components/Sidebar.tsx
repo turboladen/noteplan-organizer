@@ -1,21 +1,5 @@
 import { useState } from "react";
-
-export type AppView =
-  | "board"
-  | "backlog"
-  | "filing"
-  | "findings"
-  | "assessment";
-
-export type McpUiState = "connecting" | "connected" | "offline";
-
-export const ALL_VIEWS: AppView[] = [
-  "board",
-  "backlog",
-  "filing",
-  "findings",
-  "assessment",
-];
+import type { AppView, McpUiState } from "./views";
 
 interface NavItem {
   id: AppView;

@@ -13,10 +13,10 @@ export function NotePreview({ path, basePath, onClose }: NotePreviewProps) {
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // The parent keys <NotePreview> on the preview path, so a path switch remounts
+  // this component with fresh null content/error (Loading shows) — no in-effect
+  // reset needed; the effect only runs the async fetch.
   useEffect(() => {
-    setContent(null);
-    setError(null);
-
     const fullPath = `${basePath}/${path}`;
     getNoteContent(fullPath)
       .then(setContent)

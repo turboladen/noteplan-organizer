@@ -3,15 +3,6 @@ import type { RankedTask } from "../types/api";
 const BADGE_CLASS =
   "text-[10px] text-amber-600 border border-amber-200 bg-amber-50 rounded px-1";
 
-/** Row label for a ranked entry: the preserved on-disk text, falling back to
- * the wiki-link title for a bare orphaned entry that carries no trailing text
- * (a hand-edited `[[Title^id]]` with nothing after it), so the row is never
- * blank. App-written orphans always keep their trailing text, so this only
- * covers manually-authored entries. */
-export function rankedRowLabel(t: RankedTask): string {
-  return t.text.trim() !== "" ? t.text : t.source_note_title;
-}
-
 /** Trailing actions for a ranked row, shared by the Board and Backlog queues.
  * A − remove/unrank button (aiy) always trails, cleaning the entry out of the
  * app-owned #np-backlog note via the existing gated `backlogRemove` tombstone

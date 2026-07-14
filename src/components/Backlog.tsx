@@ -13,7 +13,8 @@ import {
   type RankedTask,
 } from "../types/api";
 import { TaskCard } from "./TaskCard";
-import { RankedRowActions, rankedRowLabel } from "./RankedRowActions";
+import { RankedRowActions } from "./RankedRowActions";
+import { rankedRowLabel } from "./rankedRow";
 import { ContextTagCaption } from "./ContextTagCaption";
 import { buildNotePlanUrl } from "../utils/noteplanUrl";
 import { matchesSearch } from "../utils/taskMeta";
@@ -169,11 +170,18 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
 
   const ctx = data?.contexts[activeCtx];
 
+  // The two derived memos below depend on the stable state values (`data`,
+  // `activeCtx`) and re-derive the active context locally, rather than depending
+  // on the inline `ctx` object. An inline-derived object recomputed every render
+  // is not a dependency the React-Compiler lint rule can preserve; the state
+  // values are. Value-identical to depending on `ctx`.
   const visibleRanked = useMemo(() => {
-    return (ctx?.ranked ?? []).filter((t) => matchesSearch(search, t.text, t.tags));
-  }, [ctx, search]);
+    const c = data?.contexts[activeCtx];
+    return (c?.ranked ?? []).filter((t) => matchesSearch(search, t.text, t.tags));
+  }, [data, activeCtx, search]);
 
   const groups = useMemo<InventoryGroup[]>(() => {
+    const ctx = data?.contexts[activeCtx];
     if (!ctx) return [];
     // Derived from the memoized visibleRanked (same search filter) plus the
     // resolved check, so the per-group "N ranked" counts and the ranked list
@@ -251,7 +259,7 @@ export function Backlog({ basePath, mcpConnected, mcpConnecting, onToast, onReco
       });
     }
     return result;
-  }, [ctx, search, includeOlder, visibleRanked]);
+  }, [data, activeCtx, search, includeOlder, visibleRanked]);
 
   const toggleGroup = (key: string) =>
     setCollapsed((prev) => {
