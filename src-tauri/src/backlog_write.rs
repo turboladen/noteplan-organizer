@@ -349,7 +349,10 @@ pub fn plan_remove(content: &str, context: &str, block_id: &str) -> Result<Vec<W
 ///   reorder cleans every tombstone in the note.
 /// - Emits `DeleteBacklogLine` ops in strictly DESCENDING line order (bottom-up)
 ///   so sequential application never shifts a not-yet-deleted lower target.
-/// - No tombstones → empty Vec (no write).
+/// - No tombstones → empty Vec (no write). Each op is executed by
+///   `mcp::tools::delete_line`, whose two-step dry-run→confirm mitigates (but
+///   cannot fully close) the concurrent-edit window — see its RESIDUAL WINDOW note
+///   for the accepted, control-note-only residual risk.
 pub fn plan_gc_tombstones(content: &str) -> Result<Vec<WriteOp>, String> {
     ensure_backlog_note(content)?;
     let mut lines: Vec<usize> = content

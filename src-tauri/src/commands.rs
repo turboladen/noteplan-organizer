@@ -436,6 +436,11 @@ struct MockInner {
     /// Simulate a concurrent external edit: make the next delete's dry-run PREVIEW
     /// show a non-tombstone line, so verify-before-confirm aborts before the confirm.
     delete_preview_mismatch: bool,
+    /// Like `delete_preview_mismatch`, but targeted at ONE specific 1-based line
+    /// (persistent, not one-shot). Lets a multi-delete GC pass mismatch a SPECIFIC
+    /// tombstone (e.g. a lower/later bottom-up target) while the others still delete
+    /// — the intra-pass concurrent-edit scenario the one-shot boolean can't express.
+    delete_preview_mismatch_line: Option<usize>,
 }
 
 #[cfg(test)]
@@ -482,6 +487,13 @@ impl MockMcp {
 
     fn set_delete_preview_mismatch(&self) {
         self.inner.lock().unwrap().delete_preview_mismatch = true;
+    }
+
+    /// Target a SPECIFIC 1-based line for a dry-run preview mismatch (persistent):
+    /// only that line's delete aborts before confirm, so other tombstones in the
+    /// same GC pass still delete.
+    fn set_delete_preview_mismatch_on_line(&self, line: usize) {
+        self.inner.lock().unwrap().delete_preview_mismatch_line = Some(line);
     }
 
     fn body(&self, addr: &NoteAddr) -> String {
@@ -561,7 +573,8 @@ impl MockMcp {
     /// tests exercise the real safety flow:
     ///  1. DRY RUN — record a `DeleteDryRun` call; compute the previewed content for
     ///     `line` from the in-memory body (or a fabricated non-tombstone line when
-    ///     `delete_preview_mismatch` is set, simulating a concurrent external edit).
+    ///     `delete_preview_mismatch` is set, or when `delete_preview_mismatch_line`
+    ///     targets this exact line — both simulate a concurrent external edit).
     ///     This step NEVER mutates.
     ///  2. VERIFY-BEFORE-CONFIRM — if the previewed content doesn't trim to
     ///     `expected`, return Err WITHOUT recording a confirm or mutating.
@@ -572,8 +585,15 @@ impl MockMcp {
         let key = Self::addr_key(addr);
         // STEP 1: dry-run preview (non-destructive).
         inner.calls.push(MockCall::DeleteDryRun(addr.clone(), line));
-        let preview = if inner.delete_preview_mismatch {
-            inner.delete_preview_mismatch = false;
+        let mismatch = if inner.delete_preview_mismatch {
+            inner.delete_preview_mismatch = false; // one-shot: fires on the NEXT delete
+            true
+        } else {
+            // Targeted (persistent): only THIS line's dry-run mismatches, so other
+            // tombstones in the same bottom-up GC pass still delete normally.
+            inner.delete_preview_mismatch_line == Some(line)
+        };
+        let preview = if mismatch {
             // Concurrent edit: the line is no longer the tombstone we planned to delete.
             "- [[Sneaky^concur1]] a concurrent edit".to_string()
         } else {
@@ -1346,7 +1366,7 @@ mod tests {
     };
     use crate::{
         app_state::{NoteStoreCache, WriteSuppression},
-        backlog_write::WriteOp,
+        backlog_write::{TOMBSTONE, WriteOp},
         mcp::tools::NoteAddr,
         models::NoteKind,
         parser::{NoteStore, parse_note},
@@ -2395,6 +2415,93 @@ mod tests {
         assert!(
             body.contains("<!-- np-backlog: removed -->"),
             "tombstone NOT deleted when the preview mismatched: {body:?}"
+        );
+    }
+
+    // LOCKS the kr7 mitigation at its hardest point: a concurrent edit that shifts
+    // ONE tombstone MID-PASS must not take the earlier, already-deleted tombstones
+    // down with it — the compare-and-delete aborts on the shifted line while the
+    // tombstone deleted before it stays deleted. With BL_TWO_TOMBSTONES the GC plans
+    // bottom-up deletes [6, 4] (proved by test_gc_delete_order_is_bottom_up). We
+    // fabricate a preview mismatch on line 4 (the later, lower target): DryRun(6)→
+    // Confirm(6) removes the line-6 tombstone; DryRun(4)→(mismatch)→Err aborts the
+    // remaining pass BEFORE Confirm(4), so the line-4 tombstone survives. Because the
+    // mismatched line is the LAST bottom-up op, aborting the remaining pass and
+    // aborting "just line 4" are observationally identical here; the point locked is
+    // that line 6's committed delete is NOT rolled back. GC is best-effort
+    // (reorder_inner swallows the error), so the reorder still returns Ok.
+    #[tokio::test]
+    async fn test_gc_intra_pass_mismatch_localized_other_tombstones_still_delete() {
+        let (cache, mock, bl) = seed_backlog(BL_TWO_TOMBSTONES);
+        mock.set_delete_preview_mismatch_on_line(4); // only line 4's delete aborts
+        let writer = Writer::Mock(mock);
+        let result = run_reorder(&writer, &cache, "Work", &ids(&["d4e5f6", "a1b2c3"])).await;
+
+        assert!(
+            result.is_ok(),
+            "reorder must succeed; the single mismatched GC delete is swallowed: {result:?}"
+        );
+
+        let bl_key = MockMcp::addr_key(&bl);
+        let calls = writer.mock().calls();
+        // Confirms fired for EXACTLY line 6 — never line 4.
+        let confirms: Vec<usize> = calls
+            .iter()
+            .filter_map(|c| match c {
+                MockCall::DeleteConfirm(a, line) if MockMcp::addr_key(a) == bl_key => Some(*line),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            confirms,
+            vec![6],
+            "only the line-6 tombstone is confirmed-deleted; line 4 never confirms: {calls:?}"
+        );
+        // A DeleteDryRun(4) WAS issued (verify-before-confirm ran for line 4)...
+        assert!(
+            calls.iter().any(|c| matches!(
+                c,
+                MockCall::DeleteDryRun(a, 4) if MockMcp::addr_key(a) == bl_key
+            )),
+            "a dry-run for line 4 must have run (verify-before-confirm): {calls:?}"
+        );
+        // ...but NO DeleteConfirm(4) — the mismatch aborted before the confirm.
+        assert!(
+            !calls.iter().any(|c| matches!(
+                c,
+                MockCall::DeleteConfirm(a, 4) if MockMcp::addr_key(a) == bl_key
+            )),
+            "line 4 must NOT be confirmed when its preview mismatched: {calls:?}"
+        );
+
+        let body = writer.mock().body(&bl);
+        // PRECISION assertion: both tombstones are byte-identical text, so only a
+        // COUNT rigorously proves exactly one was removed (line 6) and one survives
+        // (line 4). A `.contains()` check can't tell one tombstone from the other.
+        assert_eq!(
+            body.matches(TOMBSTONE).count(),
+            1,
+            "exactly one tombstone remains (line-6 deleted, line-4 survives): {body:?}"
+        );
+        assert_eq!(
+            body.lines().count(),
+            BL_TWO_TOMBSTONES.trim_end().lines().count() - 1,
+            "line count reduced by exactly the ONE deleted tombstone"
+        );
+        // The real entries are byte-identical AND in the reordered order (Ops first).
+        assert!(
+            body.contains("- [[Ops^d4e5f6]] Review tix"),
+            "Ops entry byte-identical: {body:?}"
+        );
+        assert!(
+            body.contains("- [[Janet^a1b2c3]] Ship v2 spec"),
+            "Janet entry byte-identical: {body:?}"
+        );
+        let ops_pos = body.find("d4e5f6").expect("Ops entry present");
+        let janet_pos = body.find("a1b2c3").expect("Janet entry present");
+        assert!(
+            ops_pos < janet_pos,
+            "entries in the reordered order (Ops before Janet): {body:?}"
         );
     }
 
