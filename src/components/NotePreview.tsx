@@ -15,12 +15,23 @@ export function NotePreview({ path, basePath, onClose }: NotePreviewProps) {
 
   // The parent keys <NotePreview> on the preview path, so a path switch remounts
   // this component with fresh null content/error (Loading shows) — no in-effect
-  // reset needed; the effect only runs the async fetch.
+  // reset needed. The `ignore` flag makes stale-response dropping explicit and
+  // robust rather than relying on the remount: getNoteContent is a Tauri invoke()
+  // that can't be aborted, so if a fetch resolves after the deps change (or the
+  // component unmounts) we drop the result instead of rendering a stale note body.
   useEffect(() => {
+    let ignore = false;
     const fullPath = `${basePath}/${path}`;
     getNoteContent(fullPath)
-      .then(setContent)
-      .catch((e) => setError(String(e)));
+      .then((c) => {
+        if (!ignore) setContent(c);
+      })
+      .catch((e) => {
+        if (!ignore) setError(String(e));
+      });
+    return () => {
+      ignore = true;
+    };
   }, [path, basePath]);
 
   // Close on Escape key
