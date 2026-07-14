@@ -15,7 +15,7 @@ on-disk shape the parser expects (`Notes/` + `Calendar/`).
 Notes/
   _NotePlan Organizer/
     Project Priorities.md   # #np-projects: ## Work (declares #work) [Alpha, Beta, 99-Ghost(unresolved)], ## Home (declares #home) [Home Reno], ## Reading (tag-less) [88-Someday(unresolved)]
-    Backlog.md              # #np-backlog:  ## Work [alpha01, beta01, dead999(stale), prose ref], ## Home [home01]
+    Backlog.md              # #np-backlog:  ## Work [alpha01, beta01, dead999(stale), prose ref], ## Home [home01, loose1(D1: task lives outside every resolved folder)]
   1x - Domains [Work]/
     12 - Alpha Project/      # JD project folder (Work context)
       12 - Alpha Project.md  #   hub note
@@ -28,6 +28,7 @@ Notes/
       13.01 - Research.md    #   ^beta01, a <date reschedule, a '- [ ]' checkbox task
       13.02 - Shared.md      #   duplicate-title note (no tasks)
   2x - Projects [Personal]/
+    Loose Ideas.md           # loose #home task ^loose1: scoped-ABSENT (outside 21 - Home Reno), ranked in Backlog.md → D1-rescue coverage
     21 - Home Reno/          # JD project folder (Home context)
       21 - Home Reno.md
       21.01 - Kitchen.md     #   ^home01
@@ -55,6 +56,13 @@ Calendar/
 - **Backlog**: resolved ranked entries (text from the source task), a stale entry
   (`dead999`, `resolved:false`), a prose `[[…^id]]` line that must NOT count, and
   the unranked pool (context tasks minus ranked ones).
+- **Scoped cold-load D1 rescue**: `Loose Ideas.md` (`^loose1`) sits directly under
+  `2x - Projects [Personal]`, OUTSIDE every resolved project folder and outside
+  `Calendar/`, yet is ranked in `Backlog.md` under `## Home`. The scoped cold scan
+  never parses it, so a plain `build_backlog(scan_scoped)` marks `loose1`
+  `resolved:false` (the D1 divergence). `build_backlog_scoped` rescues it back to
+  `resolved:true`, while the genuinely-dead `dead999` (matches no file anywhere)
+  stays `resolved:false` — proving the rescue does NOT over-trigger.
 - **Parser edges**: `!`/`!!`/`!!!`, `!!!!` clamp, word-glued `it!` non-marker,
   `^blockId`, `>`/`<` dates, `[x]`/`[-]`/`[>]` states, `- [ ]` checkbox tasks,
   bare `-`/`+` non-tasks, `#tags`/`@mentions`, an indented subtask.

@@ -5,7 +5,7 @@
 
 use app_lib::{
     models::{Note, NoteKind, Task, TaskState},
-    parser::{NoteStore, build_backlog, scan_noteplan_dir, scan_scoped},
+    parser::{NoteStore, build_backlog, build_backlog_scoped, scan_noteplan_dir, scan_scoped},
 };
 use std::path::{Path, PathBuf};
 
@@ -150,10 +150,16 @@ fn test_backlog_pool() {
 
     let home = &backlog.contexts[1];
     assert_eq!(home.name, "Home");
-    assert_eq!(home.ranked.len(), 1);
+    // home01 plus the D1-shaped loose1 (Loose Ideas.md, outside the resolved
+    // 21 - Home Reno folder) — both resolved under the FULL scan.
+    assert_eq!(home.ranked.len(), 2);
     assert_eq!(home.ranked[0].block_id, "home01");
     assert_eq!(home.ranked[0].text, "Pick countertop");
-    // Home Reno has 3 open tasks; one (home01) is ranked.
+    assert_eq!(home.ranked[1].block_id, "loose1");
+    assert_eq!(home.ranked[1].text, "Paint the shed #home");
+    assert!(home.ranked[1].resolved);
+    // Home Reno has 3 open tasks; one (home01) is ranked. loose1 lives OUTSIDE
+    // that folder, so it was never pooled — the project pool count is unchanged.
     let home_project_pool: Vec<_> = home
         .pool
         .iter()
@@ -286,15 +292,24 @@ fn test_backlog_tag_scoped_calendar_tasks() {
 // 3b. scan_scoped — parity with the full scan, narrower parse set, fallback
 // ---------------------------------------------------------------------------
 
-/// The scoped read must produce a byte-for-byte identical backlog to the full
-/// scan (the parity bar). Checked for BOTH `include_older_dailies` values so the
-/// 30-day daily window and the calendar harvest both agree.
+/// The MITIGATED scoped read must produce a byte-for-byte identical backlog to the
+/// full scan (the parity bar). Checked for BOTH `include_older_dailies` values so
+/// the 30-day daily window and the calendar harvest both agree.
+///
+/// Repointed from a bare `build_backlog(scan_scoped)` to `build_backlog_scoped`
+/// because the shared fixture now ranks a D1 id (`loose1`, on `Loose Ideas.md`
+/// outside every resolved folder): a plain scoped build marks it stale, so it can
+/// no longer equal full — that IS the D1 divergence, exercised directly by
+/// `test_scoped_cold_load_rescues_d1`. Accepted caveat: comparing full vs the
+/// mitigated build lets the rescue mask a hypothetical `scan_scoped` regression
+/// that wrongly drops a note bearing an unresolved RANKED id (the rescue would
+/// re-parse it). A wrongly-dropped inventory-only note still fails this test, and
+/// `test_scoped_scans_fewer_notes` guards the parse-set shape.
 #[test]
 fn test_scoped_backlog_matches_full() {
     let full = load();
     let fp = fixture_path();
-    let scoped = scan_scoped(fp.to_str().expect("fixture path is valid UTF-8"))
-        .expect("fixture has a #np-projects control note");
+    let base = fp.to_str().expect("fixture path is valid UTF-8");
     let today = chrono::NaiveDate::from_ymd_opt(2026, 7, 5).unwrap();
 
     for include_older_dailies in [false, true] {
@@ -303,7 +318,9 @@ fn test_scoped_backlog_matches_full() {
             today,
         };
         let full_b = build_backlog(&full, &opts);
-        let scoped_b = build_backlog(&scoped, &opts);
+        // Fresh scoped store per iteration — build_backlog_scoped consumes it.
+        let scoped = scan_scoped(base).expect("fixture has a #np-projects control note");
+        let scoped_b = build_backlog_scoped(base, scoped, &opts);
 
         // The dead999 stale ranked entry must be present-and-stale in BOTH, so a
         // regression that made the scoped path diverge on stale entries is caught
@@ -325,9 +342,72 @@ fn test_scoped_backlog_matches_full() {
         assert_eq!(
             serde_json::to_value(&full_b).unwrap(),
             serde_json::to_value(&scoped_b).unwrap(),
-            "scoped backlog must match full (include_older_dailies={include_older_dailies})"
+            "mitigated scoped backlog must match full \
+             (include_older_dailies={include_older_dailies})"
         );
     }
+}
+
+/// D1 cold-load rescue, end-to-end on the fixture: a ranked id whose task lives
+/// outside every resolved folder (`loose1` on `Loose Ideas.md`) is stale under a
+/// raw scoped build but rescued by `build_backlog_scoped`, WITHOUT reviving a
+/// genuinely-dead id (`dead999`, deleted everywhere).
+#[test]
+fn test_scoped_cold_load_rescues_d1() {
+    let fp = fixture_path();
+    let base = fp.to_str().expect("fixture path is valid UTF-8");
+    let opts = test_opts();
+
+    let home_ranked = |b: &app_lib::models::Backlog, id: &str| -> bool {
+        b.contexts
+            .iter()
+            .find(|c| c.name == "Home")
+            .expect("Home context")
+            .ranked
+            .iter()
+            .find(|r| r.block_id == id)
+            .unwrap_or_else(|| panic!("{id} ranked entry missing"))
+            .resolved
+    };
+    let work_ranked = |b: &app_lib::models::Backlog, id: &str| -> bool {
+        b.contexts
+            .iter()
+            .find(|c| c.name == "Work")
+            .expect("Work context")
+            .ranked
+            .iter()
+            .find(|r| r.block_id == id)
+            .unwrap_or_else(|| panic!("{id} ranked entry missing"))
+            .resolved
+    };
+
+    // FULL scan: loose1 resolves, dead999 does not.
+    let full_b = build_backlog(&load(), &opts);
+    assert!(home_ranked(&full_b, "loose1"), "loose1 resolves under full");
+    assert!(
+        !work_ranked(&full_b, "dead999"),
+        "dead999 is dead under full"
+    );
+
+    // PLAIN scoped build documents the raw D1 bug: loose1 goes stale.
+    let scoped = scan_scoped(base).expect("fixture has a #np-projects control note");
+    let plain_b = build_backlog(&scoped, &opts);
+    assert!(
+        !home_ranked(&plain_b, "loose1"),
+        "raw scoped build must leave loose1 stale (the D1 bug)"
+    );
+
+    // MITIGATED build rescues loose1 back to resolved, WITHOUT reviving dead999.
+    let scoped = scan_scoped(base).expect("fixture has a #np-projects control note");
+    let mitigated_b = build_backlog_scoped(base, scoped, &opts);
+    assert!(
+        home_ranked(&mitigated_b, "loose1"),
+        "build_backlog_scoped must rescue loose1"
+    );
+    assert!(
+        !work_ranked(&mitigated_b, "dead999"),
+        "build_backlog_scoped must NOT over-trigger on the dead dead999"
+    );
 }
 
 #[test]

@@ -8,3 +8,4 @@ see [[Somewhere^ref0001]] for context
 
 ## Home
 1. [[21.01 Kitchen^home01]] Pick countertop
+2. [[Loose Ideas^loose1]] Paint the shed

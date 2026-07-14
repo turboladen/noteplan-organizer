@@ -422,6 +422,59 @@ pub fn build_backlog(store: &NoteStore, opts: &BacklogOptions) -> Backlog {
     }
 }
 
+/// Cold-path backlog build off a SCOPED store, with the D1 rescue applied.
+///
+/// A scoped scan (`scan_scoped`) parses only the control folder, resolved project
+/// folders, and `Calendar/`. A ranked `#np-backlog` entry whose target `^id` lives
+/// on a task OUTSIDE all of those (divergence D1) would come back `resolved:false`
+/// under a bare `build_backlog(&scoped, ..)`. This runs the build once, collects
+/// the block-ids of ranked entries that came back unresolved, and — if any — asks
+/// `rescue_scoped_notes` to parse just the scoped-absent `Notes/` files bearing
+/// those ids. If the rescue finds nothing (all such ids are genuinely dead), the
+/// original backlog is returned unchanged (dead ids stay stale by design). Else
+/// the store is augmented by value with the rescued notes and the build re-runs —
+/// `build_backlog`'s `block_id_index` is the single source of truth for resolution.
+///
+/// The rescued notes lie outside every resolved folder and outside `Calendar/`, so
+/// `build_backlog`'s pool harvest (gated on `in_folder || is_calendar`) contributes
+/// ZERO pool tasks from them — they ONLY feed `block_id_index` to resolve the ranked
+/// entry. So the mitigated backlog equals the full-scan backlog for that entry, and
+/// the inventory pool is unchanged.
+///
+/// Accepted divergence (block-ids are unique anchors, so this needs a NotePlan data
+/// anomaly to occur; display-only, self-corrects on a manual Rescan): the rescued
+/// notes are appended AFTER `scoped.notes`, and `block_id_index` is last-insert-wins.
+/// If a block id is DUPLICATED across notes, the re-build can resolve it to a rescued
+/// note even when the first (scoped-only) build already resolved it to a scoped note,
+/// and the winner can differ from the full scan's walk-order winner.
+///
+/// DATA SAFETY: the augmented store is a local `NoteStore::new(notes)` consumed to
+/// build the returned Backlog and then dropped — it is NEVER cached. Only a FULL
+/// store may be cached (the write-path block-id collision set is seeded from the
+/// cache; a partial store risks minting a duplicate block-id). This is a
+/// build-and-return.
+pub fn build_backlog_scoped(base_path: &str, scoped: NoteStore, opts: &BacklogOptions) -> Backlog {
+    let backlog = build_backlog(&scoped, opts);
+    let unresolved: HashSet<String> = backlog
+        .contexts
+        .iter()
+        .flat_map(|c| c.ranked.iter())
+        .filter(|r| !r.resolved)
+        .map(|r| r.block_id.clone())
+        .collect();
+    if unresolved.is_empty() {
+        return backlog;
+    }
+    let rescued = super::rescue_scoped_notes(base_path, &scoped, &unresolved);
+    if rescued.is_empty() {
+        // All still-unresolved ranked ids are genuinely dead — nothing to rescue.
+        return backlog;
+    }
+    let mut notes = scoped.notes;
+    notes.extend(rescued);
+    build_backlog(&NoteStore::new(notes), opts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

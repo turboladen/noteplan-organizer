@@ -9,9 +9,9 @@ use crate::{
     mcp::{McpState, tools, tools::NoteAddr},
     models::{ContentBlock, DailyNoteInfo, FilingTarget, NoteKind, Report},
     parser::{
-        BacklogOptions, NoteStore, build_backlog, build_filing_targets, extract_content_blocks,
-        match_blocks_to_targets, matcher::FilingSuggestion, parse_note, scan_noteplan_dir,
-        scan_scoped,
+        BacklogOptions, NoteStore, build_backlog, build_backlog_scoped, build_filing_targets,
+        extract_content_blocks, match_blocks_to_targets, matcher::FilingSuggestion, parse_note,
+        scan_noteplan_dir, scan_scoped,
     },
 };
 use std::{
@@ -232,46 +232,19 @@ pub fn get_filing_targets(path: String) -> Result<Vec<FilingTarget>, String> {
     Ok(build_filing_targets(&store))
 }
 
-/// Run `build` against the cached store. When the cache is empty, do a one-time
-/// scan and populate it (so Priorities/Backlog can load without a prior manual
-/// scan). Holds only a short read lock for the in-memory build; no rescan on a
-/// cache hit.
-fn read_from_cache<T>(
-    cache: &NoteStoreCache,
-    path: &str,
-    build: impl Fn(&NoteStore) -> T,
-) -> Result<T, String> {
-    {
-        let guard = cache.0.read().unwrap_or_else(|p| p.into_inner());
-        if let Some(store) = guard.as_ref() {
-            return Ok(build(store));
-        }
-    }
-    if !std::path::Path::new(path).exists() {
-        return Err(format!("Path does not exist: {}", path));
-    }
-    // COLD cache: prefer a SCOPED scan (control folder + resolved project folders
-    // + all of Calendar/) over a full-vault scan when the control note is present.
-    // DATA SAFETY: the scoped store is NOT written into the cache. The write
-    // path's block-id collision set (`existing_ids_from_cache`) is seeded from
-    // this same cache, and a partial scoped store there could under-populate it
-    // and risk minting a DUPLICATE block-id. Only a FULL store may be cached.
-    match scan_scoped(path) {
-        Some(scoped) => {
-            log::info!("read cache empty — scoped scan of {path} (not cached)");
-            Ok(build(&scoped))
-        }
-        None => {
-            log::info!("read cache empty — full scan {path} to populate");
-            let store = scan_noteplan_dir(path);
-            let out = build(&store);
-            cache.set(store);
-            Ok(out)
-        }
-    }
-}
-
 /// Ranked backlog + unranked inventory per context, feeding Board and Backlog views.
+///
+/// Cache-aware, with the scoped cold-load path inlined here (rather than behind a
+/// generic `read_from_cache`) because only this command can see the `resolved`
+/// flag the D1 rescue keys off. Three arms:
+/// - cache HIT → `build_backlog` on the cached FULL store (no rescan).
+/// - cold + control note present → SCOPED scan, then `build_backlog_scoped`, which
+///   applies the D1 rescue. DATA SAFETY: the scoped (and its augmented scoped+
+///   rescued) store is NEVER cached — the write-path block-id collision set
+///   (`existing_ids_from_cache`) is seeded from this same cache, and a partial
+///   store there could under-populate it and risk minting a DUPLICATE block-id.
+/// - cold + no control note → full scan; this is the ONLY arm that `cache.set`s
+///   (a FULL store is safe to cache).
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_backlog(
     path: String,
@@ -283,7 +256,36 @@ pub fn get_backlog(
         include_older_dailies: include_older_dailies.unwrap_or(false),
         today: chrono::Local::now().date_naive(),
     };
-    let backlog = read_from_cache(&cache, &path, |s| build_backlog(s, &opts))?;
+
+    // Cache HIT: build against the cached FULL store under a short read lock.
+    {
+        let guard = cache.0.read().unwrap_or_else(|p| p.into_inner());
+        if let Some(store) = guard.as_ref() {
+            let backlog = build_backlog(store, &opts);
+            log::info!("get_backlog (cache hit) took {:?}", started.elapsed());
+            return Ok(backlog);
+        }
+    }
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    // COLD cache: prefer a SCOPED scan (control folder + resolved project folders
+    // + all of Calendar/) over a full-vault scan when the control note is present.
+    let backlog = match scan_scoped(&path) {
+        Some(scoped) => {
+            // build_backlog_scoped applies the D1 rescue; the scoped (and augmented)
+            // store is consumed here and dropped — NEVER cached (data safety).
+            log::info!("get_backlog cache empty — scoped scan of {path} (not cached)");
+            build_backlog_scoped(&path, scoped, &opts)
+        }
+        None => {
+            log::info!("get_backlog cache empty — full scan {path} to populate");
+            let store = scan_noteplan_dir(&path);
+            let backlog = build_backlog(&store, &opts);
+            cache.set(store); // ONLY a FULL store is cached
+            backlog
+        }
+    };
     log::info!("get_backlog took {:?}", started.elapsed());
     Ok(backlog)
 }
