@@ -185,8 +185,15 @@ never spawn the MCP server against the user's real vault (use the fixture vault 
 **MCP is optional**: The MCP client (`mcp/client.rs`) wraps `RunningService` in
 `Arc<Mutex<Option<...>>>`. All MCP tool calls check `is_some()` first and return clear errors if
 not connected. The app fully functions without MCP — it's only needed for write actions and
-advanced queries. The MCP server is spawned as `npx -y @noteplanco/noteplan-mcp` (child process,
-stdio transport). `RunningService` derefs to `Peer<RoleClient>` so `call_tool`/`list_all_tools`
+advanced queries. The MCP server is a **bundled `bun --compile` sidecar** (child process, stdio
+transport), NOT `npx`: `client.rs::connect()` spawns the binary by absolute path resolved from
+`std::env::current_exe()` (Tauri `externalBin` copies `binaries/noteplan-mcp-<triple>` next to the
+main exe, suffix stripped, in both dev and the `.app`). This is deliberate — a GUI app launched
+from `/Applications` gets an empty PATH, so a bare `npx`/node lookup fails silently (the historical
+"offline from /Applications" bug). The binary is built by `scripts/build-mcp-sidecar.sh` from the
+pinned `mcp-sidecar/` workspace (`@noteplanco/noteplan-mcp` version-pinned, gitignored ~62MB output),
+chained into `beforeDev/BuildCommand`. To bump the server version, edit `mcp-sidecar/package.json`
++ relock. `RunningService` derefs to `Peer<RoleClient>` so `call_tool`/`list_all_tools`
 methods are called directly on it.
 The app auto-connects at launch (`mcpStatus` probe, then `mcp_connect`).
 Failure is quiet: amber "NotePlan offline · retry" in the sidebar footer plus
