@@ -11,7 +11,7 @@ mod projects;
 mod task;
 
 pub(crate) use backlog::{BACKLOG_TAG, folder_depth, is_under_folder};
-pub use backlog::{BacklogOptions, build_backlog};
+pub use backlog::{BacklogOptions, build_backlog, build_backlog_scoped};
 pub use block::extract_content_blocks;
 pub use filing::build_filing_targets;
 pub use folder::{parse_jd_id, parse_note_id};
@@ -186,9 +186,13 @@ fn parse_calendar_dir(base: &Path) -> Vec<Note> {
 /// correcting after a manual Rescan warms the cache into a full build; see bead
 /// noteplan-organizer-486):
 /// - D1: a ranked block-id whose task lives OUTSIDE every resolved project folder
-///   and outside `Calendar/` shows as stale under the scoped path (its note is
-///   never parsed). Unreachable via the app's own ranking flow — the app only
-///   ranks tasks it harvested from those same folders.
+///   and outside `Calendar/` would show as stale under the raw scoped path (its
+///   note is never parsed). This is now MITIGATED at the cold backlog arm by
+///   `build_backlog_scoped`, which runs `rescue_scoped_notes` for the ranked ids
+///   that came back unresolved and re-resolves them. A genuinely-dead id (task
+///   deleted everywhere) matches no file, so it stays stale by design — the rescue
+///   never over-triggers. Callers that build the backlog off a scoped store MUST
+///   go through `build_backlog_scoped`, not a bare `build_backlog(&scoped, ..)`.
 ///
 /// A stray second `#np-projects` note outside `CONTROL_DIR` is NOT a divergence:
 /// `parse_project_control` prefers the `CONTROL_DIR` note, so the scoped locate,
@@ -266,6 +270,132 @@ pub fn scan_scoped(base_path: &str) -> Option<NoteStore> {
     Some(NoteStore::new(notes))
 }
 
+/// Cold-path D1 rescue: find the notes bearing the still-unresolved ranked block
+/// ids that the scoped scan (`scan_scoped`) never parsed. A scoped `#np-backlog`
+/// entry whose target `^id` lives on a task OUTSIDE every resolved project folder
+/// and outside `Calendar/` shows `resolved:false` under the scoped path but
+/// `resolved:true` under a full scan — divergence D1. This narrows that gap by
+/// parsing ONLY the scoped-absent `Notes/` files that actually mention a wanted id.
+///
+/// The `^<id>` text match is only a CANDIDATE pre-filter (to skip files before a
+/// full parse). A wanted id is dropped from the search set ONLY when a parsed
+/// note's TASK actually carries it — never on the text hit alone. That distinction
+/// is load-bearing: a note that merely MENTIONS `^id` (a prose `[[Title^id]]`
+/// cross-link, or a superstring like `^id2`) resolves nothing, so the id stays
+/// wanted and the walk keeps looking for the real definer. A text-based drop would
+/// instead let such a mention short-circuit the search and leave a LIVE ranked task
+/// wrongly stale. Authoritative resolution is still `build_backlog`'s
+/// `block_id_index` on the rebuilt store; a genuinely-dead id (task deleted
+/// everywhere) is carried by no task → nothing rescued → the entry stays stale by
+/// design. NOTE the one accepted divergence from a full scan: if TWO scoped-absent
+/// notes carry the SAME block id (a NotePlan data anomaly — ids are unique
+/// anchors), the rescue resolves to the FIRST walked while a full scan's
+/// last-insert-wins picks the LAST; display-only, self-corrects on a manual Rescan.
+///
+/// Bounds the work by skipping every file already in the scoped store
+/// (`relative_path`s) and every excluded note (which `block_id_index` would ignore
+/// anyway) — Calendar/ is already fully in scope, so only scoped-ABSENT, non-
+/// excluded `Notes/` files are read. Each candidate is read as text ONCE; a full
+/// parse runs only on an `^id` hit, and the walk early-breaks when the wanted set
+/// empties.
+///
+/// Accepted perf notes (do NOT try to "fix"): (a) a permanently-dead ranked id
+/// (a common real state) re-triggers this on every cold load and, never finding
+/// the id, reads (text, not parse) every scoped-absent `Notes/` file each time —
+/// partially eroding the scoped-scan win. Bounded (read-only, cold-only, full
+/// parse only on a hit) — acceptable. (b) `Notes/` is WalkDir'd twice on the cold
+/// D1 path (once in `scan_scoped`, once here). Minor.
+pub(crate) fn rescue_scoped_notes(
+    base_path: &str,
+    scoped: &NoteStore,
+    unresolved_ids: &HashSet<String>,
+) -> Vec<Note> {
+    let base = Path::new(base_path);
+    let notes_dir = base.join("Notes");
+    if !notes_dir.exists() {
+        return Vec::new();
+    }
+
+    // Still-wanted ids. An id is dropped ONLY when a parsed note's TASK actually
+    // carries it (authoritative), never on a bare text hit — see below.
+    let mut wanted: HashSet<String> = unresolved_ids.clone();
+    // On-disk block-id tokens (`^<id>`) for the cheap candidate pre-filter, built
+    // ONCE and pruned only when `wanted` actually shrinks (rare — on a real
+    // resolve), so the common permanently-dead-id path doesn't re-`format!` every
+    // token for every scoped-absent file it scans.
+    let mut tokens: Vec<(String, String)> = wanted
+        .iter()
+        .map(|id| (id.clone(), format!("^{id}")))
+        .collect();
+    let mut rescued = Vec::new();
+
+    for entry in WalkDir::new(&notes_dir).into_iter().filter_map(|e| e.ok()) {
+        if wanted.is_empty() {
+            break; // every wanted id already located
+        }
+        let path = entry.path();
+        if !is_note_file(path) {
+            continue;
+        }
+        let Ok(rel) = path.strip_prefix(base) else {
+            continue;
+        };
+        let rel = rel.to_string_lossy();
+        // Skip files the scoped scan already parsed — only scoped-ABSENT notes
+        // can hold a D1 id (Calendar/ is fully in scope, so it's covered too).
+        if scoped.path_index.contains_key(rel.as_ref()) {
+            continue;
+        }
+        // Skip excluded notes: `block_id_index` (the authoritative resolver) never
+        // indexes an @Trash/@Archive/@Templates/_attachments note, so a task there
+        // can't resolve a ranked entry. Reading it would only let it SHADOW the
+        // real definer (consume the id, then get dropped by `block_id_index`).
+        if is_excluded_relative(&rel) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        // CANDIDATE pre-filter only: cheap substring scan to skip files that can't
+        // possibly define a wanted id before paying for a full parse. `contains`
+        // over-matches (a prose `[[Title^id]]` link, or a superstring id — `^id`
+        // in `^id2`), which is why the drop below is authoritative, not text-based:
+        // an over-match just costs one wasted parse, never a wrong/short-circuited
+        // resolution.
+        if !tokens.iter().any(|(_, tok)| text.contains(tok)) {
+            continue;
+        }
+        // Parse from the text ALREADY in hand (no second disk read): excluded notes
+        // — including @Templates — were skipped above, so the kind is always Regular.
+        let note = parse_note(
+            &path.to_string_lossy(),
+            rel.as_ref(),
+            &text,
+            NoteKind::Regular,
+        );
+        // Authoritative: drop only the wanted ids this note's TASKS actually carry,
+        // and keep the note only if it resolves at least one. A file that merely
+        // mentioned `^id` in prose (or matched a superstring) resolves nothing here,
+        // so its wanted id stays in the set and the walk keeps looking for the real
+        // definer — the exact case a text-based drop would have short-circuited.
+        let mut resolved_any = false;
+        for task in &note.tasks {
+            if let Some(id) = &task.block_id {
+                if wanted.remove(id) {
+                    resolved_any = true;
+                }
+            }
+        }
+        if resolved_any {
+            rescued.push(note);
+            // Keep the pre-filter tokens in lock-step with the shrunken set.
+            tokens.retain(|(id, _)| wanted.contains(id));
+        }
+    }
+
+    rescued
+}
+
 /// Classify a Calendar/ note by its filename stem. NotePlan's conventions:
 /// daily `YYYYMMDD`, weekly `YYYY-Wnn`, monthly `YYYY-MM`, quarterly
 /// `YYYY-Qn`, yearly `YYYY`. Unrecognized stems fall back to Daily (matches
@@ -332,6 +462,69 @@ mod tests {
 
     fn note_fixture(rel: &str, content: &str) -> Note {
         parse_note(&format!("/abs/{rel}"), rel, content, NoteKind::Regular)
+    }
+
+    /// The D1 rescue must resolve a wanted id via the note whose TASK actually
+    /// carries it, never via a note that merely MENTIONS `^id` in prose or via a
+    /// superstring id (`^wanted1` inside `^wanted12`). A text-based drop would let
+    /// an earlier-walked mention short-circuit the search and leave a live task
+    /// stale. Also: a note in an excluded folder must not shadow the real definer,
+    /// and a genuinely-dead id rescues nothing.
+    #[test]
+    fn test_rescue_scoped_notes_is_authoritative_not_text_based() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("np-rescue-{nanos}"));
+        let notes = base.join("Notes");
+        let write = |rel: &str, body: &str| {
+            let p = notes.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        };
+        // A prose-only cross-link mention, a superstring id on a distinct live
+        // task, an excluded @Archive note carrying the id, and the REAL definer —
+        // all scoped-absent (outside any scoped folder).
+        write(
+            "aaa - Refs/ref.md",
+            "# Ref\nsee [[Thing^wanted1]] for context\n",
+        );
+        write(
+            "bbb - Sub/other.md",
+            "# Other\n* unrelated work ^wanted12\n",
+        );
+        write(
+            "@Archive/old.md",
+            "# Old\n* archived copy of the shed task ^wanted1\n",
+        );
+        write("ccc - Real/real.md", "# Real\n* Paint the shed ^wanted1\n");
+
+        // Scoped store = only the control note, so every note above is scoped-absent.
+        let scoped = NoteStore::new(vec![note_fixture(
+            "Notes/_NotePlan Organizer/Projects.md",
+            "# P #np-projects\n",
+        )]);
+        let base_str = base.to_str().unwrap();
+
+        let wanted: HashSet<String> = ["wanted1".to_string()].into_iter().collect();
+        let rescued = rescue_scoped_notes(base_str, &scoped, &wanted);
+        // Exactly the real definer is returned, regardless of WalkDir order — the
+        // prose mention, the superstring, and the @Archive copy resolve nothing.
+        assert_eq!(rescued.len(), 1, "only the real definer is rescued");
+        assert!(rescued[0].relative_path.ends_with("ccc - Real/real.md"));
+        assert!(
+            rescued[0]
+                .tasks
+                .iter()
+                .any(|t| t.block_id.as_deref() == Some("wanted1"))
+        );
+
+        // A genuinely-dead id rescues nothing (matches no task anywhere).
+        let dead: HashSet<String> = ["deadxx".to_string()].into_iter().collect();
+        assert!(rescue_scoped_notes(base_str, &scoped, &dead).is_empty());
+
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
