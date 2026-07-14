@@ -380,6 +380,17 @@ fn parse_delete_dry_run(json_text: &str, line: usize, expected_trimmed: &str) ->
 /// NOT our tombstone (a concurrent external edit shifted the note). This mitigates
 /// the kr7 concurrent-edit window that plain fetch-then-delete cannot close.
 ///
+/// RESIDUAL WINDOW (accepted): a narrow race remains between the dry-run and the
+/// confirm — if an external edit shifts THIS same line during the gap spanning the
+/// confirm round-trip (the same fetch→write window every write op carries), the
+/// already-issued token still commits against the shifted line. It is irreducible:
+/// MCP offers no atomic compare-and-delete, so the server-side dry-run re-match
+/// above is the strongest guard available. The blast radius is deliberately tiny:
+/// this path only ever runs against the app-owned `#np-backlog` control note (never
+/// a user content note), so the worst case is losing ONE ranking-pointer line in
+/// that control note — recoverable by re-ranking the task, whose content-note data
+/// is never touched.
+///
 /// Both steps assert the bridge backend (NotePlan actually applied/previewed it) and
 /// require `success:true`; any parse/bridge/mismatch failure is Err, so a broken or
 /// unsafe delete aborts the GC pass rather than losing data. The note MUST be
