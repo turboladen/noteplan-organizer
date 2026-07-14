@@ -21,8 +21,10 @@ MARKER="$OUT_DIR/.noteplan-mcp.version"
 
 BUN="${BUN:-bun}"
 
-# Single source of truth for the pinned version: read it from package.json so the
-# marker gate can never skip a rebuild after a version bump.
+# Read the pinned version from package.json (single source of truth for the gate).
+# The pin is exact (see mcp-sidecar/package.json), so the marker rebuilds whenever
+# it changes. If the pin ever becomes a range, derive the marker from the
+# lockfile-resolved version instead — otherwise the gate could skip a needed rebuild.
 MCP_VERSION="$("$BUN" --eval \
   'console.log(require(process.argv[1]).dependencies["@noteplanco/noteplan-mcp"])' \
   "$SIDECAR_DIR/package.json")"
@@ -43,8 +45,16 @@ mkdir -p "$OUT_DIR"
 ( cd "$SIDECAR_DIR" && "$BUN" install --frozen-lockfile )
 
 ENTRY="$SIDECAR_DIR/node_modules/@noteplanco/noteplan-mcp/dist/index.js"
-"$BUN" build --compile "$ENTRY" --outfile "$OUT_BIN"
-chmod +x "$OUT_BIN"
 
+# Compile to a temp path and atomically move it into place, so an interrupted
+# build never leaves a partial binary at OUT_BIN that the up-to-date gate would
+# later trust. The trap removes the temp on any early exit.
+TMP_BIN="$OUT_BIN.tmp.$$"
+trap 'rm -f "$TMP_BIN"' EXIT
+"$BUN" build --compile "$ENTRY" --outfile "$TMP_BIN"
+chmod +x "$TMP_BIN"
+mv -f "$TMP_BIN" "$OUT_BIN"
+
+# Marker last: only after the binary is fully in place.
 printf '%s' "$MCP_VERSION" > "$MARKER"
 echo "[build-mcp-sidecar] built $OUT_BIN"
