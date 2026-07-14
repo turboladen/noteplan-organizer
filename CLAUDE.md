@@ -88,7 +88,8 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
   data).
 - `components/NotePreview.tsx` — Inline sticky preview panel (w-80, not a fixed overlay);
   participates in FindingsList flex layout
-- `components/Board.tsx` — Ranked work queue (read-only). Displays tasks harvested by `build_backlog`
+- `components/Board.tsx` — Ranked work queue (primarily read-only; ranked rows carry a − Unrank
+  live-write via `backlogRemove` + offline/reconnect handling). Displays tasks harvested by `build_backlog`
   ranked by control note; group-by-Project shows folder hierarchy with P-badges; stale entries
   flagged; ↗ opens task in NotePlan
 - `components/Backlog.tsx` — Backlog grooming view: ranked queue on top (drag-to-rank writes
@@ -98,6 +99,11 @@ Tauri v2 desktop app: Rust backend (src-tauri/) + React frontend (src/) communic
   both sections; "Ranked only" toggle hides inventory
 - `components/TaskCard.tsx` — Reusable task display component (title, state, priority, blockId,
   tags, project rank+title, calendar kind+period); used by Board and Backlog queues
+- `components/RankedRowActions.tsx` — Shared trailing actions for a ranked row (Board + Backlog):
+  ↗ open, orphaned/rescheduled badges, − Unrank; `rankedRowLabel` falls back to `source_note_title`
+  for a blank orphan
+- `hooks/useRefreshOnScanUpdate.ts` — Subscribes a view to the watcher's `scan-update` event and
+  re-fetches (`load()`); used by Board + Backlog so external NotePlan changes reflect live
 - `utils/noteplanUrl.ts` — Builds `noteplan://` x-callback-url links
 
 ## Critical Gotchas
@@ -107,7 +113,10 @@ caused NotePlan notes to be deleted without the user's knowledge (found later in
 Destroying or losing user data is the single worst outcome — worse than any missing feature or
 bug. For any code that touches NotePlan files, enforce these non-negotiables:
 - **Prefer append/insert over replace; never delete or move a content note.** Do not call
-  destructive MCP tools (`delete_line`, `move_note`, etc.) on user content notes.
+  destructive MCP tools (`delete_line`, `move_note`, etc.) on user content notes. (ONLY
+  sanctioned delete: `backlog_reorder` opportunistically GCs tombstone lines in the app-owned
+  `#np-backlog` control note via a best-effort two-step `delete_lines` compare-and-delete — control
+  note only, never user content, and a GC failure can never fail the reorder. See l9e.)
 - **Verify-before-write.** Line numbers go stale between scans. Before mutating a line, re-fetch
   the note via MCP and confirm the target line still matches the expected content; if it doesn't
   match (or matches ambiguously), **abort and surface the mismatch** — never write to a line
@@ -118,6 +127,17 @@ bug. For any code that touches NotePlan files, enforce these non-negotiables:
   verify-before-write precedes every mutation.
 See `docs/superpowers/specs/2026-07-01-project-priority-board-design.md` §"Data Safety" for the
 worked example.
+
+**Live views must subscribe to `SCAN_UPDATE_EVENT`.** Board/Backlog re-fetch `get_backlog` only on
+mount + their own writes; without subscribing to the watcher's `scan-update` event (use
+`useRefreshOnScanUpdate`) a data view renders STALE after EXTERNAL NotePlan changes until it
+remounts. `App.tsx` consumes the event's `Report` payload; the queue views ignore it and just re-`load()`.
+
+**Calendar `[>]` harvest + the future-inclusive daily window.** NotePlan forward-scheduling leaves a
+greyed `[>]` (move-ghost) in the origin daily AND a fresh Open copy in the target note; `build_backlog`
+drops calendar `[>]` and keeps the Open copy. `period::daily_within_window` is `today - date <= 30`, so
+ALL future dailies pass (negative delta) — only past-beyond-30-days is pruned. Forward-scheduled tasks
+therefore always surface via their future Open copy (verified not-a-bug, v2i).
 
 **NotePlan does NOT rename files on disk when you change a note's title.** The content title (first
 `# heading`) is the source of truth. Never use filenames for display or matching logic. The `Note`
@@ -215,7 +235,7 @@ analyzers that don't need expandable detail.
 (`board | backlog | filing | findings | assessment`) persisted to
 localStorage (`noteplan-companion:last-view`). Navigation items live in the
 `NAV_GROUPS` config array in `Sidebar.tsx` — a new view is one array entry.
-Plan group = Board (read-only ranked work queue, reads `get_backlog`) + Backlog
+Plan group = Board (ranked work queue + − Unrank live-write, reads `get_backlog`) + Backlog
 (grooming: ranked queue + grouped inventory, reads `get_backlog`). Both Plan views
 fetch their own data via `get_backlog` and take `basePath` from the detected
 `notePlanPath`, never from `report`. Findings vs Assessment still split on
