@@ -1,17 +1,43 @@
 use rmcp::{
     model::{CallToolRequestParams, CallToolResult},
     service::{RoleClient, RunningService, ServiceExt},
-    transport::{ConfigureCommandExt, TokioChildProcess},
+    transport::TokioChildProcess,
 };
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use tokio::{process::Command, sync::Mutex};
 
 /// The concrete type of the running MCP client service.
 /// `()` is the "no-op" client handler — we only need to call tools, not handle server requests.
 type McpService = RunningService<RoleClient, ()>;
 
-/// The npm package spawned as the MCP server subprocess.
-const MCP_PACKAGE: &str = "@noteplanco/noteplan-mcp";
+/// Name of the bundled MCP server binary. Tauri's `externalBin` copies
+/// `binaries/noteplan-mcp-<target-triple>` next to the main executable with the
+/// triple suffix stripped, so it lands here in both `tauri dev`
+/// (`target/debug/`) and the packaged `.app` (`Contents/MacOS/`).
+const SIDECAR_BIN: &str = "noteplan-mcp";
+
+/// Resolve the bundled MCP server binary next to the running executable.
+///
+/// We deliberately spawn by absolute path rather than a bare `npx`: a macOS app
+/// launched from `/Applications` (Finder/launchd) gets an essentially empty
+/// `PATH`, so a bare `npx`/`node` lookup fails and NotePlan shows offline. The
+/// sidecar has no PATH or node/bun dependency.
+fn sidecar_path() -> Result<PathBuf, String> {
+    let exe =
+        std::env::current_exe().map_err(|e| format!("cannot resolve current executable: {e}"))?;
+    let dir = exe
+        .parent()
+        .ok_or_else(|| "executable has no parent directory".to_string())?;
+    let path = dir.join(SIDECAR_BIN);
+    if !path.exists() {
+        return Err(format!(
+            "bundled MCP server not found at {}. Rebuild it with scripts/build-mcp-sidecar.sh \
+             (dev) or reinstall the app.",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
 
 /// Holds the optional MCP client connection.
 /// Wrapped in Arc<Mutex<>> for safe sharing across Tauri async commands.
@@ -28,8 +54,8 @@ impl McpState {
         }
     }
 
-    /// Connect to the NotePlan MCP server by spawning `npx -y @noteplanco/noteplan-mcp`.
-    /// Returns server info on success.
+    /// Connect to the NotePlan MCP server by spawning the bundled sidecar binary
+    /// (see [`sidecar_path`]). Returns server info on success.
     pub async fn connect(&self) -> Result<String, String> {
         let mut guard = self.service.lock().await;
 
@@ -37,10 +63,17 @@ impl McpState {
             return Ok("Already connected".to_string());
         }
 
-        let transport = TokioChildProcess::new(Command::new("npx").configure(|cmd| {
-            cmd.arg("-y").arg(MCP_PACKAGE);
-        }))
-        .map_err(|e| format!("Failed to spawn MCP server process: {e}"))?;
+        let path = sidecar_path()?;
+        let transport = TokioChildProcess::new(Command::new(&path)).map_err(|e| {
+            // Promote to warn! so this failure is diagnosable from the release log
+            // (release level is Warn; the success line below is only info!).
+            let msg = format!(
+                "Failed to spawn bundled MCP server at {}: {e}",
+                path.display()
+            );
+            log::warn!("MCP: {msg}");
+            msg
+        })?;
 
         let running = ()
             .serve(transport)

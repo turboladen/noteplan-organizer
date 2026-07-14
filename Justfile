@@ -10,6 +10,11 @@ dev:
 build:
     cargo tauri build
 
+# Build the bundled MCP server sidecar binary (idempotent).
+# Also runs automatically via beforeDev/BuildCommand in tauri.conf.json.
+sidecar:
+    bash scripts/build-mcp-sidecar.sh
+
 # Run Rust unit tests
 test:
     cargo test --manifest-path src-tauri/Cargo.toml

@@ -1,0 +1,9 @@
+{
+  "name": "noteplan-mcp-sidecar",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Pinned source for the bun-compiled NotePlan MCP server sidecar. The compiled binary (src-tauri/binaries/noteplan-mcp-<triple>) is bundled via Tauri externalBin; only the binary ships, never this package.",
+  "dependencies": {
+    "@noteplanco/noteplan-mcp": "1.1.28"
+  }
+}
