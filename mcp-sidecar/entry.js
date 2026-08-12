@@ -36,7 +36,12 @@ const fs = createRequire(import.meta.url)("node:fs");
 const originalReadFileSync = fs.readFileSync;
 
 fs.readFileSync = function (target, ...rest) {
-  if (typeof target === "string" && target.endsWith("sql-wasm.wasm")) {
+  // Match on `String(target)` rather than a `typeof === "string"` guard: sql.js
+  // converts a path it considers a URL into a `URL` object before calling
+  // through (`Ca = a => a.startsWith("file://")`), and a Buffer path is legal
+  // too. Either would slip past a string-only guard and hit the baked-in
+  // absolute path again. Numeric fds stringify to digits and never match.
+  if (target != null && String(target).endsWith("sql-wasm.wasm")) {
     return originalReadFileSync.call(this, wasmPath, ...rest);
   }
   return originalReadFileSync.call(this, target, ...rest);
