@@ -24,6 +24,9 @@ dist-ssr
 *.sw?
 
 .claude/settings.local.json
+# Agent-created git worktrees live inside the repo; without this their whole
+# checkout shows up as untracked content in the parent's status.
+.claude/worktrees/
 .superpowers/
 
 # Dolt database files (added by bd init)

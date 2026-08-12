@@ -75,10 +75,18 @@ impl McpState {
             msg
         })?;
 
-        let running = ()
-            .serve(transport)
-            .await
-            .map_err(|e| format!("Failed to initialize MCP client: {e}"))?;
+        // Also warn! here, for the same reason as the spawn failure above. These are
+        // distinct failures: spawning succeeds whenever the sidecar binary exists and
+        // is executable, but the handshake still fails if that child then dies during
+        // its own startup. That happened for real — a compiled-in absolute path to
+        // sql.js's .wasm made the sidecar exit immediately on any machine but the
+        // build host (see mcp-sidecar/entry.js) — and because only the spawn path was
+        // instrumented, the app went offline in release with nothing in the log.
+        let running = ().serve(transport).await.map_err(|e| {
+            let msg = format!("Failed to initialize MCP client: {e}");
+            log::warn!("MCP: {msg}");
+            msg
+        })?;
 
         // RunningService derefs to Peer, so peer_info() is available directly.
         let summary = if let Some(info) = running.peer_info() {
