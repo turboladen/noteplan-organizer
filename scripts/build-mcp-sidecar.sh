@@ -119,7 +119,11 @@ chmod +x "$TMP_BIN"
 #     completes startup, which is all this gate asserts.
 #   - under an alarm, as a backstop for a genuinely wedged binary.
 echo "[build-mcp-sidecar] smoke test (with sql.js .wasm hidden)"
-[[ -f "$WASM" ]] && mv "$WASM" "$WASM_HIDDEN"
+# -f for the same reason as every other mv/rm here: the destination can already
+# exist (a hard-killed earlier run leaves the hidden copy behind), and `mv`
+# prompts before clobbering an existing unwritable destination when stdin is a
+# terminal — which it is under `cargo tauri dev`. -f keeps that non-interactive.
+[[ -f "$WASM" ]] && mv -f "$WASM" "$WASM_HIDDEN"
 SMOKE_HOME="$(mktemp -d)"
 SMOKE_OUT="$(HOME="$SMOKE_HOME" NOTEPLAN_READ_ONLY=1 NOTEPLAN_MCP_AUTOLAUNCH=false \
   perl -e 'alarm 30; exec @ARGV' "$TMP_BIN" </dev/null 2>&1 || true)"
