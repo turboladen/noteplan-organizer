@@ -15,6 +15,21 @@ bunx tsc --noEmit -p tsconfig.app.json  # Type-check TypeScript (bare `bunx tsc 
 
 A `justfile` mirrors these: `just install / dev / build / test / check`.
 
+**`cargo test`/`cargo check` need two build artifacts a clean checkout lacks.** They work in a
+vault-worn working copy only because earlier `cargo tauri dev` runs left both behind; in a fresh
+clone or an agent worktree they fail for reasons unrelated to the code under test. `lib.rs` calls
+`tauri::generate_context!()` and `build.rs` calls `tauri_build::build()`, so compiling the crate
+at all requires:
+- **`dist/`** — `frontendDist` is `../dist` (gitignored); without it tauri-codegen errors with
+  "The `frontendDist` configuration is set to `../dist` but this path doesn't exist". Fix:
+  `bunx vite build`.
+- **`src-tauri/binaries/noteplan-mcp-<triple>`** — `tauri_build`'s `copy_binaries` fails with
+  `ResourcePathNotFound` when the `externalBin` for the host triple is missing. Fix:
+  `bash scripts/build-mcp-sidecar.sh` (or `just sidecar`).
+
+CI's `macOS (sidecar + tests)` job runs sidecar → `vite build` → `cargo test` in exactly that
+order for this reason — the pairing is a hard dependency, not a convenience.
+
 `cargo test` also runs the integration tests in `src-tauri/tests/fixture_vault.rs`,
 which exercise the whole read pipeline (`scan_noteplan_dir` → `build_backlog`
 + parser edges) against the committed fixture vault at
