@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# A force-push supersedes the run it interrupts; keeping the old one alive just
+# burns a macOS runner on a commit nobody will merge.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rustfmt:
     name: Rust formatting
@@ -21,8 +27,8 @@ jobs:
       - name: Check formatting
         run: cargo +nightly fmt --manifest-path src-tauri/Cargo.toml --check
 
-  lint:
-    name: ESLint
+  frontend:
+    name: Frontend
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,3 +41,99 @@ jobs:
       # `eslint .` needs no build/typecheck first.
       - name: Lint
         run: bun run lint
+
+      # `-p tsconfig.app.json` is load-bearing: the root tsconfig is
+      # solution-style, so a bare `tsc --noEmit` checks 0 files and always
+      # passes. Mirrors `just check-ts`.
+      - name: Type-check
+        run: bunx tsc --noEmit -p tsconfig.app.json
+
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Gates the (slow) macOS job so doc- and bead-only commits don't spin one
+      # up. This is a job-level filter rather than a workflow-level `paths:` on
+      # purpose: a job skipped by `if:` still reports a conclusion and satisfies
+      # a required status check, whereas a workflow filtered out by `paths:`
+      # never reports at all and leaves the PR blocked on a check that can
+      # never arrive.
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'src-tauri/**'
+              - 'src/**'
+              - 'mcp-sidecar/**'
+              - 'scripts/build-mcp-sidecar.sh'
+              - 'index.html'
+              - 'vite.config.ts'
+              - 'tsconfig*.json'
+              - 'package.json'
+              - 'bun.lock'
+              - '.github/workflows/ci.yml'
+
+  macos:
+    name: macOS (sidecar + tests)
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned rather than trusting the image's preinstalled Rust:
+      # build-mcp-sidecar.sh derives its target triple from
+      # `rustc --print host-tuple`, so the toolchain shapes the sidecar's
+      # output path, not just the test run.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - uses: oven-sh/setup-bun@v2
+
+      # Caches bun's *download* cache (shared by the root install and the
+      # sidecar's), never the compiled sidecar itself — see the sidecar step.
+      - name: Cache bun downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock', 'mcp-sidecar/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The reason this job exists. The script compiles the MCP sidecar and runs
+      # its relocation smoke gate: it hides sql.js's sql-wasm.wasm and asserts
+      # the binary still reaches "Server running on stdio", which is what proves
+      # the .wasm travels *inside* the executable instead of being read back
+      # from the build host's node_modules (the bug that shipped broken in every
+      # .dmg before PR #35, with CI green throughout).
+      #
+      # src-tauri/binaries/ is deliberately NOT cached. The script's BUILD_ID
+      # marker makes it skip compile *and smoke test* when the output looks
+      # current, so a restored cache would turn this step into a no-op and
+      # recreate exactly the green-CI-asserts-nothing hole it closes.
+      - name: Build MCP sidecar (runs the relocation smoke gate)
+        run: bash scripts/build-mcp-sidecar.sh
+
+      # `cargo test` cannot compile without dist/: lib.rs calls
+      # tauri::generate_context!(), and tauri-codegen errors out when
+      # frontendDist ("../dist", gitignored) is missing. Plain `vite build`
+      # rather than `bun run build` because the latter re-runs tsc, which the
+      # Frontend job already covers.
+      - name: Build frontend
+        run: bunx vite build
+
+      # Mirrors `just test`. Also the only CI step that compiles the crate at
+      # all, so it doubles as the compile gate.
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
