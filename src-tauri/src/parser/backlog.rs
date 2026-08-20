@@ -22,15 +22,14 @@ pub(crate) const BACKLOG_TAG: &str = "np-backlog";
 static HEADING_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^##\s+(.+?)\s*$").unwrap());
 // A backlog entry is a LIST ITEM (same leader grammar as backlog_write's
 // ITEM_RE: `^\s*(?:\d+\.|[-*+])\s+`) that references a task by block id
-// `[[Title^id]]`. Anchoring to the list-item leader keeps the reader's ranked
-// set in lock-step with the writer, which only repositions list items — a prose
-// line merely mentioning `[[Note^id]]` must NOT count as a ranked entry.
-// The gap is LAZY (`.*?`) so we capture the FIRST `[[…^id]]` after the leader —
+// `[[Title^id]]`. Anchoring to the leader keeps the reader's ranked set in
+// lock-step with the writer, which only repositions list items: a prose line
+// merely mentioning `[[Note^id]]` must NOT count as a ranked entry.
+// The gap is LAZY (`.*?`) so the FIRST `[[…^id]]` after the leader wins,
 // matching the writer's leftmost `ITEM_ID_RE`. A greedy `.*` would capture the
-// LAST ref, diverging from the writer when an entry's text embeds a second link.
-// Groups: 1 = link title (`[[<title>^id]]`), 2 = block id, 3 = trailing display
-// text after `]]` (trimmed). The id is group 2 (not group 1) — the sole capture
-// consumer must read `c[2]`.
+// LAST ref and diverge from the writer when an entry embeds a second link.
+// Groups: 1 = link title, 2 = block id, 3 = trailing display text after `]]`.
+// The sole capture consumer must read `c[2]` for the id.
 static ENTRY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\s*(?:\d+\.|[-*+])\s+.*?\[\[([^\]^]*)\^([A-Za-z0-9]{4,})\]\]\s*(.*?)\s*$")
         .unwrap()

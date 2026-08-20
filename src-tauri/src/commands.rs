@@ -313,44 +313,25 @@ pub fn get_filing_suggestions(
 }
 
 // ---------------------------------------------------------------------------
-// Backlog write path (data-safety gated). See docs/superpowers/specs §Data Safety
-// and CLAUDE.md: content notes are APPEND-ONLY (the only content mutation is
-// stamping a trailing `^blockId`); all delete/replace ops target the app-owned
-// backlog note. Every op is verified-before-write and logged.
-//
-// RESIDUAL RISK 1 (get_note line offset) — RESOLVED: `tools::get_note` now parses
-// the `noteplan_get_notes` envelope and returns the raw note body, whose line
-// base is confirmed (MCP Inspector) to be 1 and to match the on-disk file. It
-// also aborts on truncated (`hasMore`) content, so the write path never operates
-// on a partial note. The only remaining wrong-line vector — two DISTINCT lines
-// sharing identical cleaned text — is guarded by `locate_unique_task_line`, which
-// aborts on >1 match at write time rather than risk the wrong task.
-//
-// RESIDUAL RISK 2 (TOCTOU) — SINGLE-FETCH model (perf: MCP calls cost 2-6s each):
-// `plan_stamp_block_id` locates the target task by unique cleaned-text match on
-// the ONE freshly-fetched source content and emits `AppendBlockId{line,
-// new_line_text}` where new_line_text is that exact located line + " ^id". The
-// executor writes that line directly — NO per-op re-fetch/relocate. Safety rests
-// on: (a) locate aborts on 0/>1 matches, (b) idempotency reuses an existing ^id
-// (both on the fetched content), (c) the source note is fetched immediately
-// before its write, so the locate→write window is one in-memory planning step
-// (no MCP call between). A concurrent structural user edit in that narrow window
-// could still shift the line; MCP has no compare-and-swap, and re-fetching to
-// re-locate costs another 2-6s round-trip that we deliberately dropped. The
-// write stays strictly additive to the located line. Do NOT weaken the plan-time
-// locate — it is now the sole wrong-line guard.
+// Backlog write path, data-safety gated. See docs/superpowers/specs §Data Safety
+// and CLAUDE.md. Content notes are APPEND-ONLY: the only content mutation is
+// stamping a trailing `^blockId`, and every delete or replace targets the
+// app-owned backlog note. Every op is verified-before-write and logged.
+// One fetch feeds both planning and writing, so no MCP call sits between the
+// locate and the write. A concurrent structural edit in that window can still
+// shift a line, and MCP has no compare-and-swap, so the plan-time locate in
+// `plan_stamp_block_id` is the sole wrong-line guard. Do not weaken it.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Writer seam: a concrete enum over the MCP write surface, so the rank path can
 // be unit-tested against an in-memory mock. The `Real` arm is a PURE
-// pass-through to the exact `tools::*` functions (which keep their
-// `assert_bridge_backend` + `parse_edit_response` data-safety guards) — the
-// production write path is behaviour-identical to calling `tools::` directly.
-// The `delete_line` method is the ONE line-count-reducing op; callers restrict it
-// to the app-owned backlog note (see `apply_ops`' `DeleteBacklogLine` arm).
-// A concrete enum (rather than a generic `trait`) sidesteps async-fn-in-trait
-// `Send` friction on the Tauri command futures.
+// pass-through to the `tools::*` functions and keeps their
+// `assert_bridge_backend` and `parse_edit_response` data-safety guards, so the
+// production write path behaves identically to calling `tools::` directly.
+// `delete_line` is the ONE line-count-reducing op, and callers restrict it to
+// the app-owned backlog note (see `apply_ops`' `DeleteBacklogLine` arm).
+// An enum sidesteps async-fn-in-trait `Send` friction on the Tauri futures.
 // ---------------------------------------------------------------------------
 enum Writer<'a> {
     Real(&'a McpState),
@@ -2421,17 +2402,14 @@ mod tests {
     }
 
     // LOCKS the kr7 mitigation at its hardest point: a concurrent edit that shifts
-    // ONE tombstone MID-PASS must not take the earlier, already-deleted tombstones
-    // down with it — the compare-and-delete aborts on the shifted line while the
-    // tombstone deleted before it stays deleted. With BL_TWO_TOMBSTONES the GC plans
-    // bottom-up deletes [6, 4] (proved by test_gc_delete_order_is_bottom_up). We
-    // fabricate a preview mismatch on line 4 (the later, lower target): DryRun(6)→
-    // Confirm(6) removes the line-6 tombstone; DryRun(4)→(mismatch)→Err aborts the
-    // remaining pass BEFORE Confirm(4), so the line-4 tombstone survives. Because the
-    // mismatched line is the LAST bottom-up op, aborting the remaining pass and
-    // aborting "just line 4" are observationally identical here; the point locked is
-    // that line 6's committed delete is NOT rolled back. GC is best-effort
-    // (reorder_inner swallows the error), so the reorder still returns Ok.
+    // ONE tombstone mid-pass must not undo the tombstones already deleted. With
+    // BL_TWO_TOMBSTONES the GC plans bottom-up deletes [6, 4] (proved by
+    // test_gc_delete_order_is_bottom_up). Fabricating a preview mismatch on line 4
+    // lets DryRun(6)→Confirm(6) remove the line-6 tombstone, then DryRun(4) aborts
+    // before Confirm(4), so the line-4 tombstone survives and line 6's committed
+    // delete is NOT rolled back. The mismatch is the last bottom-up op, so this
+    // does not distinguish aborting the pass from aborting only line 4. GC is
+    // best-effort (reorder_inner swallows the error), so the reorder returns Ok.
     #[tokio::test]
     async fn test_gc_intra_pass_mismatch_localized_other_tombstones_still_delete() {
         let (cache, mock, bl) = seed_backlog(BL_TWO_TOMBSTONES);
