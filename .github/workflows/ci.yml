@@ -111,17 +111,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # The reason this job exists. The script compiles the MCP sidecar and runs
-      # its relocation smoke gate: it hides sql.js's sql-wasm.wasm and asserts
-      # the binary still reaches "Server running on stdio", which is what proves
-      # the .wasm travels *inside* the executable instead of being read back
-      # from the build host's node_modules (the bug that shipped broken in every
-      # .dmg before PR #35, with CI green throughout).
+      # The script compiles the MCP sidecar and runs its relocation smoke gate:
+      # it hides sql.js's sql-wasm.wasm and asserts the binary still reaches
+      # "Server running on stdio", which proves the .wasm travels inside the
+      # executable instead of being read from the build host's node_modules.
       #
-      # src-tauri/binaries/ is deliberately NOT cached. The script's BUILD_ID
-      # marker makes it skip compile *and smoke test* when the output looks
-      # current, so a restored cache would turn this step into a no-op and
-      # recreate exactly the green-CI-asserts-nothing hole it closes.
+      # src-tauri/binaries/ must NOT be cached. The script's BUILD_ID marker
+      # makes it skip the compile and the smoke test when the output looks
+      # current, so a restored cache would turn this step into a no-op.
       - name: Build MCP sidecar (runs the relocation smoke gate)
         run: bash scripts/build-mcp-sidecar.sh
 
