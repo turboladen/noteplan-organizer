@@ -4,14 +4,11 @@
 # place it where Tauri's `externalBin` bundling expects it:
 #   src-tauri/binaries/noteplan-mcp-<target-triple>
 #
-# Why this exists: the app used to spawn `npx -y @noteplanco/noteplan-mcp`, which
-# relies on PATH. GUI apps launched from /Applications get an empty PATH, so the
-# spawn failed and NotePlan showed offline. A bundled sidecar is spawned by
-# absolute path — no PATH, no node/bun required on the user's machine.
-#
-# Idempotent: skips the (slow) install+compile when the binary already exists and
-# the version marker matches the pin in mcp-sidecar/package.json, so repeated
-# `cargo tauri dev` runs stay fast.
+# A GUI app launched from /Applications has an empty PATH, so a bare npx or
+# node lookup finds nothing and NotePlan reports offline; the sidecar is
+# spawned by absolute path and needs no node or bun on the user's machine.
+# Idempotent: the install and compile are skipped when the binary exists and
+# the version marker matches the pin in mcp-sidecar/package.json.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,12 +33,12 @@ OUT_BIN="$OUT_DIR/noteplan-mcp-$TRIPLE"
 ENTRY="$SIDECAR_DIR/entry.js"
 
 # The gate keys on the pinned version AND every input that shapes the binary:
-# the compile shim (which is what makes the binary relocatable — see entry.js)
-# and this script itself (compile flags + the smoke gate below). Keying on the
-# version alone once let a stale binary survive a source fix and ship inside the
-# .app; leaving this script out of the key would reopen exactly that hole for a
-# change to the `bun build` invocation. Paths are stripped before re-hashing so
-# the id doesn't shift with how the script was invoked.
+# the compile shim that makes the binary relocatable (see entry.js) and this
+# script itself (compile flags plus the smoke gate below). A key covering only
+# the version lets a stale binary survive a source fix and ship inside the .app,
+# and dropping this script from the key reopens that hole for a change to the
+# `bun build` invocation. Paths are stripped before re-hashing so the id does
+# not shift with how the script was invoked.
 BUILD_ID="$MCP_VERSION $(shasum -a 256 "$ENTRY" "$0" | awk '{print $1}' \
   | shasum -a 256 | awk '{print $1}')"
 
@@ -57,7 +54,7 @@ mkdir -p "$OUT_DIR"
 ( cd "$SIDECAR_DIR" && "$BUN" install --frozen-lockfile )
 
 # sql.js's WebAssembly blob, embedded into the binary by the shim. Hidden during
-# the smoke test below to prove the binary no longer reads it from node_modules.
+# the smoke test below to prove the binary does not read it from node_modules.
 WASM="$SIDECAR_DIR/node_modules/sql.js/dist/sql-wasm.wasm"
 WASM_HIDDEN="$WASM.hidden-by-smoke-test"
 
@@ -92,32 +89,16 @@ trap cleanup EXIT
 "$BUN" build --compile "$ENTRY" --outfile "$TMP_BIN"
 chmod +x "$TMP_BIN"
 
-# Startup smoke test + relocation guard.
-#
-# On the build machine the baked-in node_modules path always resolves, so the
-# stale-path bug is invisible unless the .wasm is hidden first. Hiding it is what
-# makes this test fail on a regression instead of passing right up until a user
-# installs the .app.
-#
-# The probe is run:
-#   - with stdin at EOF, so the server tears itself down the moment startup
-#     finishes (dist/index.js exits 0 on stdin 'end'). Left attached to a
-#     terminal it would sit waiting for a JSON-RPC client until the alarm fired,
-#     costing a fixed 30s on every rebuild. (There is no `--version` flag —
-#     the server ignores argv entirely, so passing one changes nothing.)
-#   - with NOTEPLAN_READ_ONLY=1 and HOME pointed at a throwaway dir. Startup is
-#     not inert: it discovers the running NotePlan over the local bridge and
-#     issues a warm-up search. Read-only mode makes every write action reject
-#     (verified: the server logs "Read-only mode: ENABLED"), and the scratch HOME
-#     keeps it from writing ~/.noteplan-mcp-last-version. Bridge discovery is
-#     AppleScript-based, so HOME alone does NOT isolate it — read-only is the
-#     guard that matters. Failures there are caught by the server itself.
-#   - with NOTEPLAN_MCP_AUTOLAUNCH=false. Bridge discovery otherwise defaults to
-#     ACTIVATING NotePlan via AppleScript (utils/server-config.js), so without
-#     this a plain `cargo tauri build` could pop the user's NotePlan open. Opting
-#     out keeps the probe passive; the server falls back to SQLite/FS and still
-#     completes startup, which is all this gate asserts.
-#   - under an alarm, as a backstop for a genuinely wedged binary.
+# Startup smoke test and relocation guard. The baked-in node_modules path
+# always resolves on the build machine, so hiding the .wasm is what makes a
+# relocation regression fail here instead of on the user's machine. The probe:
+#   - stdin at EOF, so the server exits as soon as startup finishes.
+#   - NOTEPLAN_READ_ONLY=1 and a throwaway HOME. Startup is not inert: it
+#     discovers the running NotePlan over the local bridge and issues a warm-up
+#     search. Discovery is AppleScript-based, so HOME alone does NOT isolate
+#     it and read-only is the guard that matters.
+#   - NOTEPLAN_MCP_AUTOLAUNCH=false, so discovery cannot activate NotePlan.
+#   - an alarm, as a backstop for a wedged binary.
 echo "[build-mcp-sidecar] smoke test (with sql.js .wasm hidden)"
 # -f for the same reason as every other mv/rm here: the destination can already
 # exist (a hard-killed earlier run leaves the hidden copy behind), and `mv`
