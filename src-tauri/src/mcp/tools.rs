@@ -159,6 +159,8 @@ const GET_NOTES_MAX_LINES: u64 = 1000;
 
 /// Get a note's raw body by title or filename. Returns the parsed `.content`
 /// string — not the JSON envelope — and refuses truncated (`hasMore`) responses.
+/// Line numbers into that body are 1-based and match the file on disk, so they
+/// can be used directly as `edit_line`/`delete_lines` targets.
 pub async fn get_note(state: &McpState, addr: &NoteAddr) -> McpResult<String> {
     let mut args = json!({ "includeContent": true, "limit": GET_NOTES_MAX_LINES });
     addr.inject(args.as_object_mut().expect("json object"));
