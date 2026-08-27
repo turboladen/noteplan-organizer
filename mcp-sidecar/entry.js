@@ -1,29 +1,12 @@
 // Compile entrypoint for the bundled NotePlan MCP sidecar.
 //
-// Why this shim exists instead of compiling the MCP server's own dist/index.js:
-//
-// `bun build --compile` embeds JavaScript, but NOT sibling runtime assets. It
-// rewrites each bundled module's `__dirname` to the BUILD MACHINE's absolute
-// directory. sql.js (a transitive dep of @noteplanco/noteplan-mcp) locates its
-// WebAssembly blob at runtime with exactly that pattern:
-//
-//     var fs = require("node:fs");
-//     za = __dirname + "/";                 // -> /Users/<builder>/.../sql.js/dist/
-//     Ba = a => fs.readFileSync(a);         // reads za + "sql-wasm.wasm"
-//
-// and the MCP server calls `initSqlJs()` with no `locateFile` override
-// (dist/noteplan/sqlite-loader.js), so that default path is what gets used.
-// `initSqlite()` runs eagerly at startup and a failure is fatal, so a compiled
-// binary moved off the build machine died instantly with
-// "ENOENT: ... sql-wasm.wasm" -> "Failed to start server", which surfaced in the
-// app as a permanently offline NotePlan connection.
-//
-// The fix: embed the .wasm as a bun asset (it travels inside the executable) and
-// redirect sql.js's read to it, so the baked absolute path is never touched.
-//
-// Ordering matters: static `import` declarations are hoisted and evaluated before
-// any module body, so the MCP server MUST be pulled in via dynamic `import()`
-// below — otherwise it would load sql.js before the patch is installed.
+// `bun build --compile` embeds JavaScript but not sibling runtime assets, and it
+// rewrites each bundled module's `__dirname` to the build machine's absolute
+// directory. sql.js locates its `sql-wasm.wasm` through that `__dirname`, and
+// the MCP server calls `initSqlJs()` with no `locateFile` override
+// (dist/noteplan/sqlite-loader.js), so the patch below embeds the .wasm as a bun
+// asset and redirects the read to it. `initSqlite()` runs eagerly and a failure
+// is fatal, so without the redirect the binary starts only on the build host.
 
 import { createRequire } from "node:module";
 import wasmPath from "sql.js/dist/sql-wasm.wasm" with { type: "file" };
@@ -47,4 +30,7 @@ fs.readFileSync = function (target, ...rest) {
   return originalReadFileSync.call(this, target, ...rest);
 };
 
+// Static `import` declarations are hoisted and evaluated before any module
+// body, so the MCP server must be pulled in dynamically: a static import would
+// load sql.js before the patch above is installed.
 await import("@noteplanco/noteplan-mcp/dist/index.js");
